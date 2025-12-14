@@ -1,0 +1,4 @@
+[
+  "proxy1.example.com:10000",
+  { "server": "proxy2.example.com:10001", "username": "user", "password": "pass" }
+]

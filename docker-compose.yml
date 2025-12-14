@@ -1,0 +1,60 @@
+version: '3.8'
+services:
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      retries: 5
+
+  timescaledb:
+    image: timescale/timescaledb:latest-pg15
+    environment:
+      POSTGRES_USER: elhaq
+      POSTGRES_PASSWORD: elhaq_pass
+      POSTGRES_DB: elhaq_ts
+    ports:
+      - "5433:5432"
+    volumes:
+      - timescale-data:/var/lib/postgresql/data
+
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: elhaq
+      POSTGRES_PASSWORD: elhaq_pass
+      POSTGRES_DB: elhaq
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+
+  analyzer:
+    build:
+      context: ./services/analyzer
+    depends_on:
+      - redis
+      - timescaledb
+    environment:
+      REDIS_URL: "redis://redis:6379"
+      DATABASE_URL: "postgresql://elhaq:elhaq_pass@postgres:5432/elhaq"
+    ports:
+      - "8000:8000"
+
+  notifier:
+    build:
+      context: ./services/notification
+    depends_on:
+      - redis
+    environment:
+      REDIS_URL: "redis://redis:6379"
+    command: ["npm", "run", "start"]
+
+volumes:
+  redis-data:
+  pg-data:
+  timescale-data:

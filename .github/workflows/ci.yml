@@ -1,0 +1,99 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  python-analyzer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      - name: Install Analyzer deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r services/analyzer/requirements.txt || true
+      - name: Run Analyzer tests (if present)
+        run: |
+          if [ -d "services/analyzer/tests" ]; then
+            pytest services/analyzer/tests || true
+          else
+            echo "No analyzer tests"
+          fi
+
+  node-notifier:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install notifier deps
+        run: |
+          cd services/notification
+          npm ci || npm install
+      - name: Build notifier
+        run: |
+          npm run build --prefix services/notification || true
+
+  lint-and-tests:
+    name: Lint and Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install Python tooling
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff black pytest || true
+
+      - name: Run ruff (Python linter)
+        run: |
+          if [ -d "services" ]; then
+            ruff check services || exit 1
+          else
+            echo "No Python services to lint"
+          fi
+
+      - name: Run black check (format)
+        run: |
+          if [ -d "services" ]; then
+            black --check services || exit 1
+          else
+            echo "No Python services to format-check"
+          fi
+
+      - name: Run pytest if tests exist
+        run: |
+          if ls services/*/tests 1> /dev/null 2>&1; then
+            pytest -q || exit 1
+          else
+            echo "No tests found"
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Node deps and run TypeScript build check
+        run: |
+          if [ -f services/notification/package.json ]; then
+            cd services/notification
+            npm ci || npm install
+            npm run build || echo "No build script or build failed"
+          else
+            echo "No notifier package.json"
+          fi

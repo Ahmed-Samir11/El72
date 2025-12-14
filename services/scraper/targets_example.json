@@ -1,0 +1,12 @@
+[
+  {
+    "sku": "SKU-EX-1",
+    "url": "https://example.com/product/sku-ex-1",
+    "store": "example"
+  },
+  {
+    "sku": "SKU-EX-2",
+    "url": "https://example.com/product/sku-ex-2",
+    "store": "example"
+  }
+]

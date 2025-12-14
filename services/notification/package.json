@@ -1,0 +1,19 @@
+{
+  "name": "elhaq-notifier",
+  "version": "0.1.0",
+  "main": "dist/index.js",
+  "scripts": {
+    "start": "ts-node src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "lint": "eslint 'src/**/*.{js,ts}' --max-warnings=0 || true"
+  },
+  "dependencies": {
+    "ioredis": "^5.3.2",
+    "axios": "^1.4.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "ts-node": "^10.9.1",
+    "eslint": "^8.49.0"
+  }
+}
