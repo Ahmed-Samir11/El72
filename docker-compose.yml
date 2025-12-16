@@ -43,6 +43,7 @@ services:
     environment:
       REDIS_URL: "redis://redis:6379"
       DATABASE_URL: "postgresql://elhaq:elhaq_pass@postgres:5432/elhaq"
+      TIMESCALE_URL: "postgresql://elhaq:elhaq_pass@timescaledb:5432/elhaq_ts"
     ports:
       - "8000:8000"
 

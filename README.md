@@ -269,3 +269,52 @@ File locations recap (open in editor):
 - `infra/sql/alerts.sql`
 
 If you want, I can now scaffold tests and DB migrations, or implement the scraper producer with Playwright and residential proxy settings. Which should I do next?
+
+Exact reproduction (Windows PowerShell)
+------------------------------------
+Follow these exact commands (PowerShell) from the repository root to reproduce the integration test that was used during development.
+
+1) Start infrastructure (detached):
+
+```powershell
+docker compose up --build -d
+```
+
+2) (Optional) Wait for services to be healthy; then apply Timescale/Postgres DDL (example using `psql`). Adjust host/port if you run DB in Docker on non-standard ports.
+
+```powershell
+# wait ~5-10s for Postgres to start, then:
+psql "postgresql://postgres:postgres@localhost:5432/elhaq" -f infra/sql/ddl.sql
+```
+
+3) Insert a historical high price row (example):
+
+```powershell
+# Open psql and run INSERT, or run a single-line psql insert:
+psql "postgresql://postgres:postgres@localhost:5432/elhaq" -c "INSERT INTO price_history (time, sku, store, price) VALUES (now() - interval '30 days', 'LOGI-G502', 'amazon_eg', 5000.00);"
+```
+
+4) Start the listener helper that waits for confirmed deals (this prints confirmed deals):
+
+```powershell
+python tests/integration/wait_for_confirmed.py
+```
+
+5) Trigger a scrape or simulate an ingest message. To simulate an ingest quickly using `redis-cli`:
+
+```powershell
+# add a message to the price_ingest stream (adjust fields as needed)
+redis-cli XADD stream:price_ingest * sku LOGI-G502 store amazon_eg price 1500 timestamp $(Get-Date -UFormat %s) trace_id manual-test
+```
+
+6) Observe the listener output. The helper prints lines like:
+
+```
+Found: b'1765916423115-0' {'sku': 'LOGI-G502', 'store': 'amazon_eg', 'price': 1500, 'timestamp': 1765923621, 'anomaly_score': 1.0, 'trace_id': '...'}
+```
+
+Notes
+- If `redis-cli` is not available on Windows, use the Docker container: `docker exec -it <redis_container_name> redis-cli ...`.
+- If the analyzer requires more historical samples for the MAD detector, insert additional historical `price_history` rows or lower the `ML_THRESHOLD` env var for a quick test.
+
+These exact steps were used during the session to validate the end-to-end flow.
