@@ -1,10 +1,6 @@
-version: '3.8'
-version: '3.8'
-
 services:
   redis:
     image: redis:7
-    container_name: elhaq-redis
     ports:
       - "6379:6379"
     volumes:
@@ -43,25 +39,23 @@ services:
     depends_on:
       - redis
       - timescaledb
+      - postgres
     environment:
-      REDIS_URL: "redis://redis:6379/0"
+      REDIS_URL: "redis://redis:6379"
       DATABASE_URL: "postgresql://elhaq:elhaq_pass@postgres:5432/elhaq"
-      TIMESCALE_URL: "postgresql://elhaq:elhaq_pass@timescaledb:5432/elhaq_ts"
     ports:
       - "8000:8000"
 
   notifier:
     build:
-      context: .
-      dockerfile: services/notification/Dockerfile
+      context: ./services/notification
     depends_on:
       - redis
     environment:
-      REDIS_URL: "redis://redis:6379/0"
+      REDIS_URL: "redis://redis:6379"
     command: ["npm", "run", "start"]
 
 volumes:
   redis-data:
   pg-data:
   timescale-data:
-  pg-data:
