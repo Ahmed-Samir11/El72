@@ -19,9 +19,10 @@ async function ensureGroup() {
 async function loop() {
   await ensureGroup()
   while (true) {
-    const res = await redis.xreadgroup('GROUP', GROUP, CONSUMER, 'COUNT', 10, 'BLOCK', 5000, 'STREAMS', STREAM, '>')
+    const res: any = await redis.xreadgroup('GROUP', GROUP, CONSUMER, 'COUNT', 10, 'BLOCK', 5000, 'STREAMS', STREAM, '>')
     if (!res) continue
-    for (const [stream, messages] of res) {
+    for (const item of res) {
+      const [stream, messages]: [string, any[]] = item as any
       for (const [id, fields] of messages) {
         const payload = fields.payload || fields["payload"]
         // TODO: parse payload, dedupe via key `alert_sent:{user_id}:{sku}`

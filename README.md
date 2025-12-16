@@ -140,6 +140,55 @@ How events flow
 2. Analyzer XREADGROUP from `stream:price_ingest` (group `cg_analyzer`), persists to timeseries, scores with ML, upserts aggregated retailer analytics (if alert exists), XADD confirmed deals to `stream:confirmed_deals`.
 3. Notifier XREADGROUP from `stream:confirmed_deals` (group `cg_notifier`), dedupes and sends WhatsApp alerts.
 
+Integration test (end-to-end)
+-----------------------------
+Use the following steps to run a lightweight integration environment (Redis + Postgres) and validate the end-to-end flow between `services/scraper` and `services/analyzer`.
+
+1. Start test infra (from repo root):
+
+```bash
+docker-compose -f infra/docker-compose.test.yml up -d
+```
+
+2. Create the Postgres DB schema required by analyzer (run migrations or apply `infra/sql/ddl.sql`). Example using `psql`:
+
+```bash
+# wait for Postgres to be ready, then
+psql "postgresql://postgres:postgres@localhost:5432/elhaq" -f infra/sql/ddl.sql
+```
+
+3. Start the analyzer locally (Terminal A):
+
+```bash
+cd services/analyzer
+pip install -r requirements.txt
+# Ensure environment variables are set
+export DATABASE_URL="postgresql://postgres:postgres@localhost:5432/elhaq"
+export REDIS_URL="redis://localhost:6379/0"
+uvicorn services.analyzer.app:app --reload
+```
+
+4. Start the scraper to publish targets (Terminal B):
+
+```bash
+cd services/scraper
+pip install -r requirements.txt
+playwright install
+python scraper.py --targets targets_example.json
+```
+
+5. Wait for a confirmed deal (Terminal C):
+
+```bash
+python tests/integration/wait_for_confirmed.py
+```
+
+If `services/analyzer` processes the scraped price and detects a large drop (or your configured ML threshold), you will see a message printed by the helper script.
+
+Troubleshooting
+- If analyzer fails to start because `DATABASE_URL` is missing, ensure Postgres is accessible and the DB exists.
+- If the scraper cannot extract price, check selectors in `services/scraper/scraper.py` and logs for selector errors.
+
 Security & compliance notes
 - Redis must be internal-only and password protected; use `REDIS_URL` env.
 - PII must be encrypted at rest (AES-256). `retailer_analytics` must NOT contain user_id or raw PII.

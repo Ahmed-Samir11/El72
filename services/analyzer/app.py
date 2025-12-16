@@ -5,7 +5,7 @@ import logging
 import uuid
 import contextvars
 import time
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 import asyncpg
 import numpy as np
@@ -21,7 +21,7 @@ from services.analyzer.settings import AnalyzerSettings
 settings = AnalyzerSettings()
 
 # Structured JSON logging
-trace_id_var: contextvars.ContextVar = contextvars.ContextVar("trace_id", default=None)
+trace_id_var = contextvars.ContextVar("trace_id", default=None)
 
 
 class TraceIdFilter(logging.Filter):
@@ -160,7 +160,7 @@ async def startup():
         return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
-async def normalize_message_payload(fields: Dict[Any, Any], redis_client: RedisStreamClient = None, dlq_stream: str = None, msg_id: str = None, orig_stream: str = None) -> Dict[str, Any] | None:
+async def normalize_message_payload(fields: Dict[Any, Any], redis_client: RedisStreamClient = None, dlq_stream: str = None, msg_id: str = None, orig_stream: str = None) -> Optional[Dict[str, Any]]:
     """Normalize fields from XREADGROUP to a dict payload.
 
     If the payload cannot be parsed into a dict, move the original fields to DLQ (if redis_client provided)

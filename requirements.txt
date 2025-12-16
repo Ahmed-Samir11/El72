@@ -6,13 +6,14 @@ redis[asyncio]==4.6.0
 numpy==1.26.0
 scikit-learn==1.3.2
 asyncpg==0.27.0
-playwright==1.35.1
+# removed duplicate older playwright pin (keep playwright==1.44.0 above)
 
 # Documentation / tooling
-sphinx==6.2.2
+sphinx==6.2.1
 sphinx-rtd-theme==1.2.1
 prometheus-client==0.16.0
 psutil==5.9.5
 joblib==1.3.2
-pydantic==2.6.5
+pydantic==1.10.12
+pytest
 python-json-logger==2.0.7

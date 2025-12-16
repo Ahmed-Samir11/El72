@@ -1,0 +1,23 @@
+version: '3.8'
+services:
+  redis:
+    image: redis:alpine
+    container_name: elhaq-test-redis
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+
+  postgres:
+    image: postgres:13-alpine
+    container_name: elhaq-test-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: elhaq
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
