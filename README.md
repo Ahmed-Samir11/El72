@@ -1,3 +1,57 @@
+Elhaq — Golden Path Integration Test
+===================================
+
+This test demonstrates an end-to-end flow:
+- `scraper.py` (producer) scrapes a live Amazon.eg product page and XADDs a payload to `stream:price_ingest`.
+- `backend.py` (consumer) XREADGROUPs messages, simulates a historical price (2x current), detects a drop >20% and XADDs a confirmed deal to `stream:confirmed_deals`.
+
+Prerequisites
+-------------
+- Docker (for Redis) or a local Redis on port 6379.
+- Python 3.9+ and the libraries listed in `requirements.txt`.
+
+Quick start (three terminals)
+-----------------------------
+
+1) Terminal A — start Redis via Docker Compose
+
+```bash
+docker-compose up -d
+```
+
+2) Terminal B — run the backend consumer
+
+```bash
+pip install -r requirements.txt
+# install playwright browsers once
+playwright install
+python backend.py
+```
+
+3) Terminal C — run the scraper (producer)
+
+```bash
+python scraper.py
+```
+
+What to expect
+--------------
+- The scraper will navigate to the Amazon.eg product page, extract the title and price, and push a JSON payload to `stream:price_ingest`.
+- The backend consumer will read the message, simulate a historical price equal to twice the current price (to force a drop), compute the drop percentage and — if >20% — publish a `✅ DEAL DETECTED` alert to `stream:confirmed_deals`.
+
+Notes & Troubleshooting
+-----------------------
+- Playwright requires a one-time `playwright install` to download browsers.
+- If the Amazon page structure changes the scraper may fail to extract the price. Inspect logs in Terminal C for selector errors.
+- Check Redis content with `redis-cli`:
+
+  - Stream entries: `XRANGE stream:price_ingest - +`
+  - Confirmed deals: `XRANGE stream:confirmed_deals - +`
+
+Security
+--------
+- This test talks to a public website (Amazon.eg) and a local Redis instance only.
+- Do NOT run this as-is in production. Use the code as a scaffold for integration testing only.
 Elhaq — Real-time Price Tracking & Deal Detection
 ===============================================
 
@@ -63,6 +117,23 @@ Key files
 - `infra/sql/alerts.sql` — Alerts table DDL + example rows for testing.
 - `docker-compose.yml` — Local dev orchestrator (Redis, Postgres, Timescale, services).
 - `.github/workflows/ci.yml` — CI (lint, build, tests placeholder).
+
+Health endpoint
+---------------
+
+The analyzer exposes a lightweight health endpoint at `/health` that returns service and ML model status. Example response:
+
+```json
+{
+	"status": "ok",
+	"model_loaded": false,
+	"model_meta": null,
+	"ml_method": "mad",
+	"ml_threshold": 0.8
+}
+```
+
+Use this for readiness checks and to surface model metadata to orchestration tools.
 
 How events flow
 1. Scraper XADD -> `stream:price_ingest` (payload JSON: sku, store, price, timestamp, html_hash, in_stock).

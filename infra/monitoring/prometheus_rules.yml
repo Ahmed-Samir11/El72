@@ -1,0 +1,54 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: elhaq-analyzer-rules
+  labels:
+    role: alert-rules
+spec:
+  groups:
+    - name: elhaq-analyzer.rules
+      rules:
+        - alert: AnalyzerDLQHigh
+          expr: analyzer_dlq_stream_length > 10
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Analyzer DLQ growth"
+            description: "Analyzer DLQ stream length is {{ $value }} (>10) for 5m. Check DLQ and consumer errors."
+
+        - alert: AnalyzerDLQGrowingRate
+          expr: increase(analyzer_dlq_stream_length[5m]) > 0
+          for: 1m
+          labels:
+            severity: warning
+          annotations:
+            summary: "DLQ received new items"
+            description: "DLQ stream has new items in the last 5 minutes — investigate recent processing errors."
+
+        - alert: AnalyzerConsumerLagHigh
+          expr: analyzer_consumer_pending > 100
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Analyzer consumer pending messages"
+            description: "Number of pending messages for the analyzer consumer group is {{ $value }} (>100) for 2m. Check consumer health and backlog."
+
+        - alert: AnalyzerPublishQueueHigh
+          expr: analyzer_publish_queue_size > 50
+          for: 2m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Publish queue length high"
+            description: "Publish queue size is {{ $value }} (>50) for 2m — publisher may be overwhelmed."
+
+        - alert: AnalyzerDBPoolWaitersHigh
+          expr: (analyzer_pg_pool_waiters + analyzer_ts_pool_waiters) > 10
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "DB pool waiters high"
+            description: "Combined Postgres/Timescale pool waiters is {{ $value }} (>10) for 5m — consider increasing DB pool sizes or throttling producers."

@@ -31,6 +31,12 @@ class AnalyzerSettings(BaseSettings):
     xadd_backoff_s: float = Field(0.5, env="XADD_BACKOFF_S")
 
     ml_cpu_sample_interval: int = Field(5, env="ML_CPU_SAMPLE_INTERVAL")
+    # Publisher batching
+    publish_batch_size: int = Field(20, env="PUBLISH_BATCH_SIZE")
+    publish_batch_interval_s: float = Field(0.25, env="PUBLISH_BATCH_INTERVAL_S")
+    publish_retry_attempts: int = Field(3, env="PUBLISH_RETRY_ATTEMPTS")
+    publish_retry_backoff_s: float = Field(0.5, env="PUBLISH_RETRY_BACKOFF_S")
+    dlq_stream: str = Field("stream:dlq:analyzer", env="DLQ_STREAM")
 
     class Config:
         env_file = ".env"
