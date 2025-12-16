@@ -96,6 +96,27 @@ class RedisStreamClient:
         msg_id = await self._redis.xadd(stream, encoded, maxlen=maxlen)
         return msg_id
 
+    async def xadd_many(self, stream: str, list_of_fields: Iterable[Dict[str, Any]]) -> list:
+        """Batch XADD multiple field dicts to `stream` using a pipeline.
+
+        Returns a list of message ids in the same order.
+        """
+        pipe = self._redis.pipeline()
+        for fields in list_of_fields:
+            # encode as in `xadd`
+            encoded: Dict[str, bytes] = {}
+            for k, v in fields.items():
+                if isinstance(v, (bytes, bytearray)):
+                    encoded[k] = bytes(v)
+                elif isinstance(v, str):
+                    encoded[k] = v.encode()
+                else:
+                    encoded[k] = json.dumps(v, default=str).encode()
+            pipe.xadd(stream, encoded)
+        res = await pipe.execute()
+        # redis-py returns list of ids from pipeline
+        return res
+
     async def xreadgroup(
         self,
         group: str,
@@ -124,6 +145,13 @@ class RedisStreamClient:
         Returns the number of messages acknowledged (0 or 1).
         """
         return await self._redis.xack(stream, group, message_id)
+
+    async def xack_many(self, stream: str, group: str, message_ids: Iterable[str]) -> int:
+        """Acknowledge multiple message ids for a group. Returns number acknowledged."""
+        ids = list(message_ids)
+        if not ids:
+            return 0
+        return await self._redis.xack(stream, group, *ids)
 
     async def close(self) -> None:
         """Close the underlying Redis connection cleanly."""

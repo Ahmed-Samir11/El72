@@ -3,12 +3,15 @@ import asyncio
 import json
 import logging
 import uuid
+import contextvars
+import time
 from typing import Dict, Any, List
 
 import asyncpg
 import numpy as np
 from fastapi import FastAPI, Response
 from pythonjsonlogger import jsonlogger
+from prometheus_client import Gauge
 
 from services.common.redis_client import RedisStreamClient
 from services.analyzer import ml_detector
@@ -18,15 +21,32 @@ from services.analyzer.settings import AnalyzerSettings
 settings = AnalyzerSettings()
 
 # Structured JSON logging
+trace_id_var: contextvars.ContextVar = contextvars.ContextVar("trace_id", default=None)
+
+
+class TraceIdFilter(logging.Filter):
+    def filter(self, record):
+        record.trace_id = trace_id_var.get() or ""
+        return True
+
+
 logHandler = logging.StreamHandler()
-formatter = jsonlogger.JsonFormatter('%(asctime)s %(levelname)s %(name)s %(message)s')
+formatter = jsonlogger.JsonFormatter('%(asctime)s %(levelname)s %(name)s %(message)s %(trace_id)s')
 logHandler.setFormatter(formatter)
 root = logging.getLogger()
 root.setLevel(logging.INFO)
 root.addHandler(logHandler)
+root.addFilter(TraceIdFilter())
 logger = logging.getLogger(settings.service_name)
 
 app = FastAPI(title="Elhaq Analyzer")
+
+# Prometheus metrics
+PUBLISH_QUEUE_SIZE = Gauge("analyzer_publish_queue_size", "Size of the publish queue")
+DLQ_STREAM_LENGTH = Gauge("analyzer_dlq_stream_length", "Length of the analyzer DLQ stream")
+CONSUMER_PENDING = Gauge("analyzer_consumer_pending", "Number of pending messages for consumer group")
+PG_POOL_WAITERS = Gauge("analyzer_pg_pool_waiters", "Number of waiters on the Postgres pool")
+TS_POOL_WAITERS = Gauge("analyzer_ts_pool_waiters", "Number of waiters on the Timescale pool")
 
 
 @app.on_event("startup")
@@ -51,6 +71,9 @@ async def startup():
 
     # background consumer
     app.state.loop = asyncio.create_task(consume_loop())
+    # Publisher queue for confirmed deals (batched)
+    app.state.publish_queue: asyncio.Queue = asyncio.Queue()
+    app.state.publisher_task = asyncio.create_task(publisher_loop())
     # Load persisted ML model (if any)
     try:
         ml_detector.load_model_from_dir(settings.model_dir)
@@ -72,12 +95,193 @@ async def startup():
 
     app.state.metrics_task = asyncio.create_task(_cpu_sampler())
 
+    # Start metrics sampler for queue/DLQ/consumer lag and DB pool waiters
+    async def _metrics_sampler():
+        raw = app.state.redis
+        while True:
+            try:
+                # publish queue size
+                try:
+                    PUBLISH_QUEUE_SIZE.set(app.state.publish_queue.qsize())
+                except Exception:
+                    PUBLISH_QUEUE_SIZE.set(0)
+
+                # DLQ length (stream)
+                try:
+                    dlq_len = await app.state.redis.redis.xlen(settings.dlq_stream)
+                except Exception:
+                    dlq_len = 0
+                DLQ_STREAM_LENGTH.set(dlq_len)
+
+                # Consumer pending (XPENDING) — try multiple formats
+                try:
+                    xp = await app.state.redis.redis.xpending(settings.stream_price_ingest, settings.consumer_group)
+                    if isinstance(xp, dict) and "pending" in xp:
+                        pending = int(xp.get("pending") or 0)
+                    elif isinstance(xp, int):
+                        pending = xp
+                    elif isinstance(xp, (list, tuple)):
+                        pending = len(xp)
+                    else:
+                        pending = 0
+                except Exception:
+                    pending = 0
+                CONSUMER_PENDING.set(pending)
+
+                # DB pool waiters (best-effort using internal queue if available)
+                try:
+                    pg_waiters = 0
+                    if hasattr(app.state.pg_pool, "_queue"):
+                        q = getattr(app.state.pg_pool, "_queue")
+                        pg_waiters = q.qsize() if hasattr(q, "qsize") else len(q)
+                except Exception:
+                    pg_waiters = 0
+                PG_POOL_WAITERS.set(pg_waiters)
+
+                try:
+                    ts_waiters = 0
+                    if hasattr(app.state.ts_pool, "_queue"):
+                        q = getattr(app.state.ts_pool, "_queue")
+                        ts_waiters = q.qsize() if hasattr(q, "qsize") else len(q)
+                except Exception:
+                    ts_waiters = 0
+                TS_POOL_WAITERS.set(ts_waiters)
+            except Exception:
+                logger.exception("metrics sampler error")
+            await asyncio.sleep(max(1, settings.ml_cpu_sample_interval))
+
+    app.state.metrics_sampler_task = asyncio.create_task(_metrics_sampler())
+
     # Expose metrics endpoint via FastAPI
     from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 
     @app.get("/metrics")
     async def metrics():
         return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
+async def normalize_message_payload(fields: Dict[Any, Any], redis_client: RedisStreamClient = None, dlq_stream: str = None, msg_id: str = None, orig_stream: str = None) -> Dict[str, Any] | None:
+    """Normalize fields from XREADGROUP to a dict payload.
+
+    If the payload cannot be parsed into a dict, move the original fields to DLQ (if redis_client provided)
+    and return None.
+    """
+    raw = None
+    try:
+        raw = fields.get(b"payload") or fields.get("payload") or fields
+        if isinstance(raw, (bytes, bytearray)):
+            text = raw.decode(errors="ignore")
+            try:
+                obj = json.loads(text)
+            except Exception:
+                # not JSON — treat as raw string
+                obj = text
+        else:
+            obj = raw
+
+        if isinstance(obj, dict):
+            return obj
+        # non-dict payload
+        if redis_client and dlq_stream:
+            # preserve original fields and metadata in DLQ
+            dlq_item = {
+                "orig_stream": orig_stream or settings.stream_price_ingest,
+                "orig_msg_id": msg_id or "",
+                "raw": obj,
+            }
+            try:
+                await redis_client.xadd(dlq_stream, {"payload": dlq_item})
+            except Exception:
+                logger.exception("Failed to push to DLQ for msg %s", msg_id, extra={"msg_id": msg_id, "stream": orig_stream})
+        return None
+    except Exception:
+        # On unexpected error, try to DLQ the raw fields
+        if redis_client and dlq_stream:
+            try:
+                await redis_client.xadd(dlq_stream, {"payload": {"orig_stream": orig_stream or settings.stream_price_ingest, "orig_msg_id": msg_id or "", "raw_fields": str(fields)}})
+            except Exception:
+                logger.exception("Failed to push unparsable message to DLQ", extra={"msg_id": msg_id, "stream": orig_stream})
+        return None
+
+
+async def publisher_loop():
+    """Background publisher that batches confirmed deal publishes to Redis.
+
+    Behavior:
+    - Collects up to `settings.publish_batch_size` items or waits `publish_batch_interval_s`
+    - Uses `xadd_many` to publish in a single pipeline
+    - Retries on failure, moves items to DLQ after retries
+    """
+    redis: RedisStreamClient = app.state.redis
+    q: asyncio.Queue = app.state.publish_queue
+    batch_size = settings.publish_batch_size
+    interval = settings.publish_batch_interval_s
+    dlq = settings.dlq_stream
+    while True:
+        try:
+            item = await q.get()
+            batch = [item]
+            start = time.monotonic()
+            # drain up to batch_size quickly
+            while len(batch) < batch_size:
+                try:
+                    item = await asyncio.wait_for(q.get(), timeout=interval)
+                    batch.append(item)
+                except asyncio.TimeoutError:
+                    break
+
+            # prepare fields for xadd_many
+            fields_list = []
+            for it in batch:
+                # each item already structured
+                fields_list.append({"payload": it})
+
+            # attempt publish with retries
+            success = False
+            for attempt in range(max(1, settings.publish_retry_attempts)):
+                try:
+                    await redis.xadd_many(settings.stream_confirmed, fields_list)
+                    try:
+                        # increment metric by batch size if supported
+                        ml_detector.ML_PUBLISHED.inc(len(batch))
+                    except Exception:
+                        pass
+                    success = True
+                    break
+                except Exception:
+                    await asyncio.sleep(settings.publish_retry_backoff_s * (2 ** attempt))
+
+            if not success:
+                # move each item to DLQ with metadata
+                for it in batch:
+                    try:
+                        await redis.xadd(dlq, {"payload": {"failed_publish": it}})
+                    except Exception:
+                        logger.exception("Failed to DLQ publish item", extra={"sku": it.get("sku"), "trace_id": it.get("trace_id")})
+
+        except asyncio.CancelledError:
+            break
+        except Exception:
+            logger.exception("Publisher loop error")
+            await asyncio.sleep(1)
+
+
+@app.middleware("http")
+async def add_trace_id(request, call_next):
+    """Middleware to ensure a `trace_id` is present and available via contextvar.
+
+    If the incoming request contains `X-Trace-Id` it will be used; otherwise a new
+    UUID v4 is generated. The trace id is stored in `trace_id_var` and included in logs.
+    """
+    header_tid = request.headers.get("X-Trace-Id")
+    tid = header_tid or str(uuid.uuid4())
+    token = trace_id_var.set(tid)
+    try:
+        response = await call_next(request)
+        response.headers["X-Trace-Id"] = tid
+        return response
+    finally:
+        trace_id_var.reset(token)
 
 
 @app.on_event("shutdown")
@@ -100,6 +304,8 @@ async def shutdown():
 
     await _cancel_and_wait(app.state.loop, "consumer_loop", timeout=30.0)
     await _cancel_and_wait(getattr(app.state, "metrics_task", None), "metrics_task", timeout=5.0)
+    await _cancel_and_wait(getattr(app.state, "metrics_sampler_task", None), "metrics_sampler_task", timeout=5.0)
+    await _cancel_and_wait(getattr(app.state, "publisher_task", None), "publisher_task", timeout=5.0)
 
     # Close connections
     try:
@@ -191,25 +397,30 @@ async def consume_loop():
     pg_pool: asyncpg.Pool = app.state.pg_pool
     while True:
         try:
-            res = await redis.xreadgroup(GROUP, CONSUMER, {STREAM: ">"}, count=10, block=5000)
+            res = await redis.xreadgroup(settings.consumer_group, settings.consumer_name, {settings.stream_price_ingest: ">"}, count=10, block=5000)
             if not res:
                 await asyncio.sleep(0.1)
                 continue
             for stream, messages in res:
                 for msg_id, fields in messages:
-                    trace_id = str(uuid.uuid4())
-                    payload_b = fields.get(b"payload") or fields.get("payload")
-                    try:
-                        payload = json.loads(payload_b) if isinstance(payload_b, (bytes, bytearray)) else payload_b
-                    except Exception:
-                        payload = payload_b
+                    # Normalize payload (handles bytes/str/json) and DLQs unparsable messages
+                    payload = await normalize_message_payload(fields, redis_client=redis, dlq_stream=settings.dlq_stream, msg_id=msg_id, orig_stream=stream)
+                    if not payload:
+                        # Move on to next message (payload moved to DLQ by normalize_message_payload)
+                        await redis.xack(stream, settings.consumer_group, msg_id)
+                        continue
 
-                    sku = (payload.get("sku") if isinstance(payload, dict) else None)
-                    store = (payload.get("store") if isinstance(payload, dict) else None)
+                    # propagate trace_id from payload if available, otherwise generate
+                    trace_id = payload.get("trace_id") or str(uuid.uuid4())
+
+                    sku = payload.get("sku")
+                    store = payload.get("store")
+
+                    logger.info("processing message", extra={"stream": stream, "msg_id": msg_id, "sku": sku, "store": store, "trace_id": trace_id})
 
                     # Basic filtering
                     if payload.get("in_stock") is False:
-                        await redis.xack(STREAM, GROUP, msg_id)
+                        await redis.xack(stream, settings.consumer_group, msg_id)
                         continue
 
                     # Persist to timeseries
@@ -220,13 +431,15 @@ async def consume_loop():
                             recent = await fetch_recent_prices(conn, sku, store, limit=20)
                         window = np.array(recent[::-1]) if recent else np.array([])
 
-                        # ML scoring with metrics (use async scorer for heavy methods)
+                        # ML scoring with metrics
                         ml_detector.ML_CALLS.inc()
                         start = time.perf_counter()
                         if settings.ml_method == "mad":
+                            # keep fast MAD scorer inline to avoid thread hop
                             score = ml_detector.score_prices(window, method="mad")
                         else:
-                            score = await ml_detector.score_prices_async(window, method=settings.ml_method)
+                            # Offload CPU-bound scoring to threadpool
+                            score = await asyncio.to_thread(ml_detector.score_prices, window, settings.ml_method)
                         ml_detector.ML_LATENCY_SECONDS.observe(time.perf_counter() - start)
 
                         # If anomaly, handle monetization and publish
@@ -243,30 +456,26 @@ async def consume_loop():
                                 if items:
                                     await upsert_retailer_analytics_batch(conn, items)
 
-                            # Publish confirmed deal (after DB writes)
-                            # Publish confirmed deal (after DB writes) with retries and dead-letter on failure
-                            publish_payload = {"sku": sku, "store": store, "price": payload.get("price"), "timestamp": payload.get("timestamp"), "anomaly_score": score}
-                            success = False
-                            for attempt in range(settings.xadd_retries):
-                                try:
-                                    await redis.xadd(settings.stream_confirmed, {"payload": publish_payload})
-                                    ml_detector.ML_PUBLISHED.inc()
-                                    success = True
-                                    break
-                                except Exception:
-                                    await asyncio.sleep(settings.xadd_backoff_s * (2 ** attempt))
-                            if not success:
-                                ml_detector.ML_PUBLISH_FAILURES.inc()
-                                try:
-                                    raw = app.state.redis.redis
-                                    await raw.rpush("queue:failed_publishes", json.dumps({"payload": publish_payload, "trace_id": trace_id}))
-                                except Exception:
-                                    logger.exception("Failed to persist failed publish for %s", sku)
+                            # Publish confirmed deal (enqueue to publisher)
+                            publish_payload = {
+                                "sku": sku,
+                                "store": store,
+                                "price": payload.get("price"),
+                                "timestamp": payload.get("timestamp"),
+                                "anomaly_score": score,
+                                "trace_id": trace_id,
+                                "orig_stream": stream,
+                                "orig_msg_id": msg_id,
+                            }
+                            try:
+                                await app.state.publish_queue.put(publish_payload)
+                            except Exception:
+                                logger.exception("Failed to enqueue publish payload", extra={"sku": sku, "msg_id": msg_id, "trace_id": trace_id})
 
-                        # ACK only after successful DB operations
-                        await redis.xack(STREAM, GROUP, msg_id)
-                    except Exception as e:
-                        logger.exception("Error processing message %s: %s", msg_id, e)
+                        # ACK only after successful DB operations and enqueue
+                        await redis.xack(stream, settings.consumer_group, msg_id)
+                    except Exception:
+                        logger.exception("Error processing message", extra={"msg_id": msg_id, "stream": stream, "sku": sku, "store": store, "trace_id": trace_id})
                         # don't ack — message will remain pending for manual/or later reprocessing
         except asyncio.CancelledError:
             break
@@ -276,5 +485,13 @@ async def consume_loop():
 
 @app.get("/health")
 async def health():
-    """Simple health endpoint used by orchestration and readiness checks."""
-    return {"status": "ok"}
+    """Health endpoint including model status and basic metrics."""
+    model_loaded = getattr(ml_detector, "_loaded_model", None) is not None
+    meta = getattr(ml_detector, "_loaded_model_meta", None)
+    return {
+        "status": "ok",
+        "model_loaded": model_loaded,
+        "model_meta": meta,
+        "ml_method": settings.ml_method,
+        "ml_threshold": settings.ml_threshold,
+    }

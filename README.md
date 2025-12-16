@@ -64,6 +64,23 @@ Key files
 - `docker-compose.yml` — Local dev orchestrator (Redis, Postgres, Timescale, services).
 - `.github/workflows/ci.yml` — CI (lint, build, tests placeholder).
 
+Health endpoint
+---------------
+
+The analyzer exposes a lightweight health endpoint at `/health` that returns service and ML model status. Example response:
+
+```json
+{
+	"status": "ok",
+	"model_loaded": false,
+	"model_meta": null,
+	"ml_method": "mad",
+	"ml_threshold": 0.8
+}
+```
+
+Use this for readiness checks and to surface model metadata to orchestration tools.
+
 How events flow
 1. Scraper XADD -> `stream:price_ingest` (payload JSON: sku, store, price, timestamp, html_hash, in_stock).
 2. Analyzer XREADGROUP from `stream:price_ingest` (group `cg_analyzer`), persists to timeseries, scores with ML, upserts aggregated retailer analytics (if alert exists), XADD confirmed deals to `stream:confirmed_deals`.
