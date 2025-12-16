@@ -1,3 +1,5 @@
+playwright==1.44.0
+redis==4.6.0
 fastapi==0.95.2
 uvicorn[standard]==0.22.0
 redis[asyncio]==4.6.0
