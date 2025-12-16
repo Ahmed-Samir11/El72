@@ -1,12 +1,50 @@
 from typing import Dict, Any
 import logging
 import asyncio
+import time
+import os
+import joblib
+import json
 import numpy as np
 from sklearn.ensemble import IsolationForest
+import psutil
+from prometheus_client import Histogram, Counter, Gauge
 
 from services.common.redis_client import RedisStreamClient
 
 logger = logging.getLogger("analyzer.ml_detector")
+
+# Prometheus metrics
+ML_LATENCY_SECONDS = Histogram("ml_latency_seconds", "ML scoring latency seconds", buckets=(0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0))
+ML_CALLS = Counter("ml_calls_total", "Total ML scoring calls")
+ML_PUBLISHED = Counter("ml_published_total", "Total published confirmed deals")
+ML_PUBLISH_FAILURES = Counter("ml_publish_failures_total", "Publish failures for confirmed deals")
+ML_FALSE_POSITIVE = Counter("ml_false_positive_total", "Count of false positives recorded")
+ML_PROCESS_CPU_PERCENT = Gauge("ml_process_cpu_percent", "Process CPU percent sampled periodically")
+
+# Loaded model artifact (if any)
+_loaded_model = None
+_loaded_model_meta = None
+
+
+def load_model_from_dir(models_dir: str = "models") -> None:
+    global _loaded_model, _loaded_model_meta
+    latest = os.path.join(models_dir, "latest.json")
+    if not os.path.exists(latest):
+        logger.info("No model metadata found at %s", latest)
+        return
+    try:
+        with open(latest, "r", encoding="utf-8") as f:
+            meta = json.load(f)
+        model_path = meta.get("path")
+        if model_path and os.path.exists(model_path):
+            _loaded_model = joblib.load(model_path)
+            _loaded_model_meta = meta
+            logger.info("Loaded ML model from %s", model_path)
+        else:
+            logger.warning("Model path missing or does not exist: %s", model_path)
+    except Exception as e:
+        logger.exception("Failed to load model: %s", e)
 
 
 def score_prices(window: np.ndarray, method: str = "mad", *, contamination: float = 0.05, random_state: int = 42) -> float:
@@ -53,9 +91,15 @@ def score_prices(window: np.ndarray, method: str = "mad", *, contamination: floa
     # fallback to IsolationForest (expensive)
     if method == "isolation":
         try:
-            model = IsolationForest(contamination=contamination, random_state=random_state)
-            model.fit(window.reshape(-1, 1))
-            scores = model.decision_function(window.reshape(-1, 1))
+            # If a persisted model is available, use it (no retraining)
+            global _loaded_model
+            if _loaded_model is not None:
+                scores = _loaded_model.decision_function(window.reshape(-1, 1))
+            else:
+                # Fallback: train a temporary model (expensive)
+                model = IsolationForest(contamination=contamination, random_state=random_state)
+                model.fit(window.reshape(-1, 1))
+                scores = model.decision_function(window.reshape(-1, 1))
             latest = scores[-1]
             norm = (np.tanh(-latest) + 1.0) / 2.0
             return float(np.clip(norm, 0.0, 1.0))

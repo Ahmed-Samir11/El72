@@ -47,6 +47,26 @@ async def startup():
 
     # background consumer
     app.state.loop = asyncio.create_task(consume_loop())
+    # Load persisted ML model (if any)
+    try:
+        ml_detector.load_model_from_dir(os.getenv("MODEL_DIR", "models"))
+    except Exception:
+        logger.exception("Failed to load ML model on startup")
+
+    # Start CPU sampling for metrics
+    async def _cpu_sampler():
+        import psutil
+        proc = psutil.Process()
+        while True:
+            try:
+                # non-blocking percentage since last call
+                cpu = proc.cpu_percent(interval=None)
+                ml_detector.ML_PROCESS_CPU_PERCENT.set(cpu)
+            except Exception:
+                logger.exception("CPU sampler error")
+            await asyncio.sleep(int(os.getenv("ML_CPU_SAMPLE_INTERVAL", "5")))
+
+    app.state.metrics_task = asyncio.create_task(_cpu_sampler())
 
 
 @app.on_event("shutdown")
@@ -56,6 +76,10 @@ async def shutdown():
     Cancels background tasks and closes connections/pools.
     """
     app.state.loop.cancel()
+    try:
+        app.state.metrics_task.cancel()
+    except Exception:
+        pass
     await app.state.redis.close()
     await app.state.pg_pool.close()
     await app.state.ts_pool.close()
@@ -165,7 +189,11 @@ async def consume_loop():
                         async with ts_pool.acquire() as conn:
                             recent = await fetch_recent_prices(conn, sku, store, limit=20)
                         window = np.array(recent[::-1]) if recent else np.array([])
+                        # ML scoring with metrics
+                        ml_detector.ML_CALLS.inc()
+                        start = time.perf_counter()
                         score = ml_detector.score_prices(window)
+                        ml_detector.ML_LATENCY_SECONDS.observe(time.perf_counter() - start)
 
                         # If anomaly, handle monetization and publish
                         if score > ANOMALY_THRESHOLD:
@@ -180,10 +208,15 @@ async def consume_loop():
                                     await upsert_retailer_analytics(conn, store, category, bucket, delta_count=1, delta_velocity=1.0)
 
                             # Publish confirmed deal (after DB writes)
-                            await redis.xadd(
-                                "stream:confirmed_deals",
-                                {"payload": {"sku": sku, "store": store, "price": payload.get("price"), "timestamp": payload.get("timestamp"), "anomaly_score": score}},
-                            )
+                            try:
+                                await redis.xadd(
+                                    "stream:confirmed_deals",
+                                    {"payload": {"sku": sku, "store": store, "price": payload.get("price"), "timestamp": payload.get("timestamp"), "anomaly_score": score}},
+                                )
+                                ml_detector.ML_PUBLISHED.inc()
+                            except Exception:
+                                ml_detector.ML_PUBLISH_FAILURES.inc()
+                                logger.exception("Failed to publish confirmed deal for %s", sku)
 
                         # ACK only after successful DB operations
                         await redis.xack(STREAM, GROUP, msg_id)
