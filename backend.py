@@ -6,6 +6,7 @@ Responsibilities:
 - Read messages with XREADGROUP, simulate historical price (2x current), detect >20% drop,
   then XADD an alert to `stream:confirmed_deals` and XACK the original message.
 """
+
 from __future__ import annotations
 
 import json
@@ -78,7 +79,12 @@ def run():
                         # Forced historical price = 2x current to simulate a big drop
                         historical = current_price * 2.0
                         drop_pct = (historical - current_price) / historical * 100.0
-                        logger.info("Price check: current=%.2f historical=%.2f drop=%.1f%%", current_price, historical, drop_pct)
+                        logger.info(
+                            "Price check: current=%.2f historical=%.2f drop=%.1f%%",
+                            current_price,
+                            historical,
+                            drop_pct,
+                        )
 
                         if drop_pct > 20.0:
                             alert = {
@@ -92,7 +98,11 @@ def run():
                             }
                             try:
                                 r.xadd(CONFIRMED, {"payload": json.dumps(alert)})
-                                logger.info("✅ DEAL DETECTED -> published to %s: %s", CONFIRMED, alert)
+                                logger.info(
+                                    "✅ DEAL DETECTED -> published to %s: %s",
+                                    CONFIRMED,
+                                    alert,
+                                )
                             except Exception:
                                 logger.exception("Failed to publish confirmed deal")
 

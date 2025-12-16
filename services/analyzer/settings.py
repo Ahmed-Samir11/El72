@@ -1,5 +1,6 @@
 from pydantic import BaseSettings, Field
 
+
 class AnalyzerSettings(BaseSettings):
     service_name: str = Field("analyzer", env="SERVICE_NAME")
 

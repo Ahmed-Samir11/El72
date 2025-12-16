@@ -4,6 +4,7 @@ and publishes a structured payload to Redis Streams `stream:price_ingest`.
 
 This is the producer in the Golden Path integration test.
 """
+
 from __future__ import annotations
 
 import json
@@ -12,8 +13,9 @@ import re
 import sys
 from typing import Optional
 
-from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 import redis
+from playwright.sync_api import TimeoutError as PWTimeout
+from playwright.sync_api import sync_playwright
 
 STREAM = "stream:price_ingest"
 REDIS_URL = "redis://localhost:6379/0"
@@ -83,7 +85,9 @@ def extract_product_info(page) -> dict:
     price = parse_price(price_text) if price_text else None
 
     if not title:
-        raise RuntimeError("Could not extract product title; page structure may have changed")
+        raise RuntimeError(
+            "Could not extract product title; page structure may have changed"
+        )
     if price is None:
         raise RuntimeError(f"Could not extract price (raw='{price_text}')")
 

@@ -16,7 +16,9 @@ class BrowserPool:
         await pool.close()
     """
 
-    def __init__(self, playwright, max_browsers: int = 2, browser_type: str = "chromium"):
+    def __init__(
+        self, playwright, max_browsers: int = 2, browser_type: str = "chromium"
+    ):
         self._playwright = playwright
         self._max = max_browsers
         self._browser_type = browser_type
@@ -27,7 +29,9 @@ class BrowserPool:
         """Launch `max_browsers` browser instances and populate the pool."""
         self._queue = asyncio.Queue(maxsize=self._max)
         for _ in range(self._max):
-            browser = await getattr(self._playwright, self._browser_type).launch(headless=True)
+            browser = await getattr(self._playwright, self._browser_type).launch(
+                headless=True
+            )
             self._browsers.append(browser)
             await self._queue.put(browser)
 

@@ -1,4 +1,5 @@
 import asyncio
+
 import numpy as np
 
 from services.analyzer import ml_detector
