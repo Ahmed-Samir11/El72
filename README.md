@@ -147,3 +147,23 @@ File locations recap (open in editor):
 - `services/analyzer/ml_detector.py`
 - `infra/sql/ddl.sql`
 - `infra/sql/alerts.sql`
+
+---
+
+To run test:
+
+1- Inspect recent price_history rows: ```docker compose exec timescaledb psql -U elhaq -d elhaq_ts -c "SELECT time, sku, store_id, price_egp FROM price_history WHERE sku='LOGI-G502' ORDER BY time DESC LIMIT 10;"```
+
+2- Check analyzer logs for ML/anomaly/publish/errors: ```docker compose logs --tail=500 analyzer | Select-String -Pattern "ML_|anomaly|publish|ERROR|Exception"```
+
+3- Create a Unix timestamp in PowerShell: ```$ts = [int][double]::Parse((Get-Date -UFormat %s))```
+
+4- Build the JSON payload (PowerShell-escaped): ```$payload = "{`"sku`":`"LOGI-G502`",`"store`":`"amazon_eg`",`"price`":1500,`"timestamp`":$ts,`"trace_id`":`"manual-test`"}"```
+
+5- Get the Redis container id (Compose service redis): ```$cid = docker compose ps -q redis```
+
+6- Inject the payload into stream:confirmed_deals (simulate a confirmed deal): ```$payload | docker exec -i $cid redis-cli -x XADD stream:confirmed_deals * payload```
+
+7- Tail notifier logs to watch processing: ```docker compose logs --tail=200 -f notifier```
+
+8- Run the listener helper that waits for confirmed deals: ```python tests/integration/wait_for_confirmed.py```
