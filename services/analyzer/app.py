@@ -2,29 +2,29 @@ import os
 import asyncio
 import json
 import logging
+import uuid
 from typing import Dict, Any, List
 
 import asyncpg
 import numpy as np
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
+from pythonjsonlogger import jsonlogger
 
 from services.common.redis_client import RedisStreamClient
 from services.analyzer import ml_detector
-from services.analyzer.intent_upsert import upsert_retailer_analytics
+from services.analyzer.intent_upsert import upsert_retailer_analytics_batch
+from services.analyzer.settings import AnalyzerSettings
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("analyzer")
+settings = AnalyzerSettings()
 
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
-STREAM = "stream:price_ingest"
-GROUP = "cg_analyzer"
-CONSUMER = os.getenv("ANALYZER_CONSUMER", "analyzer-1")
-
-# Two DB endpoints: relational (for analytics) and timescale (time-series)
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://elhaq:elhaq_pass@localhost:5432/elhaq")
-TIMESCALE_URL = os.getenv("TIMESCALE_URL", DATABASE_URL)
-
-ANOMALY_THRESHOLD = float(os.getenv("ANOMALY_THRESHOLD", "0.8"))
+# Structured JSON logging
+logHandler = logging.StreamHandler()
+formatter = jsonlogger.JsonFormatter('%(asctime)s %(levelname)s %(name)s %(message)s')
+logHandler.setFormatter(formatter)
+root = logging.getLogger()
+root.setLevel(logging.INFO)
+root.addHandler(logHandler)
+logger = logging.getLogger(settings.service_name)
 
 app = FastAPI(title="Elhaq Analyzer")
 
@@ -38,18 +38,22 @@ async def startup():
     - Starts background consume loop
     """
     # Redis
-    app.state.redis = await RedisStreamClient.create(REDIS_URL)
-    await app.state.redis.ensure_group(STREAM, GROUP, mkstream=True)
+    app.state.redis = await RedisStreamClient.create(settings.redis_url)
+    await app.state.redis.ensure_group(settings.stream_price_ingest, settings.consumer_group, mkstream=True)
 
     # Postgres pools
-    app.state.pg_pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=5)
-    app.state.ts_pool = await asyncpg.create_pool(TIMESCALE_URL, min_size=1, max_size=5)
+    if not settings.database_url:
+        logger.error("DATABASE_URL is not set. Exiting.")
+        raise SystemExit("DATABASE_URL is required")
+    ts_url = settings.timescale_url or settings.database_url
+    app.state.pg_pool = await asyncpg.create_pool(settings.database_url, min_size=1, max_size=5)
+    app.state.ts_pool = await asyncpg.create_pool(ts_url, min_size=1, max_size=5)
 
     # background consumer
     app.state.loop = asyncio.create_task(consume_loop())
     # Load persisted ML model (if any)
     try:
-        ml_detector.load_model_from_dir(os.getenv("MODEL_DIR", "models"))
+        ml_detector.load_model_from_dir(settings.model_dir)
     except Exception:
         logger.exception("Failed to load ML model on startup")
 
@@ -64,9 +68,16 @@ async def startup():
                 ml_detector.ML_PROCESS_CPU_PERCENT.set(cpu)
             except Exception:
                 logger.exception("CPU sampler error")
-            await asyncio.sleep(int(os.getenv("ML_CPU_SAMPLE_INTERVAL", "5")))
+            await asyncio.sleep(settings.ml_cpu_sample_interval)
 
     app.state.metrics_task = asyncio.create_task(_cpu_sampler())
+
+    # Expose metrics endpoint via FastAPI
+    from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+
+    @app.get("/metrics")
+    async def metrics():
+        return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 @app.on_event("shutdown")
@@ -75,14 +86,34 @@ async def shutdown():
 
     Cancels background tasks and closes connections/pools.
     """
-    app.state.loop.cancel()
+    # Orderly shutdown: cancel tasks and await completion with timeout
+    async def _cancel_and_wait(task, name: str, timeout: float = 30.0):
+        if not task:
+            return
+        task.cancel()
+        try:
+            await asyncio.wait_for(task, timeout=timeout)
+        except asyncio.TimeoutError:
+            logger.warning("%s did not finish within %s seconds", name, timeout)
+        except asyncio.CancelledError:
+            pass
+
+    await _cancel_and_wait(app.state.loop, "consumer_loop", timeout=30.0)
+    await _cancel_and_wait(getattr(app.state, "metrics_task", None), "metrics_task", timeout=5.0)
+
+    # Close connections
     try:
-        app.state.metrics_task.cancel()
+        await app.state.redis.close()
     except Exception:
-        pass
-    await app.state.redis.close()
-    await app.state.pg_pool.close()
-    await app.state.ts_pool.close()
+        logger.exception("Error closing redis client")
+    try:
+        await app.state.pg_pool.close()
+    except Exception:
+        logger.exception("Error closing pg pool")
+    try:
+        await app.state.ts_pool.close()
+    except Exception:
+        logger.exception("Error closing ts pool")
 
 
 def compute_price_bucket(price: float) -> str:
@@ -166,14 +197,15 @@ async def consume_loop():
                 continue
             for stream, messages in res:
                 for msg_id, fields in messages:
+                    trace_id = str(uuid.uuid4())
                     payload_b = fields.get(b"payload") or fields.get("payload")
                     try:
                         payload = json.loads(payload_b) if isinstance(payload_b, (bytes, bytearray)) else payload_b
                     except Exception:
                         payload = payload_b
 
-                    sku = payload.get("sku")
-                    store = payload.get("store")
+                    sku = (payload.get("sku") if isinstance(payload, dict) else None)
+                    store = (payload.get("store") if isinstance(payload, dict) else None)
 
                     # Basic filtering
                     if payload.get("in_stock") is False:
@@ -184,39 +216,52 @@ async def consume_loop():
                     try:
                         async with ts_pool.acquire() as conn:
                             await insert_price_history(conn, payload)
-
-                        # Build window and score
-                        async with ts_pool.acquire() as conn:
+                            # Build window and score using same connection to avoid double-acquire
                             recent = await fetch_recent_prices(conn, sku, store, limit=20)
                         window = np.array(recent[::-1]) if recent else np.array([])
-                        # ML scoring with metrics
+
+                        # ML scoring with metrics (use async scorer for heavy methods)
                         ml_detector.ML_CALLS.inc()
                         start = time.perf_counter()
-                        score = ml_detector.score_prices(window)
+                        if settings.ml_method == "mad":
+                            score = ml_detector.score_prices(window, method="mad")
+                        else:
+                            score = await ml_detector.score_prices_async(window, method=settings.ml_method)
                         ml_detector.ML_LATENCY_SECONDS.observe(time.perf_counter() - start)
 
                         # If anomaly, handle monetization and publish
-                        if score > ANOMALY_THRESHOLD:
+                        if score > settings.ml_threshold:
                             # Find users who have alerts for this SKU
                             async with pg_pool.acquire() as conn:
                                 alerting = await find_alerting_users(conn, sku)
-                                # Upsert aggregated analytics for each alert (no PII stored)
+                                # Build batch items for upsert to avoid N+1 DB calls
                                 bucket = compute_price_bucket(float(payload.get("price")))
+                                items = []
                                 for a in alerting:
-                                    # category may be available from alert row
                                     category = a.get("category") or "unknown"
-                                    await upsert_retailer_analytics(conn, store, category, bucket, delta_count=1, delta_velocity=1.0)
+                                    items.append((store, category, bucket, 1, 1.0))
+                                if items:
+                                    await upsert_retailer_analytics_batch(conn, items)
 
                             # Publish confirmed deal (after DB writes)
-                            try:
-                                await redis.xadd(
-                                    "stream:confirmed_deals",
-                                    {"payload": {"sku": sku, "store": store, "price": payload.get("price"), "timestamp": payload.get("timestamp"), "anomaly_score": score}},
-                                )
-                                ml_detector.ML_PUBLISHED.inc()
-                            except Exception:
+                            # Publish confirmed deal (after DB writes) with retries and dead-letter on failure
+                            publish_payload = {"sku": sku, "store": store, "price": payload.get("price"), "timestamp": payload.get("timestamp"), "anomaly_score": score}
+                            success = False
+                            for attempt in range(settings.xadd_retries):
+                                try:
+                                    await redis.xadd(settings.stream_confirmed, {"payload": publish_payload})
+                                    ml_detector.ML_PUBLISHED.inc()
+                                    success = True
+                                    break
+                                except Exception:
+                                    await asyncio.sleep(settings.xadd_backoff_s * (2 ** attempt))
+                            if not success:
                                 ml_detector.ML_PUBLISH_FAILURES.inc()
-                                logger.exception("Failed to publish confirmed deal for %s", sku)
+                                try:
+                                    raw = app.state.redis.redis
+                                    await raw.rpush("queue:failed_publishes", json.dumps({"payload": publish_payload, "trace_id": trace_id}))
+                                except Exception:
+                                    logger.exception("Failed to persist failed publish for %s", sku)
 
                         # ACK only after successful DB operations
                         await redis.xack(STREAM, GROUP, msg_id)
