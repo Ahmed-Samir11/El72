@@ -1,14 +1,15 @@
-import os
 import asyncio
+import hashlib
 import json
 import logging
-import time
-import hashlib
+import os
 import random
 import re
-from typing import Dict, Any, List, Optional
+import time
+from typing import Any, Dict, List, Optional
 
-from playwright.async_api import async_playwright, Error as PlaywrightError
+from playwright.async_api import Error as PlaywrightError
+from playwright.async_api import async_playwright
 
 from services.common.redis_client import RedisStreamClient
 from services.scraper.browser_pool import BrowserPool
@@ -33,7 +34,11 @@ PROXIES_FILE = os.getenv("PROXIES_FILE", "proxies.json")
 
 
 # simple price regexes (precompiled for performance)
-PRICE_REGEXES = [r"EGP\s*([\d,]+(?:\.\d{1,2})?)", r"([\d,]+(?:\.\d{1,2})?)\s*EGP", r"([\d,]+(?:\.\d{1,2})?)"]
+PRICE_REGEXES = [
+    r"EGP\s*([\d,]+(?:\.\d{1,2})?)",
+    r"([\d,]+(?:\.\d{1,2})?)\s*EGP",
+    r"([\d,]+(?:\.\d{1,2})?)",
+]
 PRICE_PATTERNS = [re.compile(r, flags=re.IGNORECASE) for r in PRICE_REGEXES]
 OUT_OF_STOCK_KEYWORDS = ["out of stock", "unavailable", "sold out", "غير متوفر", "نفد"]
 
@@ -89,17 +94,25 @@ class ProxyPool:
     def get(self) -> Optional[Any]:
         """Return a random available proxy or `None` if none are available."""
         now = time.time()
-        candidates = [p for p in self.proxies if self.blacklist.get(self._key(p), 0) <= now]
+        candidates = [
+            p for p in self.proxies if self.blacklist.get(self._key(p), 0) <= now
+        ]
         if not candidates:
             return None
         return random.choice(candidates)
 
 
-async def fetch_target(target: Dict[str, Any], redis_client: RedisStreamClient, browser_pool: BrowserPool, proxy_pool: Optional[ProxyPool] = None):
-    """Fetch a single target page using Playwright, extract price and publish to Redis.
+async def fetch_target(  # noqa: C901
+    target: Dict[str, Any],
+    redis_client: RedisStreamClient,
+    browser_pool: BrowserPool,
+    proxy_pool: Optional[ProxyPool] = None,
+):
+    """Fetch a single target page using Playwright, extract price and publish
+    to Redis.
 
-    Retries are performed with exponential backoff. If all attempts fail the failed target is
-    pushed to `FAILED_QUEUE` for later inspection.
+    Retries are performed with exponential backoff. If all attempts fail the
+    failed target is pushed to `FAILED_QUEUE` for later inspection.
 
     Parameters
     - `playwright`: the `async_playwright()` instance/context
@@ -133,14 +146,20 @@ async def fetch_target(target: Dict[str, Any], redis_client: RedisStreamClient, 
         try:
             # Acquire a browser from the pool
             browser = await browser_pool.acquire()
-            context = await browser.new_context(proxy=proxy) if proxy else await browser.new_context()
+            context = (
+                await browser.new_context(proxy=proxy)
+                if proxy
+                else await browser.new_context()
+            )
             page = await context.new_page()
             # navigation timeout in ms (configurable)
             nav_timeout = int(os.getenv("SCRAPER_NAV_TIMEOUT_MS", "20000"))
-            response = await page.goto(url, timeout=nav_timeout)
+            await page.goto(url, timeout=nav_timeout)
             html = await page.content()
             # Offload CPU-heavy hash to threadpool
-            html_hash = await asyncio.to_thread(lambda s=html: hashlib.sha256(s.encode("utf-8")).hexdigest())
+            html_hash = await asyncio.to_thread(
+                lambda s=html: hashlib.sha256(s.encode("utf-8")).hexdigest()
+            )
 
             price = await extract_price(html)
             in_stock = await check_in_stock(html)
@@ -175,7 +194,9 @@ async def fetch_target(target: Dict[str, Any], redis_client: RedisStreamClient, 
             return True
         except PlaywrightError as e:
             msg = str(e)
-            logger.warning("Playwright error fetching %s (attempt %d): %s", url, attempt, msg)
+            logger.warning(
+                "Playwright error fetching %s (attempt %d): %s", url, attempt, msg
+            )
             if proxy and proxy_pool:
                 proxy_pool.mark_failed(proxy, backoff=60)
             # release browser if acquired
@@ -202,24 +223,37 @@ async def fetch_target(target: Dict[str, Any], redis_client: RedisStreamClient, 
         backoff = min(backoff * 2, 30)
 
     # if we reached here, all retries failed; push to failed queue
-    failure = {"sku": sku, "store": store, "url": url, "last_attempt_ts": int(time.time()), "attempts": attempt}
+    failure = {
+        "sku": sku,
+        "store": store,
+        "url": url,
+        "last_attempt_ts": int(time.time()),
+        "attempts": attempt,
+    }
     dumped = await asyncio.to_thread(json.dumps, failure)
     raw_redis = redis_client.redis
     try:
         await raw_redis.rpush(FAILED_QUEUE, dumped)
     except Exception:
         logger.exception("Failed to push failure to queue for %s", url)
-    logger.error("Failed to fetch %s after %d attempts; pushed to %s", url, attempt, FAILED_QUEUE)
+    logger.error(
+        "Failed to fetch %s after %d attempts; pushed to %s", url, attempt, FAILED_QUEUE
+    )
     return False
 
 
 async def run_from_file(path: str):
-    """Load targets from `path` and run them with `run_targets`. Returns list of results."""
+    """Load targets from `path` and run them with `run_targets`.
+
+    Returns a list of results.
+    """
     targets = load_targets(path)
     return await run_targets(targets)
 
 
-async def run_targets(targets: List[Dict[str, Any]], proxy_pool: Optional[ProxyPool] = None):
+async def run_targets(
+    targets: List[Dict[str, Any]], proxy_pool: Optional[ProxyPool] = None
+):
     """Run a collection of `targets` concurrently using Playwright.
 
     Parameters
@@ -234,7 +268,9 @@ async def run_targets(targets: List[Dict[str, Any]], proxy_pool: Optional[ProxyP
 
     async with async_playwright() as playwright:
         # create a browser pool sized by env or concurrency
-        pool_size = int(os.getenv("BROWSER_POOL_SIZE", str(max(1, min(CONCURRENCY, 2)))))
+        pool_size = int(
+            os.getenv("BROWSER_POOL_SIZE", str(max(1, min(CONCURRENCY, 2))))
+        )
         browser_pool = BrowserPool(playwright, max_browsers=pool_size)
         await browser_pool.start()
 
@@ -249,33 +285,47 @@ async def run_targets(targets: List[Dict[str, Any]], proxy_pool: Optional[ProxyP
         return results
 
 
-async def run_from_redis_stream(consumer_name: str = "scraper-1", proxy_pool: Optional[ProxyPool] = None):
+async def run_from_redis_stream(
+    consumer_name: str = "scraper-1", proxy_pool: Optional[ProxyPool] = None
+):
     """Continuously read targets from a Redis stream and process them."""
     redis_client = await RedisStreamClient.create(REDIS_URL)
     await redis_client.ensure_group(TARGETS_STREAM, "cg_scraper", mkstream=True)
 
     async with async_playwright() as playwright:
-        pool_size = int(os.getenv("BROWSER_POOL_SIZE", str(max(1, min(CONCURRENCY, 2)))))
+        pool_size = int(
+            os.getenv("BROWSER_POOL_SIZE", str(max(1, min(CONCURRENCY, 2))))
+        )
         browser_pool = BrowserPool(playwright, max_browsers=pool_size)
         await browser_pool.start()
         while True:
-            res = await redis_client.xreadgroup("cg_scraper", consumer_name, {TARGETS_STREAM: ">"}, count=1, block=5000)
+            res = await redis_client.xreadgroup(
+                "cg_scraper", consumer_name, {TARGETS_STREAM: ">"}, count=1, block=5000
+            )
             if not res:
                 await asyncio.sleep(0.1)
                 continue
-            for stream, messages in res:
+            for _stream, messages in res:
                 for msg_id, fields in messages:
                     payload_b = fields.get(b"payload") or fields.get("payload")
                     try:
-                        target = json.loads(payload_b) if isinstance(payload_b, (bytes, bytearray)) else payload_b
+                        target = (
+                            json.loads(payload_b)
+                            if isinstance(payload_b, (bytes, bytearray))
+                            else payload_b
+                        )
                     except Exception:
                         target = payload_b
                     try:
-                        await fetch_target(target, redis_client, browser_pool, proxy_pool)
+                        await fetch_target(
+                            target, redis_client, browser_pool, proxy_pool
+                        )
                         await redis_client.xack(TARGETS_STREAM, "cg_scraper", msg_id)
                     except Exception:
                         # on failure, leave message pending for retry
-                        logger.exception("Failed processing target from stream: %s", msg_id)
+                        logger.exception(
+                            "Failed processing target from stream: %s", msg_id
+                        )
 
         await browser_pool.close()
 
@@ -285,7 +335,9 @@ async def run_from_redis_list(proxy_pool: Optional[ProxyPool] = None):
     redis_client = await RedisStreamClient.create(REDIS_URL)
     raw = redis_client.redis
     async with async_playwright() as playwright:
-        pool_size = int(os.getenv("BROWSER_POOL_SIZE", str(max(1, min(CONCURRENCY, 2)))))
+        pool_size = int(
+            os.getenv("BROWSER_POOL_SIZE", str(max(1, min(CONCURRENCY, 2))))
+        )
         browser_pool = BrowserPool(playwright, max_browsers=pool_size)
         await browser_pool.start()
         while True:
@@ -317,7 +369,9 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--targets", default="targets_example.json", help="path to targets JSON file")
+    parser.add_argument(
+        "--targets", default="targets_example.json", help="path to targets JSON file"
+    )
     args = parser.parse_args()
 
     tg = load_targets(args.targets)

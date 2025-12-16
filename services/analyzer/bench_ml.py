@@ -4,10 +4,12 @@ Run to compare latency of the default MAD scorer vs sklearn IsolationForest (off
 Example:
     python -m services.analyzer.bench_ml --sizes 20 100 500 --iters 20
 """
-import time
+
 import argparse
-import numpy as np
 import asyncio
+import time
+
+import numpy as np
 
 from services.analyzer import ml_detector
 
@@ -38,14 +40,20 @@ def run_bench(sizes, iters):
         for _ in range(iters):
             t, _ = bench_sync_mad(window)
             times.append(t)
-        print(f"MAD size={n}: avg={sum(times)/len(times):.6f}s min={min(times):.6f}s max={max(times):.6f}s")
+        avg = sum(times) / len(times)
+        mn = min(times)
+        mx = max(times)
+        print(f"MAD size={n}: avg={avg:.6f}s min={mn:.6f}s max={mx:.6f}s")
 
         # Isolation (sync) - may be slow
         times = []
         for _ in range(iters):
             t, _ = bench_sync_isolation(window)
             times.append(t)
-        print(f"Isolation size={n}: avg={sum(times)/len(times):.6f}s min={min(times):.6f}s max={max(times):.6f}s")
+        avg = sum(times) / len(times)
+        mn = min(times)
+        mx = max(times)
+        print(f"Isolation size={n}: avg={avg:.6f}s min={mn:.6f}s max={mx:.6f}s")
 
         # Isolation (async offloaded)
         loop = asyncio.new_event_loop()
@@ -54,13 +62,22 @@ def run_bench(sizes, iters):
         for _ in range(iters):
             t, _ = loop.run_until_complete(bench_async_isolation(window))
             times.append(t)
-        print(f"Isolation(async) size={n}: avg={sum(times)/len(times):.6f}s min={min(times):.6f}s max={max(times):.6f}s")
+        avg = sum(times) / len(times)
+        mn = min(times)
+        mx = max(times)
+        print(f"Isolation(async) size={n}: avg={avg:.6f}s min={mn:.6f}s max={mx:.6f}s")
         loop.close()
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--sizes", type=int, nargs="+", default=[20, 100, 500], help="window sizes to test")
+    parser.add_argument(
+        "--sizes",
+        type=int,
+        nargs="+",
+        default=[20, 100, 500],
+        help="window sizes to test",
+    )
     parser.add_argument("--iters", type=int, default=10, help="iterations per size")
     args = parser.parse_args()
     run_bench(args.sizes, args.iters)

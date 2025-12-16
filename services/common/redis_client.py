@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import json
-import asyncio
-from typing import Any, Dict, Optional, Iterable
+from typing import Any, Dict, Iterable, Optional
 
 import redis.asyncio as aioredis
 from redis.exceptions import ResponseError
@@ -33,7 +32,9 @@ class RedisStreamClient:
         self._redis = redis
 
     @classmethod
-    async def create(cls, url: str, password: Optional[str] = None) -> "RedisStreamClient":
+    async def create(
+        cls, url: str, password: Optional[str] = None
+    ) -> "RedisStreamClient":
         """Create or return the singleton instance.
 
         Parameters
@@ -55,7 +56,9 @@ class RedisStreamClient:
         """Return the underlying `redis.asyncio.Redis` instance."""
         return self._redis
 
-    async def ensure_group(self, stream: str, group: str, mkstream: bool = True) -> None:
+    async def ensure_group(
+        self, stream: str, group: str, mkstream: bool = True
+    ) -> None:
         """Ensure a consumer group exists for a stream.
 
         This is idempotent: if the group already exists the error is ignored.
@@ -73,7 +76,9 @@ class RedisStreamClient:
                 return
             raise
 
-    async def xadd(self, stream: str, fields: Dict[str, Any], maxlen: Optional[int] = None) -> str:
+    async def xadd(
+        self, stream: str, fields: Dict[str, Any], maxlen: Optional[int] = None
+    ) -> str:
         """Push a message to `stream` with `fields` encoded as bytes.
 
         Non-bytes values are JSON-serialized. Returns the Redis message id.
@@ -96,7 +101,9 @@ class RedisStreamClient:
         msg_id = await self._redis.xadd(stream, encoded, maxlen=maxlen)
         return msg_id
 
-    async def xadd_many(self, stream: str, list_of_fields: Iterable[Dict[str, Any]]) -> list:
+    async def xadd_many(
+        self, stream: str, list_of_fields: Iterable[Dict[str, Any]]
+    ) -> list:
         """Batch XADD multiple field dicts to `stream` using a pipeline.
 
         Returns a list of message ids in the same order.
@@ -136,7 +143,9 @@ class RedisStreamClient:
 
         Returns the raw XREADGROUP result.
         """
-        result = await self._redis.xreadgroup(group, consumer, streams=streams, count=count, block=block)
+        result = await self._redis.xreadgroup(
+            group, consumer, streams=streams, count=count, block=block
+        )
         return result
 
     async def xack(self, stream: str, group: str, message_id: str) -> int:
@@ -146,7 +155,9 @@ class RedisStreamClient:
         """
         return await self._redis.xack(stream, group, message_id)
 
-    async def xack_many(self, stream: str, group: str, message_ids: Iterable[str]) -> int:
+    async def xack_many(
+        self, stream: str, group: str, message_ids: Iterable[str]
+    ) -> int:
         """Acknowledge multiple message ids for a group. Returns number acknowledged."""
         ids = list(message_ids)
         if not ids:

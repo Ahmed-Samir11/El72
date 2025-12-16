@@ -1,26 +1,35 @@
-from typing import Dict, Any
-import logging
 import asyncio
-import time
-import os
-import joblib
 import json
+import logging
+import os
+from typing import Any, Dict
+
+import joblib
 import numpy as np
+from prometheus_client import Counter, Gauge, Histogram
 from sklearn.ensemble import IsolationForest
-import psutil
-from prometheus_client import Histogram, Counter, Gauge
 
 from services.common.redis_client import RedisStreamClient
 
 logger = logging.getLogger("analyzer.ml_detector")
 
 # Prometheus metrics
-ML_LATENCY_SECONDS = Histogram("ml_latency_seconds", "ML scoring latency seconds", buckets=(0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0))
+ML_LATENCY_SECONDS = Histogram(
+    "ml_latency_seconds",
+    "ML scoring latency seconds",
+    buckets=(0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0),
+)
 ML_CALLS = Counter("ml_calls_total", "Total ML scoring calls")
 ML_PUBLISHED = Counter("ml_published_total", "Total published confirmed deals")
-ML_PUBLISH_FAILURES = Counter("ml_publish_failures_total", "Publish failures for confirmed deals")
-ML_FALSE_POSITIVE = Counter("ml_false_positive_total", "Count of false positives recorded")
-ML_PROCESS_CPU_PERCENT = Gauge("ml_process_cpu_percent", "Process CPU percent sampled periodically")
+ML_PUBLISH_FAILURES = Counter(
+    "ml_publish_failures_total", "Publish failures for confirmed deals"
+)
+ML_FALSE_POSITIVE = Counter(
+    "ml_false_positive_total", "Count of false positives recorded"
+)
+ML_PROCESS_CPU_PERCENT = Gauge(
+    "ml_process_cpu_percent", "Process CPU percent sampled periodically"
+)
 
 # Loaded model artifact (if any)
 _loaded_model = None
@@ -47,7 +56,13 @@ def load_model_from_dir(models_dir: str = "models") -> None:
         logger.exception("Failed to load model: %s", e)
 
 
-def score_prices(window: np.ndarray, method: str = "mad", *, contamination: float = 0.05, random_state: int = 42) -> float:
+def score_prices(
+    window: np.ndarray,
+    method: str = "mad",
+    *,
+    contamination: float = 0.05,
+    random_state: int = 42
+) -> float:
     """Return an anomaly score in [0,1] for the latest sample in `window`.
 
     By default this function uses a fast, deterministic Median Absolute Deviation (MAD)
@@ -97,7 +112,9 @@ def score_prices(window: np.ndarray, method: str = "mad", *, contamination: floa
                 scores = _loaded_model.decision_function(window.reshape(-1, 1))
             else:
                 # Fallback: train a temporary model (expensive)
-                model = IsolationForest(contamination=contamination, random_state=random_state)
+                model = IsolationForest(
+                    contamination=contamination, random_state=random_state
+                )
                 model.fit(window.reshape(-1, 1))
                 scores = model.decision_function(window.reshape(-1, 1))
             latest = scores[-1]
@@ -108,7 +125,9 @@ def score_prices(window: np.ndarray, method: str = "mad", *, contamination: floa
             return 0.0
 
 
-async def score_prices_async(window: np.ndarray, method: str = "isolation", **kwargs) -> float:
+async def score_prices_async(
+    window: np.ndarray, method: str = "isolation", **kwargs
+) -> float:
     """Async wrapper that offloads the sync `score_prices` function to a threadpool.
 
     Use this when running heavy methods (e.g., `method='isolation'`) to avoid blocking
@@ -117,10 +136,16 @@ async def score_prices_async(window: np.ndarray, method: str = "isolation", **kw
     return await asyncio.to_thread(score_prices, window, method, **kwargs)
 
 
-async def process_and_publish_if_deal(redis_client: RedisStreamClient, event: Dict[str, Any], anomaly_score: float, threshold: float = 0.8) -> None:
+async def process_and_publish_if_deal(
+    redis_client: RedisStreamClient,
+    event: Dict[str, Any],
+    anomaly_score: float,
+    threshold: float = 0.8,
+) -> None:
     """If the score passes `threshold`, push event to confirmed deals stream.
 
-    Caller must ensure DB writes and monetization logging are already done before calling.
+    The caller must ensure any DB writes and monetization logging are
+    already done before calling this helper.
     """
     try:
         if anomaly_score > threshold:
