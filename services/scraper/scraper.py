@@ -37,6 +37,10 @@ OUT_OF_STOCK_KEYWORDS = ["out of stock", "unavailable", "sold out", "غير مت
 
 
 async def extract_price(html: str) -> float:
+    """Extract a price value (EGP) from raw `html` using configured regexes.
+
+    Returns the parsed float price or `0.0` if no price could be extracted.
+    """
     for rx in PRICE_REGEXES:
         m = re.search(rx, html, flags=re.IGNORECASE)
         if m:
@@ -49,6 +53,10 @@ async def extract_price(html: str) -> float:
 
 
 async def check_in_stock(html: str) -> bool:
+    """Check if `html` suggests the product is in stock.
+
+    Returns `False` if any out-of-stock keywords are found, `True` otherwise.
+    """
     low = html.lower()
     for kw in OUT_OF_STOCK_KEYWORDS:
         if kw in low:
@@ -58,18 +66,26 @@ async def check_in_stock(html: str) -> bool:
 
 class ProxyPool:
     def __init__(self, proxies: List[Any]):
+        """Simple in-memory proxy pool with temporary blacklist/backoff.
+
+        Parameters
+        - `proxies`: list of proxy descriptors (strings or dicts)
+        """
         self.proxies = proxies
         # blacklist: proxy -> timestamp when it becomes available
         self.blacklist: Dict[str, float] = {}
 
     def _key(self, p: Any) -> str:
+        """Normalize a proxy descriptor into a stable string key."""
         return p if isinstance(p, str) else json.dumps(p, sort_keys=True)
 
     def mark_failed(self, proxy: Any, backoff: int = 60):
+        """Mark a proxy as failed and blackout for `backoff` seconds."""
         k = self._key(proxy)
         self.blacklist[k] = time.time() + backoff
 
     def get(self) -> Optional[Any]:
+        """Return a random available proxy or `None` if none are available."""
         now = time.time()
         candidates = [p for p in self.proxies if self.blacklist.get(self._key(p), 0) <= now]
         if not candidates:
@@ -78,6 +94,20 @@ class ProxyPool:
 
 
 async def fetch_target(playwright, target: Dict[str, Any], redis_client: RedisStreamClient, proxy_pool: Optional[ProxyPool] = None):
+    """Fetch a single target page using Playwright, extract price and publish to Redis.
+
+    Retries are performed with exponential backoff. If all attempts fail the failed target is
+    pushed to `FAILED_QUEUE` for later inspection.
+
+    Parameters
+    - `playwright`: the `async_playwright()` instance/context
+    - `target`: mapping containing at least `url`, `sku`, and `store`
+    - `redis_client`: `RedisStreamClient` used to publish results
+    - `proxy_pool`: optional `ProxyPool` for rotating proxies
+
+    Returns
+    - `True` on success, `False` if all retries failed.
+    """
     url = target.get("url")
     sku = target.get("sku")
     store = target.get("store")
@@ -161,11 +191,20 @@ async def fetch_target(playwright, target: Dict[str, Any], redis_client: RedisSt
 
 
 async def run_from_file(path: str):
+    """Load targets from `path` and run them with `run_targets`. Returns list of results."""
     targets = load_targets(path)
     return await run_targets(targets)
 
 
 async def run_targets(targets: List[Dict[str, Any]], proxy_pool: Optional[ProxyPool] = None):
+    """Run a collection of `targets` concurrently using Playwright.
+
+    Parameters
+    - `targets`: list of target dicts
+    - `proxy_pool`: optional `ProxyPool`
+
+    Returns a list of boolean results for each target.
+    """
     redis_client = await RedisStreamClient.create(REDIS_URL)
 
     sem = asyncio.Semaphore(CONCURRENCY)
@@ -181,6 +220,7 @@ async def run_targets(targets: List[Dict[str, Any]], proxy_pool: Optional[ProxyP
 
 
 async def run_from_redis_stream(consumer_name: str = "scraper-1", proxy_pool: Optional[ProxyPool] = None):
+    """Continuously read targets from a Redis stream and process them."""
     redis_client = await RedisStreamClient.create(REDIS_URL)
     await redis_client.ensure_group(TARGETS_STREAM, "cg_scraper", mkstream=True)
 
@@ -206,6 +246,7 @@ async def run_from_redis_stream(consumer_name: str = "scraper-1", proxy_pool: Op
 
 
 async def run_from_redis_list(proxy_pool: Optional[ProxyPool] = None):
+    """Continuously consume targets from a Redis list (blocking left pop)."""
     redis_client = await RedisStreamClient.create(REDIS_URL)
     raw = redis_client.redis
     async with async_playwright() as playwright:
@@ -227,6 +268,7 @@ async def run_from_redis_list(proxy_pool: Optional[ProxyPool] = None):
 
 
 def load_targets(path: str) -> List[Dict[str, Any]]:
+    """Load targets JSON from `path` and return list of target dicts."""
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
 
@@ -239,4 +281,4 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     tg = load_targets(args.targets)
-    asyncio.run(run(tg))
+    asyncio.run(run_targets(tg))

@@ -35,6 +35,24 @@ npm ci
 npm run start
 ```
 
+Documentation
+-------------
+
+Build the Sphinx documentation locally after installing the pinned Python dependencies:
+
+```bash
+pip install -r requirements.txt
+pip install -r requirements.txt  # ensures sphinx and theme are installed
+sphinx-build -b html docs docs/_build/html
+```
+
+Open `docs/_build/html/index.html` in your browser to view the generated API docs.
+
+Notes
+-----
+- A top-level `requirements.txt` is provided with pinned versions used for local development.
+- For docs generation, ensure `sphinx` and `sphinx-rtd-theme` are installed (they are included in the top-level requirements).
+
 Key files
 - `.github/copilot-instructions.md` — AI agent guidance for working in this repo.
 - `services/common/redis_client.py` — Async Redis Streams singleton wrapper used by services.

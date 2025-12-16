@@ -31,6 +31,12 @@ app = FastAPI(title="Elhaq Analyzer")
 
 @app.on_event("startup")
 async def startup():
+    """Application startup handler.
+
+    - Initializes Redis stream client and consumer group
+    - Creates Postgres connection pools
+    - Starts background consume loop
+    """
     # Redis
     app.state.redis = await RedisStreamClient.create(REDIS_URL)
     await app.state.redis.ensure_group(STREAM, GROUP, mkstream=True)
@@ -45,6 +51,10 @@ async def startup():
 
 @app.on_event("shutdown")
 async def shutdown():
+    """Application shutdown handler.
+
+    Cancels background tasks and closes connections/pools.
+    """
     app.state.loop.cancel()
     await app.state.redis.close()
     await app.state.pg_pool.close()
@@ -52,6 +62,10 @@ async def shutdown():
 
 
 def compute_price_bucket(price: float) -> str:
+    """Compute simple price bucket for reporting/aggregation.
+
+    Returns one of: `0-4999`, `5000-9999`, `10000+`.
+    """
     if price < 5000:
         return "0-4999"
     if price < 10000:
@@ -60,6 +74,12 @@ def compute_price_bucket(price: float) -> str:
 
 
 async def insert_price_history(conn: asyncpg.Connection, event: Dict[str, Any]) -> None:
+    """Insert a price event into the `price_history` timeseries table.
+
+    Parameters
+    - `conn`: an active asyncpg connection
+    - `event`: mapping with keys `timestamp`, `sku`, `store`, `price`, `in_stock`
+    """
     await conn.execute(
         """
         INSERT INTO price_history (time, sku, store_id, price_egp, in_stock)
@@ -74,6 +94,10 @@ async def insert_price_history(conn: asyncpg.Connection, event: Dict[str, Any]) 
 
 
 async def fetch_recent_prices(conn: asyncpg.Connection, sku: str, store: str, limit: int = 20) -> List[float]:
+    """Fetch recent price values for a given `sku` and `store`.
+
+    Returns a list of floats ordered newest->oldest (the caller may reorder).
+    """
     rows = await conn.fetch(
         "SELECT price_egp FROM price_history WHERE sku=$1 AND store_id=$2 ORDER BY time DESC LIMIT $3",
         sku,
@@ -84,7 +108,11 @@ async def fetch_recent_prices(conn: asyncpg.Connection, sku: str, store: str, li
 
 
 async def find_alerting_users(conn: asyncpg.Connection, sku: str) -> List[Dict[str, Any]]:
-    # Conservative: query an alerts table if present. Otherwise return empty list.
+    """Return a list of alerts (user-level subscriptions) for `sku`.
+
+    This function is conservative: if the `alerts` table is not present it returns an empty list.
+    Each returned dict should contain at least `user_id` and optionally `category`.
+    """
     try:
         rows = await conn.fetch("SELECT user_id, category FROM alerts WHERE sku = $1", sku)
         return [dict(r) for r in rows]
@@ -93,6 +121,16 @@ async def find_alerting_users(conn: asyncpg.Connection, sku: str) -> List[Dict[s
 
 
 async def consume_loop():
+    """Background loop that reads events from the price ingest stream and processes them.
+
+    Responsibilities:
+    - Read messages from `stream:price_ingest` via consumer group
+    - Persist to timeseries
+    - Run anomaly scoring and trigger analytics upserts
+    - Publish confirmed deals to `stream:confirmed_deals` after DB writes
+
+    The loop acknowledges messages only after successful DB operations.
+    """
     redis: RedisStreamClient = app.state.redis
     ts_pool: asyncpg.Pool = app.state.ts_pool
     pg_pool: asyncpg.Pool = app.state.pg_pool
@@ -160,4 +198,5 @@ async def consume_loop():
 
 @app.get("/health")
 async def health():
+    """Simple health endpoint used by orchestration and readiness checks."""
     return {"status": "ok"}
