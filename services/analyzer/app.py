@@ -514,8 +514,8 @@ async def consume_loop():  # noqa: C901
                     try:
                         async with ts_pool.acquire() as conn:
                             await insert_price_history(conn, payload)
-                                # Build window and score using same connection to
-                                # avoid double-acquire
+                            # Build window and score using same connection to
+                            # avoid double-acquire
                             recent = await fetch_recent_prices(
                                 conn, sku, store, limit=20
                             )
