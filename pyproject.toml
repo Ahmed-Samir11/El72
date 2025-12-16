@@ -5,7 +5,7 @@ skip-string-normalization = true
 [tool.ruff]
 line-length = 88
 select = ["E", "F", "W", "C", "I", "B"]
-ignore = ["E203", "W503"]
+ignore = ["E203"]
 
 [tool.isort]
 profile = "black"
