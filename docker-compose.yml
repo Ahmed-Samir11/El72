@@ -53,6 +53,7 @@ services:
       - redis
     environment:
       REDIS_URL: "redis://redis:6379"
+      MOCK_WHATSAPP: "true"
     command: ["npm", "run", "start"]
 
 volumes:

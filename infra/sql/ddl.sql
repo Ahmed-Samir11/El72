@@ -12,6 +12,38 @@ CREATE TABLE IF NOT EXISTS price_history (
 
 SELECT create_hypertable('price_history', 'time', if_not_exists => TRUE);
 
+-- Users table
+CREATE TABLE IF NOT EXISTS users (
+  id SERIAL PRIMARY KEY,
+  phone VARCHAR(20) UNIQUE NOT NULL,
+  password_hash VARCHAR(128) NOT NULL,
+  salt VARCHAR(32) NOT NULL,
+  tier VARCHAR(20) NOT NULL DEFAULT 'free',
+  valid_until TIMESTAMPTZ
+);
+
+-- Alerts table
+CREATE TABLE IF NOT EXISTS alerts (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  target_url TEXT NOT NULL,
+  target_price NUMERIC(10,2) NOT NULL,
+  active_status BOOLEAN NOT NULL DEFAULT TRUE
+);
+
+-- Payment logs table
+CREATE TABLE IF NOT EXISTS payment_logs (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  paymob_order_id TEXT NOT NULL,
+  amount NUMERIC(10,2) NOT NULL,
+  currency TEXT NOT NULL DEFAULT 'EGP',
+  status TEXT NOT NULL,
+  tier TEXT NOT NULL,
+  valid_until TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
 -- Aggregated table for B2B product (no PII)
 CREATE TABLE IF NOT EXISTS retailer_analytics (
   store_id TEXT NOT NULL,

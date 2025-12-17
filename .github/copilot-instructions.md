@@ -1,46 +1,30 @@
-# El72 Project - Copilot Instructions
+# Elhaq Project - Copilot Instructions (v2.0 MVP)
 
-## 1. Project Context & Architecture
-**Mission:** Real-time deal detection SaaS for the Egyptian market (Amazon EG, Noon, local retailers).
-**Architecture:** Event-Driven Microservices using **Redis Streams** as the backbone.
-**Monorepo Structure:**
-- `services/scraper` (Python/Playwright): Producers.
-- `services/analyzer` (Python/Scikit): Processors (Consumer Group: `cg_analyzer`).
-- `services/notification` (Node.js): Consumers (Consumer Group: `cg_notifier`).
-- `services/billing` (Go/Python): Dynamic pricing logic.
+## 1. Architecture & Boundaries
+**Type:** Event-Driven Microservices (Monorepo).
+**Core Communication:** Redis Streams (`XADD`, `XREADGROUP`, `XACK`). No Pub/Sub.
+**Services:**
+- `services/api` (New): Gateway for User Auth (JWT), Alerts CRUD, and Frontend API.
+- `services/scraper`: Python/Playwright producers.
+- `services/analyzer`: Python/FastAPI "Brain" (ML + DB persistence).
+- `services/notification`: Node.js/TypeScript "Messenger".
+- `services/billing`: Python/FastAPI (Paymob Webhooks + Dynamic Pricing).
 
-## 2. Critical Implementation Patterns
-### Messaging (Redis Streams)
-* **Strictly use Redis Streams** (`XADD`, `XREADGROUP`, `XACK`). Do NOT use Pub/Sub.
-* **Reliability:** Consumers must acknowledge (`XACK`) messages only *after* successful DB commits.
-* **Stream Keys:**
-    * `stream:price_ingest`: Raw scraped data.
-    * `stream:confirmed_deals`: Validated deals ready for alerting.
-* **Consumer Groups:** Always ensure groups exist (`XGROUP CREATE ... MKSTREAM`) before consumption.
+## 2. Coding Standards (Strict)
+* **Principle:** SOLID, DRY. Use Dependency Injection where possible.
+* **Error Handling:** Fail fast. Log with `trace_id`. Do not swallow exceptions.
+* **Security:** * Validate ALL webhooks (Paymob HMAC).
+    * Encrypt PII (AES-256) before DB write.
+    * Never commit secrets; use `os.getenv`.
+* **Database:** * TimescaleDB for `price_history`.
+    * PostgreSQL for `users` and `alerts`.
+    * Redis for Hot State/Streams.
 
-### Database Strategy
-* **Time-Series:** Use **TimescaleDB** hypertables for `price_history`.
-    * *Pattern:* `SELECT create_hypertable('price_history', 'time');`
-* **Relational:** PostgreSQL for `users`, `subscriptions`, and `retailer_analytics`.
-* **B2B Logic:** When a user sets an alert, increment the aggregate counter in `retailer_analytics` (Upsert pattern).
+## 3. Critical Patterns
+* **Stream Reliability:** Always define Consumer Groups on startup. Always `XACK` after successful processing.
+* **ML Persistence:** Load models from disk; do not retrain on every request.
+* **Feature Flags:** Use Env Vars to toggle "Simulation Mode" vs "Production Mode" (e.g., `MOCK_WHATSAPP=True`).
 
-### Scraping & Anti-Bot
-* **Stealth:** All scrapers must use `playwright-stealth`.
-* **Resilience:** Implement exponential backoff for `403 Forbidden` or `503 Service Unavailable`.
-* **Context:** Assume execution via Egyptian Residential Proxies. Hardcode timeouts to >30s due to proxy latency.
-
-## 3. Security & Compliance (Egypt Focus)
-* **Payments:** Validate **Paymob** webhooks via HMAC signature *before* processing.
-    * *Rule:* Reject requests where `hmac_calc != hmac_header`.
-* **PII:** Encrypt sensitive user fields (Phone, Email) at rest using AES-256.
-* **Data Minimization:** `RetailerAnalytics` table must NEVER contain `user_id` or PII.
-
-## 4. Coding Standards
-* **Python:** Type-hinted (Pydantic), Async (FastAPI/`asyncio`).
-* **Node.js:** TypeScript, Zod for validation.
-* **Error Handling:** Never swallow exceptions. Log structured JSON errors including `trace_id` and `service_name`.
-* **Currency:** Store all prices as `DECIMAL(10,2)` normalized to **EGP**.
-
-## 5. Developer Workflow
-* **Docker:** All services run in containers. Use `docker-compose up --build` for local dev.
-* **Testing:** Use `pytest` for Python services. Mock Redis interactions in tests.
+## 4. MVP Phase Focus
+* Phase 1: Auth, Alert API, Robust Scraping.
+* Phase 2: Billing, WhatsApp, E2E Testing.

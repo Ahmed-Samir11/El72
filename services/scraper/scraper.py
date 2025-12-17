@@ -370,9 +370,21 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--targets", default="targets_example.json", help="path to targets JSON file"
+        "--targets", default="services/scraper/targets_example.json", help="path to targets JSON file"
     )
     args = parser.parse_args()
 
-    tg = load_targets(args.targets)
-    asyncio.run(run_targets(tg))
+    if TARGETS_SOURCE == "file":
+        tg = load_targets(args.targets)
+        asyncio.run(run_targets(tg))
+    elif TARGETS_SOURCE == "redis_stream":
+        asyncio.run(run_from_redis_stream())
+    elif TARGETS_SOURCE == "redis_list":
+        asyncio.run(run_from_redis_list())
+    elif TARGETS_SOURCE == "both":
+        # Run both file and stream
+        tg = load_targets(args.targets)
+        asyncio.run(asyncio.gather(run_targets(tg), run_from_redis_stream()))
+    else:
+        print(f"Unknown TARGETS_SOURCE: {TARGETS_SOURCE}")
+        exit(1)
