@@ -69,6 +69,22 @@ services:
       MOCK_WHATSAPP: "true"
     command: ["npm", "run", "start"]
 
+  whatsapp:
+    build:
+      context: ./services/whatsapp
+    depends_on:
+      - redis
+    environment:
+      REDIS_URL: "redis://redis:6379"
+      STREAM_NAME: "stream:confirmed_deals"
+      CONSUMER_GROUP: "cg_whatsapp"
+      CONSUMER_NAME: "whatsapp-1"
+      WHATSAPP_ACCESS_TOKEN: "EAAMDRapIJBIBQAtLaaKxDUJJ5CFRsQwvvucrqTmAN5FlgMEcFfooyPmZCtcqTBxezCJaNaKAKMWoiOdp30DTe13AiSYUfezbH1v9r63pzBiWsTw5nZC27ZAsEbRtOZCFoj4lcM7kknXRXcREP5W6m1NaVIpTSNZByRS5v92NkRsRZB96fNx160vaj0TjkqX4lVPDH5oNogDdTJQVcejRO3oNx1v9hZC1BGC3zVVkFTzTTGXAbbFwGWNwbSG6KzoGaHZAQ26ujKTbmbr6KxZCcnXVr"
+      WHATSAPP_PHONE_NUMBER_ID: "966490223206963"
+      WHATSAPP_API_VERSION: "v18.0"
+      MOCK_WHATSAPP: "false"
+    restart: unless-stopped
+
 volumes:
   redis-data:
   pg-data:
