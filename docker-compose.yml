@@ -44,6 +44,19 @@ services:
       REDIS_URL: "redis://redis:6379"
       DATABASE_URL: "postgresql://elhaq:elhaq_pass@postgres:5432/elhaq"
     ports:
+      - "8001:8000"
+
+  api:
+    build:
+      context: .
+      dockerfile: services/api/Dockerfile
+    depends_on:
+      - redis
+      - postgres
+    environment:
+      REDIS_URL: "redis://redis:6379"
+      DATABASE_URL: "postgresql://elhaq:elhaq_pass@postgres:5432/elhaq"
+    ports:
       - "8000:8000"
 
   notifier:
