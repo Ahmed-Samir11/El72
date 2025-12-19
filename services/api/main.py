@@ -1,4 +1,5 @@
 import os
+import json
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -11,7 +12,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
 
 from services.api.models import Alert, Base, User
-# from services.common.redis_client import RedisStreamClient
+from services.common.redis_client import RedisStreamClient
 
 from services.api.dependencies import *
 
@@ -54,15 +55,20 @@ app.add_middleware(
 from services.api.routers import auth
 app.include_router(auth.router, prefix="/auth", tags=["Auth"])
 
-# Background task function
-# async def push_to_stream(target_url: str, alert_id: int):
-#     redis_client = await RedisStreamClient.create(REDIS_URL)
-#     target = {
-#         "url": target_url,
-#         "sku": f"alert_{alert_id}",
-#         "store": "unknown"  # or extract from URL
-#     }
-#     await redis_client.xadd(TARGETS_STREAM, {"payload": target})
+# Background task function to push new alert targets to scraper stream
+async def push_to_stream(target_url: str, alert_id: int):
+    """Push new alert target to Redis stream for scraper service"""
+    try:
+        redis_client = await RedisStreamClient.create(REDIS_URL)
+        target = {
+            "url": target_url,
+            "sku": f"alert_{alert_id}",
+            "store": "unknown"  # Could extract from URL if needed
+        }
+        await redis_client.xadd("stream:scrape_targets", {"payload": json.dumps(target)})
+    except Exception as e:
+        # Log error but don't fail the request
+        print(f"Failed to push to stream: {e}")
 
 # Pydantic models
 class AlertCreate(BaseModel):

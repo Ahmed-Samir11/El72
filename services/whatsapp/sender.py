@@ -4,16 +4,19 @@ WhatsApp Notification Service for El72
 Consumes notifications from Redis Streams and sends WhatsApp messages via Facebook Graph API.
 Listens to: stream:confirmed_deals
 Consumer Group: cg_whatsapp
+Queries database for all users with alerts for the SKU and sends to all of them.
 """
 
 import asyncio
 import json
 import os
 import sys
-from typing import Dict, Any
+from typing import Dict, Any, List, Tuple
 
 import redis.asyncio as aioredis
 import httpx
+import psycopg2
+from psycopg2.extras import RealDictCursor
 from loguru import logger
 
 # Configuration from environment
@@ -21,6 +24,9 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://127.0.0.1:6379")
 STREAM_NAME = os.getenv("STREAM_NAME", "stream:confirmed_deals")
 CONSUMER_GROUP = os.getenv("CONSUMER_GROUP", "cg_whatsapp")
 CONSUMER_NAME = os.getenv("CONSUMER_NAME", "whatsapp-1")
+
+# Database Configuration
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://elhaq:elhaq_pass@postgres:5432/elhaq")
 
 # WhatsApp Business API Configuration
 ACCESS_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN", "EAAMDRapIJBIBQAtLaaKxDUJJ5CFRsQwvvucrqTmAN5FlgMEcFfooyPmZCtcqTBxezCJaNaKAKMWoiOdp30DTe13AiSYUfezbH1v9r63pzBiWsTw5nZC27ZAsEbRtOZCFoj4lcM7kknXRXcREP5W6m1NaVIpTSNZByRS5v92NkRsRZB96fNx160vaj0TjkqX4lVPDH5oNogDdTJQVcejRO3oNx1v9hZC1BGC3zVVkFTzTTGXAbbFwGWNwbSG6KzoGaHZAQ26ujKTbmbr6KxZCcnXVr")
@@ -30,8 +36,48 @@ WHATSAPP_API_VERSION = os.getenv("WHATSAPP_API_VERSION", "v18.0")
 # Feature Flags
 MOCK_MODE = os.getenv("MOCK_WHATSAPP", "false").lower() == "true"
 
-# Redis client
+# Redis client and DB connection
 redis_client: aioredis.Redis = None
+db_conn = None
+
+
+def get_db_connection():
+    """Get PostgreSQL database connection."""
+    global db_conn
+    if db_conn is None or db_conn.closed:
+        db_conn = psycopg2.connect(DATABASE_URL)
+    return db_conn
+
+
+def get_subscribers_for_sku(sku: str) -> List[Tuple[int, str]]:
+    """Query database for all users who have active alerts for this SKU.
+    
+    Returns:
+        List of tuples (user_id, phone_number) for all subscribers
+    """
+    try:
+        conn = get_db_connection()
+        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+            # Join alerts with users to get phone numbers
+            # Assumes alerts table has 'target_url' containing SKU and users table has 'phone'
+            query = """
+                SELECT DISTINCT u.id, u.phone
+                FROM alerts a
+                JOIN users u ON a.user_id = u.id
+                WHERE a.active_status = TRUE
+                  AND a.target_url LIKE %s
+            """
+            cursor.execute(query, (f'%{sku}%',))
+            results = cursor.fetchall()
+            
+            # Convert to list of tuples
+            subscribers = [(row['id'], row['phone']) for row in results]
+            logger.info(f"Found {len(subscribers)} subscribers for SKU: {sku}")
+            return subscribers
+            
+    except Exception as e:
+        logger.error(f"Failed to query subscribers for SKU {sku}: {e}", exc_info=True)
+        return []
 
 
 async def ensure_consumer_group():
@@ -130,7 +176,10 @@ def format_price_alert(payload: Dict[str, Any]) -> str:
 
 
 async def process_message(message_id: str, fields: Dict[bytes, bytes]):
-    """Process a single notification message from Redis Stream."""
+    """Process a single notification message from Redis Stream.
+    
+    Queries database for all users with alerts for this SKU and sends to all of them.
+    """
     try:
         # Parse payload
         payload_bytes = fields.get(b"payload") or fields.get("payload")
@@ -142,38 +191,56 @@ async def process_message(message_id: str, fields: Dict[bytes, bytes]):
         payload = json.loads(payload_bytes)
         logger.debug(f"Processing message {message_id}: {payload}")
         
-        # Extract phone number
-        phone = payload.get("user_phone") or payload.get("phone")
-        if not phone:
-            logger.warning(f"Message {message_id} has no phone number")
+        # Extract SKU from payload
+        sku = payload.get("sku")
+        if not sku:
+            logger.warning(f"Message {message_id} has no SKU")
             await redis_client.xack(STREAM_NAME, CONSUMER_GROUP, message_id)
             return
         
-        # Format message
+        # Get all subscribers for this SKU from database
+        subscribers = get_subscribers_for_sku(sku)
+        
+        if not subscribers:
+            logger.info(f"No subscribers found for SKU: {sku}")
+            await redis_client.xack(STREAM_NAME, CONSUMER_GROUP, message_id)
+            return
+        
+        # Format message once
         message_text = format_price_alert(payload)
         
-        # Check deduplication key (prevent duplicate alerts within 24h)
-        user_id = payload.get("user_id", "unknown")
-        sku = payload.get("sku", "unknown")
-        dedup_key = f"alert_sent:{user_id}:{sku}"
+        # Send to all subscribers
+        success_count = 0
+        failed_count = 0
         
-        if await redis_client.exists(dedup_key):
-            logger.info(f"Duplicate alert suppressed for {user_id}:{sku}")
-            await redis_client.xack(STREAM_NAME, CONSUMER_GROUP, message_id)
-            return
+        for user_id, phone in subscribers:
+            # Check deduplication key (prevent duplicate alerts within 24h)
+            dedup_key = f"alert_sent:{user_id}:{sku}"
+            
+            if await redis_client.exists(dedup_key):
+                logger.info(f"Duplicate alert suppressed for user {user_id}:{sku}")
+                continue
+            
+            # Strip '+' from phone number for WhatsApp API
+            phone_clean = phone.lstrip('+')
+            
+            # Send WhatsApp message
+            success = await send_whatsapp_message(phone_clean, message_text)
+            
+            if success:
+                # Set deduplication key (expires in 24 hours)
+                await redis_client.setex(dedup_key, 86400, "1")
+                success_count += 1
+                logger.info(f"Sent alert to user {user_id} ({phone})")
+            else:
+                failed_count += 1
+                logger.error(f"Failed to send alert to user {user_id} ({phone})")
         
-        # Send WhatsApp message
-        success = await send_whatsapp_message(phone, message_text)
+        # Log summary
+        logger.info(f"Message {message_id} processed: {success_count} sent, {failed_count} failed, {len(subscribers)} total subscribers")
         
-        if success:
-            # Set deduplication key (expires in 24 hours)
-            await redis_client.setex(dedup_key, 86400, "1")
-            # Acknowledge message
-            await redis_client.xack(STREAM_NAME, CONSUMER_GROUP, message_id)
-            logger.info(f"Successfully processed message {message_id}")
-        else:
-            logger.error(f"Failed to send WhatsApp for message {message_id}, will retry")
-            # Do not ACK - message will be retried
+        # Always ACK the message after processing all subscribers
+        await redis_client.xack(STREAM_NAME, CONSUMER_GROUP, message_id)
             
     except Exception as e:
         logger.error(f"Error processing message {message_id}: {e}", exc_info=True)
@@ -215,10 +282,18 @@ async def consume_loop():
 
 
 async def main():
-    """Initialize Redis connection and start consumer loop."""
-    global redis_client
+    """Initialize Redis connection, test database, and start consumer loop."""
+    global redis_client, db_conn
     
     logger.info("Initializing WhatsApp Notification Service...")
+    
+    # Test database connection
+    try:
+        db_conn = get_db_connection()
+        logger.info(f"Connected to database at {DATABASE_URL.split('@')[1]}")
+    except Exception as e:
+        logger.error(f"Failed to connect to database: {e}")
+        sys.exit(1)
     
     # Connect to Redis
     redis_client = await aioredis.from_url(
@@ -237,8 +312,10 @@ async def main():
     try:
         await consume_loop()
     finally:
-        await redis_client.close()
-        logger.info("Redis connection closed")
+        await redis_client.aclose()
+        if db_conn and not db_conn.closed:
+            db_conn.close()
+        logger.info("Connections closed")
 
 
 if __name__ == "__main__":

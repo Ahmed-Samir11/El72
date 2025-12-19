@@ -1,13 +1,34 @@
 # WhatsApp Notification Service
 
-This service consumes price alert notifications from Redis Streams and sends WhatsApp messages to users via the Facebook Graph API (WhatsApp Business API).
+This service consumes price alert notifications from Redis Streams and sends WhatsApp messages to **all users** who have active alerts for the product via the Facebook Graph API (WhatsApp Business API).
 
 ## Architecture
 
 - **Input**: Redis Stream `stream:confirmed_deals`
 - **Consumer Group**: `cg_whatsapp`
-- **Output**: WhatsApp messages via Facebook Graph API
-- **Features**: Deduplication (24h), mock mode for testing
+- **Database**: PostgreSQL (queries users table and alerts table)
+- **Output**: WhatsApp messages to all subscribers via Facebook Graph API
+- **Features**: 
+  - Multi-subscriber broadcasting (sends to all users with alerts for the SKU)
+  - Deduplication per user (24h per user-SKU combination)
+  - Mock mode for testing
+
+## How It Works
+
+When a price drop event arrives in `stream:confirmed_deals`:
+
+1. **Parse Event**: Extract SKU from the Redis stream message
+2. **Query Database**: Find all users with active alerts for that SKU:
+   ```sql
+   SELECT DISTINCT u.id, u.phone
+   FROM alerts a
+   JOIN users u ON a.user_id = u.id
+   WHERE a.active_status = TRUE
+     AND a.target_url LIKE '%{sku}%'
+   ```
+3. **Send to All**: Send WhatsApp message to each subscriber's phone number
+4. **Deduplication**: Track sent alerts per user-SKU (prevents duplicate alerts within 24h)
+5. **Acknowledge**: Mark message as processed in Redis after sending to all subscribers
 
 ## Setup
 
