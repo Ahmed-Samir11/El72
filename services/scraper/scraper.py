@@ -34,41 +34,154 @@ TARGETS_LIST = os.getenv("SCRAPER_TARGETS_LIST", "queue:targets")
 PROXIES_FILE = os.getenv("PROXIES_FILE", "proxies.json")
 
 
-# simple price regexes (precompiled for performance)
+# Price extraction patterns - ordered by specificity
+# Supports both English (EGP) and Arabic (جنيه) currency
 PRICE_REGEXES = [
-    r"EGP\s*([\d,]+(?:\.\d{1,2})?)",
+    # Amazon-specific patterns with Arabic currency
+    r'class="[^"]*price[^"]*"[^>]*>.*?جنيه\s*([\d,]+(?:\.\d{1,2})?)',
+    r'class="[^"]*price[^"]*"[^>]*>.*?([\d,]+(?:\.\d{1,2})?)\s*جنيه',
+    # English EGP patterns
+    r'class="[^"]*price[^"]*"[^>]*>.*?EGP\s*([\d,]+(?:\.\d{1,2})?)',
+    r'class="[^"]*price[^"]*"[^>]*>.*?([\d,]+(?:\.\d{1,2})?)\s*EGP',
+    # Generic patterns with both currencies
+    r"جنيه[:\s]*([\d,]+(?:\.\d{1,2})?)",
+    r"([\d,]+(?:\.\d{1,2})?)\s*جنيه",
+    r"EGP[:\s]*([\d,]+(?:\.\d{1,2})?)",
     r"([\d,]+(?:\.\d{1,2})?)\s*EGP",
-    r"([\d,]+(?:\.\d{1,2})?)",
 ]
-PRICE_PATTERNS = [re.compile(r, flags=re.IGNORECASE) for r in PRICE_REGEXES]
+PRICE_PATTERNS = [re.compile(r, flags=re.IGNORECASE | re.DOTALL) for r in PRICE_REGEXES]
 OUT_OF_STOCK_KEYWORDS = ["out of stock", "unavailable", "sold out", "غير متوفر", "نفد"]
 
 
-async def extract_price(html: str) -> float:
-    """Extract a price value (EGP) from raw `html` using configured regexes.
-
-    Returns the parsed float price or `0.0` if no price could be extracted.
+async def extract_price_from_page(page) -> float:
+    """Extract price using Playwright selectors (more accurate for known sites).
+    
+    This is the preferred method for Amazon and similar sites.
+    Falls back to regex extraction if selectors fail.
     """
-    for rx in PRICE_PATTERNS:
-        m = rx.search(html)
-        if m:
-            s = m.group(1).replace(",", "")
-            try:
-                return float(s)
-            except Exception:
-                continue
+    # Amazon-specific selectors
+    selectors = [
+        '.a-price-whole',
+        '.a-offscreen',
+        '#priceblock_ourprice',
+        '#priceblock_dealprice',
+        '.a-price .a-offscreen',
+    ]
+    
+    for selector in selectors:
+        try:
+            elements = await page.query_selector_all(selector)
+            for elem in elements:
+                text = await elem.inner_text()
+                if not text:
+                    continue
+                
+                # Extract numbers from text (handles both "50,000.00" and "جنيه‎50,000.00‎")
+                numbers = re.findall(r'([\d,]+(?:\.\d{1,2})?)', text)
+                for num_str in numbers:
+                    try:
+                        price = float(num_str.replace(',', '').strip())
+                        if price >= 10:  # Valid price threshold
+                            return price
+                    except (ValueError, TypeError):
+                        continue
+        except Exception:
+            continue
+    
     return 0.0
 
 
-async def check_in_stock(html: str) -> bool:
-    """Check if `html` suggests the product is in stock.
+async def extract_price(html: str) -> float:
+    """Extract a price value from raw HTML using regex patterns.
 
-    Returns `False` if any out-of-stock keywords are found, `True` otherwise.
+    Returns the parsed float price or `0.0` if no price could be extracted.
+    Uses multiple patterns and filters out small numbers (likely ratings/reviews).
+    """
+    candidates = []
+    
+    for rx in PRICE_PATTERNS:
+        matches = rx.findall(html)
+        for match in matches:
+            # Extract the number from the match (could be a string or tuple)
+            price_str = match if isinstance(match, str) else match[0] if match else ""
+            price_str = price_str.replace(",", "").strip()
+            try:
+                price = float(price_str)
+                # Filter out small numbers (ratings, counts, etc.)
+                # Real prices are typically > 10 EGP
+                if price >= 10:
+                    candidates.append(price)
+            except (ValueError, TypeError):
+                continue
+    
+    # Return the most common price if multiple found, or the first valid one
+    if candidates:
+        return candidates[0]
+    
+    return 0.0
+
+
+async def check_in_stock_from_page(page) -> bool:
+    """Check if product is in stock using Playwright selectors (more accurate).
+    
+    Checks for positive indicators like Add to Cart button.
+    Returns True if in stock, False otherwise.
+    """
+    try:
+        # Check for Add to Cart or Buy Now buttons (strong indicator of availability)
+        add_to_cart = await page.query_selector('#add-to-cart-button')
+        buy_now = await page.query_selector('#buy-now-button')
+        
+        if add_to_cart or buy_now:
+            return True
+        
+        # Check availability section for positive messages
+        availability = await page.query_selector('#availability')
+        if availability:
+            text = await availability.inner_text()
+            text_lower = text.lower()
+            
+            # Positive indicators (in stock)
+            positive_keywords = ['in stock', 'متوفر', 'تبقى', 'اطلبه']
+            for keyword in positive_keywords:
+                if keyword in text_lower:
+                    return True
+            
+            # Negative indicators (out of stock)
+            negative_keywords = ['currently unavailable', 'out of stock', 'sold out', 'غير متوفر', 'نفد']
+            for keyword in negative_keywords:
+                if keyword in text_lower:
+                    return False
+        
+        # Default: assume in stock if no clear negative indicator
+        return True
+    except Exception:
+        # Fallback to HTML-based check
+        return True
+
+
+async def check_in_stock(html: str) -> bool:
+    """Fallback HTML-based stock check (less accurate).
+    
+    Only checks for explicit out-of-stock messages in main content.
+    Returns False if out-of-stock keywords found, True otherwise.
     """
     low = html.lower()
-    for kw in OUT_OF_STOCK_KEYWORDS:
+    
+    # Only check for very specific out-of-stock phrases in main content areas
+    # Avoid false positives from variant selectors
+    specific_out_of_stock = [
+        'currently unavailable',
+        'this item is out of stock',
+        'sold out',
+        'المنتج غير متوفر',  # Product not available
+        'نفذت الكمية',  # Quantity exhausted
+    ]
+    
+    for kw in specific_out_of_stock:
         if kw in low:
             return False
+    
     return True
 
 
@@ -156,14 +269,25 @@ async def fetch_target(  # noqa: C901
             # navigation timeout in ms (configurable)
             nav_timeout = int(os.getenv("SCRAPER_NAV_TIMEOUT_MS", "20000"))
             await page.goto(url, timeout=nav_timeout)
-            html = await page.content()
+            
+            # Try to extract price using Playwright selectors first (more accurate)
+            price = await extract_price_from_page(page)
+            
+            # Check stock status using selectors (more accurate)
+            in_stock = await check_in_stock_from_page(page)
+            
+            # Fallback to HTML regex if selector method fails
+            if price == 0.0:
+                html = await page.content()
+                price = await extract_price(html)
+            else:
+                # Still get HTML for hash
+                html = await page.content()
+            
             # Offload CPU-heavy hash to threadpool
             html_hash = await asyncio.to_thread(
                 lambda s=html: hashlib.sha256(s.encode("utf-8")).hexdigest()
             )
-
-            price = await extract_price(html)
-            in_stock = await check_in_stock(html)
 
             payload = {
                 "sku": sku,
