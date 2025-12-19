@@ -1,5 +1,8 @@
 # Elhaq Project - Copilot Instructions (v2.0 MVP)
+MOST IMPORTANT: ALWAYS ACTIVATE projects ENVIRONMENT IN EVERY NEW TERMINAL: ```& "D:/repos/Project Aincrad/projects/Scripts/Activate.ps1"```
 
+DO NOT OPEN NEW TERMINAL UNLESS THE PROJECT ENVIRONMENT IS ACTIVATED. ```& "D:/repos/Project Aincrad/projects/Scripts/Activate.ps1"```
+DO NOT PIP INSTALL ANYTHING YOURSELF. I WILL INSTALL MYSELF.
 ## 1. Architecture & Boundaries
 **Type:** Event-Driven Microservices (Monorepo).
 **Core Communication:** Redis Streams (`XADD`, `XREADGROUP`, `XACK`). No Pub/Sub.

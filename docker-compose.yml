@@ -44,6 +44,19 @@ services:
       REDIS_URL: "redis://redis:6379"
       DATABASE_URL: "postgresql://elhaq:elhaq_pass@postgres:5432/elhaq"
     ports:
+      - "8001:8000"
+
+  api:
+    build:
+      context: .
+      dockerfile: services/api/Dockerfile
+    depends_on:
+      - redis
+      - postgres
+    environment:
+      REDIS_URL: "redis://redis:6379"
+      DATABASE_URL: "postgresql://elhaq:elhaq_pass@postgres:5432/elhaq"
+    ports:
       - "8000:8000"
 
   notifier:
@@ -56,6 +69,7 @@ services:
       MOCK_WHATSAPP: "true"
     command: ["npm", "run", "start"]
 
+<<<<<<< HEAD
   scraper-monitor:
     build:
       context: .
@@ -70,6 +84,24 @@ services:
       SCRAPE_INTERVAL: "30"
       MAX_CONCURRENT_SCRAPES: "10"
       BROWSER_POOL_SIZE: "5"
+=======
+  whatsapp:
+    build:
+      context: ./services/whatsapp
+    depends_on:
+      - redis
+      - postgres
+    environment:
+      REDIS_URL: "redis://redis:6379"
+      DATABASE_URL: "postgresql://elhaq:elhaq_pass@postgres:5432/elhaq"
+      STREAM_NAME: "stream:confirmed_deals"
+      CONSUMER_GROUP: "cg_whatsapp"
+      CONSUMER_NAME: "whatsapp-1"
+      WHATSAPP_ACCESS_TOKEN: "EAAMDRapIJBIBQJZAUBhP4qK2NG97o7lJZC83O2mAbXTYACva4q6aiKldAS0dZBYcaQfCDU4ZAYOx9pb8EVcZBV2WDZARZBEy8tiQ2ttq5rd2MZC55ZADIZCxmaGPDynQYdCZAXcJawYC8ZBhcD0xZCZAHESJD2l4Rb1oAbZCRNnpnuvoT214dgOmY6P8pVBBf0gVnJMN62xZArySFVYHu8vG2EMpzaLmXmwUZCtbwl2nPZBuAH1Jls5g07psXJRolbQoF8u5eLC0z4eLgFZAe2E9ns0i1lZA1A8S"
+      WHATSAPP_PHONE_NUMBER_ID: "966490223206963"
+      WHATSAPP_API_VERSION: "v18.0"
+      MOCK_WHATSAPP: "false"
+>>>>>>> dfaddebe86b1800ab2a8220763411a798293d209
     restart: unless-stopped
 
 volumes:

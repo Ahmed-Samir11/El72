@@ -1,2 +1,14 @@
 playwright
 redis[asyncio]
+
+# Crawl4AI for intelligent web scraping
+crawl4ai>=0.3.0
+
+# Robots.txt parsing
+robotexclusionrulesparser>=1.7.1
+
+# Pydantic for extraction schemas
+pydantic>=2.0
+
+# OpenAI client for LM Studio local inference
+openai>=1.0.0
