@@ -56,6 +56,22 @@ services:
       MOCK_WHATSAPP: "true"
     command: ["npm", "run", "start"]
 
+  scraper-monitor:
+    build:
+      context: .
+      dockerfile: services/scraper/Dockerfile.monitor
+    depends_on:
+      - redis
+      - postgres
+      - timescaledb
+    environment:
+      DATABASE_URL: "postgresql://elhaq:elhaq_pass@postgres:5432/elhaq"
+      REDIS_URL: "redis://redis:6379"
+      SCRAPE_INTERVAL: "30"
+      MAX_CONCURRENT_SCRAPES: "10"
+      BROWSER_POOL_SIZE: "5"
+    restart: unless-stopped
+
 volumes:
   redis-data:
   pg-data:

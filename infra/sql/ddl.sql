@@ -22,13 +22,70 @@ CREATE TABLE IF NOT EXISTS users (
   valid_until TIMESTAMPTZ
 );
 
--- Alerts table
+-- Alerts table (legacy - kept for backward compatibility)
 CREATE TABLE IF NOT EXISTS alerts (
   id SERIAL PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES users(id),
   target_url TEXT NOT NULL,
   target_price NUMERIC(10,2) NOT NULL,
   active_status BOOLEAN NOT NULL DEFAULT TRUE
+);
+
+-- Tracked items table (new price monitoring system)
+CREATE TABLE IF NOT EXISTS tracked_items (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  canonical_product_id TEXT NOT NULL,  -- Unified product identifier across stores
+  specs JSONB,                         -- Optional spec-based tracking (e.g., {"gpu": "RTX 4060", "ram": "16GB"})
+  target_price NUMERIC(10,2),          -- User's desired price (optional)
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_tracked_items_user_id ON tracked_items(user_id);
+CREATE INDEX IF NOT EXISTS idx_tracked_items_canonical_id ON tracked_items(canonical_product_id);
+CREATE INDEX IF NOT EXISTS idx_tracked_items_active ON tracked_items(is_active) WHERE is_active = TRUE;
+
+-- Store-specific product mappings (links tracked items to store SKUs/URLs)
+CREATE TABLE IF NOT EXISTS tracked_item_stores (
+  id SERIAL PRIMARY KEY,
+  tracked_item_id INTEGER NOT NULL REFERENCES tracked_items(id) ON DELETE CASCADE,
+  store_id TEXT NOT NULL,              -- e.g., 'amazon_eg', 'noon', 'jumia'
+  store_sku TEXT NOT NULL,             -- Store-specific SKU or product ID
+  store_url TEXT NOT NULL,             -- Full product URL
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_tracked_item_stores_tracked_id ON tracked_item_stores(tracked_item_id);
+CREATE INDEX IF NOT EXISTS idx_tracked_item_stores_store ON tracked_item_stores(store_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tracked_item_stores_unique ON tracked_item_stores(tracked_item_id, store_id, store_sku);
+
+-- Current price snapshot (materialized view of latest prices)
+CREATE TABLE IF NOT EXISTS current_prices (
+  tracked_item_id INTEGER NOT NULL REFERENCES tracked_items(id) ON DELETE CASCADE,
+  store_id TEXT NOT NULL,
+  price_usd NUMERIC(10,4) NOT NULL,    -- Normalized to USD
+  price_local NUMERIC(10,2) NOT NULL,  -- Original price in local currency
+  currency TEXT NOT NULL,
+  in_stock BOOLEAN NOT NULL DEFAULT TRUE,
+  last_updated TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (tracked_item_id, store_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_current_prices_tracked_id ON current_prices(tracked_item_id);
+CREATE INDEX IF NOT EXISTS idx_current_prices_in_stock ON current_prices(in_stock) WHERE in_stock = TRUE;
+
+-- Lowest price cache (per tracked item)
+CREATE TABLE IF NOT EXISTS lowest_prices (
+  tracked_item_id INTEGER PRIMARY KEY REFERENCES tracked_items(id) ON DELETE CASCADE,
+  store_id TEXT NOT NULL,
+  price_usd NUMERIC(10,4) NOT NULL,
+  price_local NUMERIC(10,2) NOT NULL,
+  currency TEXT NOT NULL,
+  url TEXT NOT NULL,
+  last_updated TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- Payment logs table
