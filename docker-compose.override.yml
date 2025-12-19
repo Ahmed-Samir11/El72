@@ -1,17 +1,7 @@
 services:
   api:
-    build:
-      context: .
-      dockerfile: services/api/Dockerfile
-    depends_on:
-      - redis
-      - postgres
     environment:
-      REDIS_URL: "redis://redis:6379"
-      DATABASE_URL: "postgresql://elhaq:elhaq_pass@postgres:5432/elhaq"
       SECRET_KEY: "your-secret-key-change-in-prod"
-    ports:
-      - "8001:8000"
 
   billing:
     build:

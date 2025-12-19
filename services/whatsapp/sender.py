@@ -29,7 +29,7 @@ CONSUMER_NAME = os.getenv("CONSUMER_NAME", "whatsapp-1")
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://elhaq:elhaq_pass@postgres:5432/elhaq")
 
 # WhatsApp Business API Configuration
-ACCESS_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN", "EAAMDRapIJBIBQAtLaaKxDUJJ5CFRsQwvvucrqTmAN5FlgMEcFfooyPmZCtcqTBxezCJaNaKAKMWoiOdp30DTe13AiSYUfezbH1v9r63pzBiWsTw5nZC27ZAsEbRtOZCFoj4lcM7kknXRXcREP5W6m1NaVIpTSNZByRS5v92NkRsRZB96fNx160vaj0TjkqX4lVPDH5oNogDdTJQVcejRO3oNx1v9hZC1BGC3zVVkFTzTTGXAbbFwGWNwbSG6KzoGaHZAQ26ujKTbmbr6KxZCcnXVr")
+ACCESS_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN", "EAAMDRapIJBIBQEVaz8vkFSEGZAuLksuHY6lbOsD86eRRYIpZBzASnpnzCFjLGIeQyhJCzSvnmCqDE1cKcG0pAiYgYjKE5I3K4hx7sXcl0JmyDZCUSLrrIQ8erjdvyXupZB4vhs7DIZBnU1GfLXCsk2mn34TaZBt4YDNzC0MeEGJlKXa5TYFvyx6WZBt097eEdd07E6yJajZCCMjm8ZAed0bZAvJVBMJkpppxf5AFZBd5lmWuOh9ykY2nK0p5zJAcaD1sCyc3EYwpFUDXMrRnpxMUZCtZA")
 PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "966490223206963")
 WHATSAPP_API_VERSION = os.getenv("WHATSAPP_API_VERSION", "v18.0")
 
@@ -209,17 +209,15 @@ async def process_message(message_id: str, fields: Dict[bytes, bytes]):
         # Format message once
         message_text = format_price_alert(payload)
         
-        # Send to all subscribers
-        success_count = 0
-        failed_count = 0
-        
-        for user_id, phone in subscribers:
+        # Prepare tasks for concurrent sending
+        async def send_to_subscriber(user_id: int, phone: str):
+            """Send message to a single subscriber with deduplication check"""
             # Check deduplication key (prevent duplicate alerts within 24h)
             dedup_key = f"alert_sent:{user_id}:{sku}"
             
             if await redis_client.exists(dedup_key):
                 logger.info(f"Duplicate alert suppressed for user {user_id}:{sku}")
-                continue
+                return None
             
             # Strip '+' from phone number for WhatsApp API
             phone_clean = phone.lstrip('+')
@@ -230,14 +228,23 @@ async def process_message(message_id: str, fields: Dict[bytes, bytes]):
             if success:
                 # Set deduplication key (expires in 24 hours)
                 await redis_client.setex(dedup_key, 86400, "1")
-                success_count += 1
                 logger.info(f"Sent alert to user {user_id} ({phone})")
+                return True
             else:
-                failed_count += 1
                 logger.error(f"Failed to send alert to user {user_id} ({phone})")
+                return False
+        
+        # Send to all subscribers concurrently
+        tasks = [send_to_subscriber(user_id, phone) for user_id, phone in subscribers]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Count results
+        success_count = sum(1 for r in results if r is True)
+        failed_count = sum(1 for r in results if r is False)
+        skipped_count = sum(1 for r in results if r is None)
         
         # Log summary
-        logger.info(f"Message {message_id} processed: {success_count} sent, {failed_count} failed, {len(subscribers)} total subscribers")
+        logger.info(f"Message {message_id} processed: {success_count} sent, {failed_count} failed, {skipped_count} skipped (duplicates), {len(subscribers)} total subscribers")
         
         # Always ACK the message after processing all subscribers
         await redis_client.xack(STREAM_NAME, CONSUMER_GROUP, message_id)

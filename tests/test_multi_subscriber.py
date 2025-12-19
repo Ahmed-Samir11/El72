@@ -27,8 +27,8 @@ TEST_USERS = [
     {"phone": "+201118302763", "password": "test12345"},
 ]
 
-TEST_PRODUCT_URL = "https://example.com/product/SKU-TEST-NEW"
-TEST_SKU = "SKU-TEST-NEW"
+TEST_PRODUCT_URL = "https://example.com/product/SKU-TEST-123"
+TEST_SKU = "SKU-TEST-123"
 
 
 def register_users():
