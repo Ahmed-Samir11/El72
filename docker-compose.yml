@@ -69,6 +69,22 @@ services:
       MOCK_WHATSAPP: "true"
     command: ["npm", "run", "start"]
 
+<<<<<<< HEAD
+  scraper-monitor:
+    build:
+      context: .
+      dockerfile: services/scraper/Dockerfile.monitor
+    depends_on:
+      - redis
+      - postgres
+      - timescaledb
+    environment:
+      DATABASE_URL: "postgresql://elhaq:elhaq_pass@postgres:5432/elhaq"
+      REDIS_URL: "redis://redis:6379"
+      SCRAPE_INTERVAL: "30"
+      MAX_CONCURRENT_SCRAPES: "10"
+      BROWSER_POOL_SIZE: "5"
+=======
   whatsapp:
     build:
       context: ./services/whatsapp
@@ -85,6 +101,7 @@ services:
       WHATSAPP_PHONE_NUMBER_ID: "966490223206963"
       WHATSAPP_API_VERSION: "v18.0"
       MOCK_WHATSAPP: "false"
+>>>>>>> dfaddebe86b1800ab2a8220763411a798293d209
     restart: unless-stopped
 
 volumes:
