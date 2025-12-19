@@ -20,6 +20,7 @@ logger = logging.getLogger("scraper")
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 STREAM = os.getenv("STREAM_PRICE_INGEST", "stream:price_ingest")
+CONFIRMED_DEALS_STREAM = os.getenv("STREAM_CONFIRMED_DEALS", "stream:confirmed_deals")
 FAILED_QUEUE = os.getenv("FAILED_QUEUE", "queue:failed_scrapes")
 MAX_RETRIES = int(os.getenv("SCRAPER_MAX_RETRIES", "5"))
 CONCURRENCY = int(os.getenv("SCRAPER_CONCURRENCY", "4"))
@@ -174,8 +175,21 @@ async def fetch_target(  # noqa: C901
                 "in_stock": in_stock,
             }
 
+            # Publish to price_ingest stream for analysis
             await redis_client.xadd(STREAM, {"payload": payload})
             logger.info("Pushed %s from %s (price=%s) to %s", sku, store, price, STREAM)
+            
+            # Also publish directly to confirmed_deals for immediate WhatsApp notifications
+            # This bypasses the analyzer for faster alerts
+            whatsapp_payload = {
+                "sku": sku,
+                "store": store,
+                "price": price,
+                "in_stock": in_stock,
+                "timestamp": int(time.time()),
+            }
+            await redis_client.xadd(CONFIRMED_DEALS_STREAM, {"payload": whatsapp_payload})
+            logger.info("Pushed %s to WhatsApp stream %s", sku, CONFIRMED_DEALS_STREAM)
 
             # clean up page/context
             try:

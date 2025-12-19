@@ -155,14 +155,23 @@ def format_price_alert(payload: Dict[str, Any]) -> str:
     - price: Current price
     - original_price: Original price (optional)
     - discount_percent: Discount percentage (optional)
+    - url: Product URL (optional)
+    - store: Store name (optional)
     """
     sku = payload.get("sku", "Product")
     price = payload.get("price", 0)
     original_price = payload.get("original_price")
     discount = payload.get("discount_percent")
+    url = payload.get("url")
+    store = payload.get("store", "")
     
     message = f"🎯 *El72 Price Alert*\n\n"
     message += f"Product: {sku}\n"
+    
+    if store:
+        store_name = store.replace('_', ' ').title()
+        message += f"Store: {store_name}\n"
+    
     message += f"Current Price: {price} EGP\n"
     
     if original_price and discount:
@@ -170,7 +179,10 @@ def format_price_alert(payload: Dict[str, Any]) -> str:
         message += f"Discount: {discount}%\n"
         message += f"You save: {original_price - price} EGP!\n"
     
-    message += f"\n✅ Your alert has been triggered!"
+    message += f"\n✅ Your alert has been triggered!\n"
+    
+    if url:
+        message += f"\n🔗 View Product: {url}"
     
     return message
 
