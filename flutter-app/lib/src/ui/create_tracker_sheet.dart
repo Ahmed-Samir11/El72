@@ -52,22 +52,41 @@ class _CreateTrackerSheetState extends ConsumerState<CreateTrackerSheet> {
           const SizedBox(height: 16),
           ElevatedButton(
             onPressed: () async {
-              print("🔘 Add Button Pressed!"); // Check 1: Does button work?
+              print("🔘 Add Button Pressed!");
               
               try {
                 final url = _urlController.text;
                 final price = double.tryParse(_targetController.text) ?? 0.0;
                 
-                print("📤 Sending: URL=$url, Price=$price"); // Check 2: Are inputs valid?
+                print("📤 Sending: URL=$url, Price=$price");
 
                 // Call your repository
                 await ref.read(alertsRepositoryProvider).createAlert(url, price);
                 
                 print("✅ Success!");
                 Navigator.pop(context); // Close the sheet
+                
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('✅ Tracker created! You\'ll get a WhatsApp notification when we find a deal.'),
+                      backgroundColor: Colors.green,
+                      duration: Duration(seconds: 3),
+                    ),
+                  );
+                }
               } catch (e, stack) {
                 print("❌ ERROR: $e");
-                print(stack); // Print the full crash trace
+                print(stack);
+                
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Error: $e'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                }
               }
             },
             child: const Text('Start Tracking'),

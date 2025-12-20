@@ -1,5 +1,6 @@
 playwright
 redis[asyncio]
+asyncpg>=0.29.0
 
 # Crawl4AI for intelligent web scraping
 crawl4ai>=0.3.0

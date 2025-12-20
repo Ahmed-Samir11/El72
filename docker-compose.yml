@@ -69,7 +69,6 @@ services:
       MOCK_WHATSAPP: "true"
     command: ["npm", "run", "start"]
 
-<<<<<<< HEAD
   scraper-monitor:
     build:
       context: .
@@ -84,7 +83,26 @@ services:
       SCRAPE_INTERVAL: "30"
       MAX_CONCURRENT_SCRAPES: "10"
       BROWSER_POOL_SIZE: "5"
-=======
+      SCRAPER_TARGETS_SOURCE: "redis_stream"
+      SCRAPER_TARGETS_STREAM: "scraper_tasks"
+  
+  scraper:
+    build:
+      context: .
+      dockerfile: services/scraper/Dockerfile
+    depends_on:
+      - redis
+      - postgres
+    environment:
+      DATABASE_URL: "postgresql://elhaq:elhaq_pass@postgres:5432/elhaq"
+      REDIS_URL: "redis://redis:6379"
+      SCRAPER_TARGETS_SOURCE: "redis_stream"
+      SCRAPER_TARGETS_STREAM: "scraper_tasks"
+      STREAM_CONFIRMED_DEALS: "stream:confirmed_deals"
+      BROWSER_POOL_SIZE: "2"
+      SCRAPER_NAV_TIMEOUT_MS: "60000"
+    command: ["python", "-m", "services.scraper.scraper"]
+  
   whatsapp:
     build:
       context: ./services/whatsapp
@@ -97,11 +115,10 @@ services:
       STREAM_NAME: "stream:confirmed_deals"
       CONSUMER_GROUP: "cg_whatsapp"
       CONSUMER_NAME: "whatsapp-1"
-      WHATSAPP_ACCESS_TOKEN: "EAAMDRapIJBIBQJZAUBhP4qK2NG97o7lJZC83O2mAbXTYACva4q6aiKldAS0dZBYcaQfCDU4ZAYOx9pb8EVcZBV2WDZARZBEy8tiQ2ttq5rd2MZC55ZADIZCxmaGPDynQYdCZAXcJawYC8ZBhcD0xZCZAHESJD2l4Rb1oAbZCRNnpnuvoT214dgOmY6P8pVBBf0gVnJMN62xZArySFVYHu8vG2EMpzaLmXmwUZCtbwl2nPZBuAH1Jls5g07psXJRolbQoF8u5eLC0z4eLgFZAe2E9ns0i1lZA1A8S"
+      WHATSAPP_ACCESS_TOKEN: "EAAMDRapIJBIBQEQ480Xcq7GVlEfcVSGd1fM2Brb3aDLLgxsBpuz6n4oyZCyIsCQ2wHI3yHyqsKOs2fCZC245pYDcBetPKhYSFhlgZAp0a1rFA8SoKyeet8Jyoj5yxk00HKM2YJ4sn9oOLudY6QWyy5c5rYLIQKjpE8npHLNrSPmYcgLZAOZBfxTV01jC442bVOaVtXxS5gmHl95KxPPsGTxsyv85esujiqsMjLVXA5Xc6OrvnAC4VsmRIYbu4JCOsxoszIZAbdygTYKQJt2MQx"
       WHATSAPP_PHONE_NUMBER_ID: "966490223206963"
       WHATSAPP_API_VERSION: "v18.0"
       MOCK_WHATSAPP: "false"
->>>>>>> dfaddebe86b1800ab2a8220763411a798293d209
     restart: unless-stopped
 
 volumes:

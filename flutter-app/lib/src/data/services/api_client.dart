@@ -13,9 +13,10 @@ class ApiClient {
   ApiClient._internal() {
     _dio = Dio(
       BaseOptions(
-        baseUrl: 'http://localhost:8000',
-        connectTimeout: const Duration(seconds: 10),
-        receiveTimeout: const Duration(seconds: 10),
+        // Use your computer's IP address for physical device
+        baseUrl: 'http://192.168.1.106:8000',
+        connectTimeout: const Duration(seconds: 30), // Increased for scraper
+        receiveTimeout: const Duration(seconds: 30), // Increased for scraper
       ),
     );
 

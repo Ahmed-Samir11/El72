@@ -14,6 +14,7 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
   final _phoneController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _isPasswordVisible = false;
+  bool _isLoading = false;
 
   @override
   Widget build(BuildContext context) {
@@ -56,7 +57,7 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
                       padding: const EdgeInsets.symmetric(vertical: 16),
                       textStyle: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                     ),
-                    onPressed: () async {
+                    onPressed: _isLoading ? null : () async {
                       String phone = _phoneController.text.trim();
                       String password = _passwordController.text.trim();
 
@@ -67,24 +68,34 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
                         return;
                       }
 
+                      setState(() => _isLoading = true);
+                      
                       final authRepo = ref.read(authRepositoryProvider);
                       try {
-                        String processedPhone = phone.startsWith('0') ? phone.substring(1) : phone;
-                        bool isValid = await authRepo.register("+20" + processedPhone, password);
-                        if (isValid) {
+                        print('📝 Attempting registration with phone: $phone');
+                        bool isValid = await authRepo.register(phone, password);
+                        print('✅ Registration result: $isValid');
+                        
+                        if (isValid && mounted) {
+                          print('📱 Navigating to dashboard');
                           Navigator.pushReplacementNamed(context, '/dashboard');
-                        } else {
+                        } else if (mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(content: Text("Registration failed. Please try again.")),
                           );
                         }
                       } catch (e) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(e.toString()),
-                            backgroundColor: Colors.red,
-                          ),
-                        );
+                        print('❌ Registration error: $e');
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(e.toString()),
+                              backgroundColor: Colors.red,
+                            ),
+                          );
+                        }
+                      } finally {
+                        if (mounted) setState(() => _isLoading = false);
                       }
                     },
                     child: const Text("Register"),

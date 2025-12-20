@@ -60,15 +60,29 @@ async def push_to_stream(target_url: str, alert_id: int):
     """Push new alert target to Redis stream for scraper service"""
     try:
         redis_client = await RedisStreamClient.create(REDIS_URL)
+        # Extract SKU from URL (for Amazon: last part of path)
+        sku = target_url.rstrip('/').split('/')[-1]
+        
+        # Detect store from URL
+        store = "unknown"
+        if "amazon.eg" in target_url or "amazon.com" in target_url:
+            store = "amazon_eg"
+        elif "jumia.com.eg" in target_url:
+            store = "jumia_eg"
+        elif "noon.com" in target_url:
+            store = "noon_eg"
+        
         target = {
             "url": target_url,
-            "sku": f"alert_{alert_id}",
-            "store": "unknown"  # Could extract from URL if needed
+            "sku": sku,
+            "store": store
         }
-        await redis_client.xadd("stream:scrape_targets", {"payload": json.dumps(target)})
+        # Use scraper_tasks stream with "payload" field that scraper expects
+        await redis_client.xadd("scraper_tasks", {"payload": json.dumps(target)})
+        print(f"✅ Pushed alert {alert_id} to scraper_tasks: {target}")
     except Exception as e:
         # Log error but don't fail the request
-        print(f"Failed to push to stream: {e}")
+        print(f"❌ Failed to push to stream: {e}")
 
 # Pydantic models
 class AlertCreate(BaseModel):

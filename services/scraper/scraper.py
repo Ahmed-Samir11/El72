@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 
 from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import async_playwright
+import asyncpg
 
 from services.common.redis_client import RedisStreamClient
 from services.scraper.browser_pool import BrowserPool
@@ -19,6 +20,7 @@ logger = logging.getLogger("scraper")
 
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://elhaq:elhaq_pass@postgres:5432/elhaq")
 STREAM = os.getenv("STREAM_PRICE_INGEST", "stream:price_ingest")
 CONFIRMED_DEALS_STREAM = os.getenv("STREAM_CONFIRMED_DEALS", "stream:confirmed_deals")
 FAILED_QUEUE = os.getenv("FAILED_QUEUE", "queue:failed_scrapes")
@@ -53,8 +55,82 @@ PRICE_PATTERNS = [re.compile(r, flags=re.IGNORECASE | re.DOTALL) for r in PRICE_
 OUT_OF_STOCK_KEYWORDS = ["out of stock", "unavailable", "sold out", "غير متوفر", "نفد"]
 
 
+async def check_alerts_for_sku(sku: str, scraped_price: float) -> List[Dict]:
+    """Check if any user alerts should trigger for this SKU and price.
+    
+    Args:
+        sku: Product SKU
+        scraped_price: Current scraped price
+        
+    Returns:
+        List of alert dictionaries that should trigger notifications
+    """
+    try:
+        conn = await asyncpg.connect(DATABASE_URL)
+        
+        # Find alerts where:
+        # 1. target_url contains the SKU
+        # 2. scraped_price <= target_price
+        # 3. alert is active
+        query = """
+            SELECT a.id, a.user_id, a.target_url, a.target_price, u.phone
+            FROM alerts a
+            JOIN users u ON a.user_id = u.id
+            WHERE a.active_status = TRUE
+            AND a.target_url LIKE $1
+            AND a.target_price >= $2
+        """
+        
+        rows = await conn.fetch(query, f'%{sku}%', scraped_price)
+        await conn.close()
+        
+        alerts = []
+        for row in rows:
+            alerts.append({
+                'alert_id': row['id'],
+                'user_id': row['user_id'],
+                'phone': row['phone'],
+                'target_url': row['target_url'],
+                'target_price': float(row['target_price']),
+                'scraped_price': scraped_price
+            })
+        
+        if alerts:
+            logger.info(f"🔔 Found {len(alerts)} alerts triggered for SKU {sku} at price {scraped_price}")
+        
+        return alerts
+    except Exception as e:
+        logger.error(f"❌ Failed to check alerts: {e}")
+        return []
+
+
+async def extract_product_title(page) -> str:
+    """Extract product title using Playwright selectors.
+    
+    Returns the product title or empty string if not found.
+    """
+    # Amazon-specific title selectors
+    selectors = [
+        '#productTitle',
+        'h1.product-title',
+        '[data-feature-name="title"]',
+        'h1[id*="title"]',
+    ]
+    
+    for selector in selectors:
+        try:
+            element = await page.query_selector(selector)
+            if element:
+                title = await element.inner_text()
+                return title.strip() if title else ""
+        except Exception:
+            continue
+    
+    return ""
+
+
 async def extract_price_from_page(page) -> float:
-    """Extract price using Playwright selectors (more accurate for known sites).
+    """Extract price using Playwright selectors (more accurate than regex).
     
     This is the preferred method for Amazon and similar sites.
     Falls back to regex extraction if selectors fail.
@@ -270,6 +346,9 @@ async def fetch_target(  # noqa: C901
             nav_timeout = int(os.getenv("SCRAPER_NAV_TIMEOUT_MS", "20000"))
             await page.goto(url, timeout=nav_timeout)
             
+            # Extract product information
+            product_title = await extract_product_title(page)
+            
             # Try to extract price using Playwright selectors first (more accurate)
             price = await extract_price_from_page(page)
             
@@ -289,9 +368,19 @@ async def fetch_target(  # noqa: C901
                 lambda s=html: hashlib.sha256(s.encode("utf-8")).hexdigest()
             )
 
+            # Map store ID to display name
+            store_display_name = {
+                "amazon_eg": "Amazon Egypt",
+                "amazon_com": "Amazon",
+                "jumia_eg": "Jumia Egypt",
+                "noon_eg": "Noon",
+            }.get(store, store)
+
             payload = {
                 "sku": sku,
                 "store": store,
+                "store_name": store_display_name,
+                "product_title": product_title,
                 "url": url,
                 "price": price,
                 "timestamp": int(time.time()),
@@ -303,17 +392,34 @@ async def fetch_target(  # noqa: C901
             await redis_client.xadd(STREAM, {"payload": payload})
             logger.info("Pushed %s from %s (price=%s) to %s", sku, store, price, STREAM)
             
-            # Also publish directly to confirmed_deals for immediate WhatsApp notifications
-            # This bypasses the analyzer for faster alerts
-            whatsapp_payload = {
-                "sku": sku,
-                "store": store,
-                "price": price,
-                "in_stock": in_stock,
-                "timestamp": int(time.time()),
-            }
-            await redis_client.xadd(CONFIRMED_DEALS_STREAM, {"payload": whatsapp_payload})
-            logger.info("Pushed %s to WhatsApp stream %s", sku, CONFIRMED_DEALS_STREAM)
+            # Check if any user alerts should trigger for this price
+            triggered_alerts = await check_alerts_for_sku(sku, price)
+            
+            if triggered_alerts:
+                # Publish to confirmed_deals for WhatsApp notifications
+                store_display_name = {
+                    "amazon_eg": "Amazon Egypt",
+                    "amazon_com": "Amazon",
+                    "jumia_eg": "Jumia Egypt",
+                    "noon_eg": "Noon",
+                }.get(store, store)
+                
+                for alert in triggered_alerts:
+                    whatsapp_payload = {
+                        "sku": sku,
+                        "store": store_display_name,
+                        "product_title": product_title,
+                        "price": str(price),
+                        "in_stock": str(in_stock).lower(),
+                        "url": url,
+                        "user_phone": alert['phone'],
+                        "target_price": str(alert['target_price']),
+                        "timestamp": int(time.time()),
+                    }
+                    await redis_client.xadd(CONFIRMED_DEALS_STREAM, whatsapp_payload)
+                    logger.info(f"🔔 Pushed alert to WhatsApp for user {alert['phone']}: {sku} @ {price} EGP (target: {alert['target_price']})")
+            else:
+                logger.info(f"ℹ️ No alerts triggered for SKU {sku} at price {price}")
 
             # clean up page/context
             try:

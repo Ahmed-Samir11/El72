@@ -57,6 +57,16 @@ def get_subscribers_for_sku(sku: str) -> List[Tuple[int, str]]:
     """
     try:
         conn = get_db_connection()
+        
+        # Check if connection is still alive, reconnect if needed
+        try:
+            conn.cursor().execute("SELECT 1")
+        except:
+            logger.info("Database connection lost, reconnecting...")
+            global db_conn
+            db_conn = None
+            conn = get_db_connection()
+        
         with conn.cursor(cursor_factory=RealDictCursor) as cursor:
             # Join alerts with users to get phone numbers
             # Assumes alerts table has 'target_url' containing SKU and users table has 'phone'
@@ -76,7 +86,7 @@ def get_subscribers_for_sku(sku: str) -> List[Tuple[int, str]]:
             return subscribers
             
     except Exception as e:
-        logger.error(f"Failed to query subscribers for SKU {sku}: {e}", exc_info=True)
+        logger.error(f"Failed to query subscribers for SKU {sku}: {e}")
         return []
 
 
@@ -152,6 +162,7 @@ def format_price_alert(payload: Dict[str, Any]) -> str:
     
     Expected payload fields:
     - sku: Product identifier
+    - product_title: Product name (optional)
     - price: Current price
     - original_price: Original price (optional)
     - discount_percent: Discount percentage (optional)
@@ -159,6 +170,7 @@ def format_price_alert(payload: Dict[str, Any]) -> str:
     - store: Store name (optional)
     """
     sku = payload.get("sku", "Product")
+    product_title = payload.get("product_title", "")
     price = payload.get("price", 0)
     original_price = payload.get("original_price")
     discount = payload.get("discount_percent")
@@ -166,18 +178,22 @@ def format_price_alert(payload: Dict[str, Any]) -> str:
     store = payload.get("store", "")
     
     message = f"🎯 *El72 Price Alert*\n\n"
-    message += f"Product: {sku}\n"
+    
+    # Use product title if available, otherwise use SKU
+    if product_title:
+        message += f"📦 *{product_title}*\n\n"
+    else:
+        message += f"Product: {sku}\n"
     
     if store:
-        store_name = store.replace('_', ' ').title()
-        message += f"Store: {store_name}\n"
+        message += f"🏪 Store: {store}\n"
     
-    message += f"Current Price: {price} EGP\n"
+    message += f"💰 Current Price: *{price} EGP*\n"
     
     if original_price and discount:
-        message += f"Original Price: {original_price} EGP\n"
-        message += f"Discount: {discount}%\n"
-        message += f"You save: {original_price - price} EGP!\n"
+        message += f"~~{original_price} EGP~~\n"
+        message += f"🎉 Discount: {discount}%\n"
+        message += f"💵 You save: {original_price - price} EGP!\n"
     
     message += f"\n✅ Your alert has been triggered!\n"
     
@@ -193,15 +209,22 @@ async def process_message(message_id: str, fields: Dict[bytes, bytes]):
     Queries database for all users with alerts for this SKU and sends to all of them.
     """
     try:
-        # Parse payload
+        # Parse payload - handle both wrapped and unwrapped formats
         payload_bytes = fields.get(b"payload") or fields.get("payload")
-        if not payload_bytes:
-            logger.warning(f"Message {message_id} has no payload field")
-            await redis_client.xack(STREAM_NAME, CONSUMER_GROUP, message_id)
-            return
-            
-        payload = json.loads(payload_bytes)
-        logger.debug(f"Processing message {message_id}: {payload}")
+        
+        if payload_bytes:
+            # Wrapped format: {"payload": json_string}
+            payload = json.loads(payload_bytes)
+            logger.debug(f"Processing wrapped message {message_id}: {payload}")
+        else:
+            # Unwrapped format: fields are direct keys (sku, store, price, etc.)
+            logger.info(f"Processing unwrapped message {message_id}")
+            payload = {}
+            for key, value in fields.items():
+                key_str = key.decode('utf-8') if isinstance(key, bytes) else key
+                value_str = value.decode('utf-8') if isinstance(value, bytes) else value
+                payload[key_str] = value_str
+            logger.debug(f"Unwrapped payload: {payload}")
         
         # Extract SKU from payload
         sku = payload.get("sku")
@@ -209,9 +232,18 @@ async def process_message(message_id: str, fields: Dict[bytes, bytes]):
             logger.warning(f"Message {message_id} has no SKU")
             await redis_client.xack(STREAM_NAME, CONSUMER_GROUP, message_id)
             return
+            return
         
-        # Get all subscribers for this SKU from database
-        subscribers = get_subscribers_for_sku(sku)
+        # Check if user_phone is directly in payload (from scraper)
+        user_phone = payload.get("user_phone")
+        
+        if user_phone:
+            # Use phone from payload (scraper already identified the user)
+            logger.info(f"Using user_phone from payload: {user_phone}")
+            subscribers = [(0, user_phone)]  # user_id=0 as placeholder
+        else:
+            # Fallback: Query database for all subscribers
+            subscribers = get_subscribers_for_sku(sku)
         
         if not subscribers:
             logger.info(f"No subscribers found for SKU: {sku}")

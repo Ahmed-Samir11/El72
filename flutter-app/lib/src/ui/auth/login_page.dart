@@ -15,6 +15,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   final _phoneController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _isLoginPasswordVisible = false;
+  bool _isLoading = false;
 
   @override
   Widget build(BuildContext context) {
@@ -82,20 +83,42 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                       textStyle: const TextStyle(
                           fontSize: 18, fontWeight: FontWeight.bold),
                     ),
-                    onPressed: () async {
+                    onPressed: _isLoading ? null : () async {
                       String phone = _phoneController.text.trim();
                       String password = _passwordController.text.trim();
 
-                      final authRepo = ref.read(authRepositoryProvider);
-                      String processedPhone = phone.startsWith('0') ? phone.substring(1) : phone;
-                      bool isValid = await authRepo.login("+20" + processedPhone, password);
-
-                      if (isValid) {
-                        Navigator.pushReplacementNamed(context, AppRoutes.dashboard);
-                      } else {
+                      if (phone.isEmpty || password.isEmpty) {
                         ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text("Invalid credentials. Please try again.")),
+                          const SnackBar(content: Text("Please fill all fields")),
                         );
+                        return;
+                      }
+
+                      setState(() => _isLoading = true);
+                      
+                      try {
+                        final authRepo = ref.read(authRepositoryProvider);
+                        print('🔐 Attempting login with phone: $phone');
+                        bool isValid = await authRepo.login(phone, password);
+                        print('✅ Login result: $isValid');
+
+                        if (isValid && mounted) {
+                          print('📱 Navigating to dashboard');
+                          Navigator.pushReplacementNamed(context, AppRoutes.dashboard);
+                        } else if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text("Invalid credentials. Please try again.")),
+                          );
+                        }
+                      } catch (e) {
+                        print('❌ Login error: $e');
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text("Login failed: $e"), backgroundColor: Colors.red),
+                          );
+                        }
+                      } finally {
+                        if (mounted) setState(() => _isLoading = false);
                       }
                     },
                     child: const Text("Log In"),
