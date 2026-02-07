@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../routing/app_router.dart';
 import '../common/top_box.dart';
 import '../../data/providers.dart';
+import '../../core/styles/app_colors.dart';
 
 class LoginPage extends ConsumerStatefulWidget {
   const LoginPage({super.key});
@@ -36,20 +37,13 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                 fontFamily: 'IBM Plex Sans',
                 fontSize: 40,
                 fontStyle: FontStyle.italic,
-                color: Colors.black87,
+                color: AppColors.textPrimary,
               ),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 12),
 
-            // Elhaq logo
-            SizedBox(
-              height: 80,
-              child: Image.asset(
-                'assets/logo.png',
-                fit: BoxFit.contain,
-              ),
-            ),
+            // Removed irrelevant asset
             const SizedBox(height: 30),
 
             // Form fields
@@ -64,7 +58,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                 },
                 child: const Text(
                   "Forgot Password?",
-                  style: TextStyle(color: Color(0xFF26667f)),
+                  style: TextStyle(color: AppColors.primary),
                 ),
               ),
             ),
@@ -77,7 +71,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                 Expanded(
                   child: ElevatedButton(
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.purple, // Elhaq purple theme
+                      backgroundColor: AppColors.secondary, // Orange
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(vertical: 16),
                       textStyle: const TextStyle(
@@ -128,8 +122,8 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                 Expanded(
                   child: OutlinedButton(
                     style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.purple, // Elhaq purple theme
-                      side: const BorderSide(color: Colors.purple),
+                      foregroundColor: AppColors.primary, // Teal
+                      side: BorderSide(color: AppColors.primary),
                       padding: const EdgeInsets.symmetric(vertical: 16),
                       textStyle: const TextStyle(
                           fontSize: 18, fontWeight: FontWeight.bold),
@@ -158,12 +152,16 @@ class _LoginPageState extends ConsumerState<LoginPage> {
           style: const TextStyle(color: Colors.black),
           decoration: InputDecoration(
             labelText: 'Phone Number',
-            labelStyle: const TextStyle(color: Colors.black54),
+            labelStyle: TextStyle(color: AppColors.textPrimary),
             filled: true,
             fillColor: Colors.white,
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
               borderSide: BorderSide.none,
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: AppColors.primary, width: 2),
             ),
           ),
         ),
@@ -174,11 +172,16 @@ class _LoginPageState extends ConsumerState<LoginPage> {
           obscureText: !_isLoginPasswordVisible,
           decoration: InputDecoration(
             labelText: 'Password',
+            labelStyle: TextStyle(color: AppColors.textPrimary),
             filled: true,
             fillColor: Colors.white,
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
               borderSide: BorderSide.none,
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: AppColors.primary, width: 2),
             ),
             suffixIcon: IconButton(
               icon: Icon(

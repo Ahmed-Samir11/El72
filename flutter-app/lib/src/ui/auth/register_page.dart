@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../common/top_box.dart';
 import '../../data/providers.dart';
+import '../../core/styles/app_colors.dart';
 
 class RegisterPage extends ConsumerStatefulWidget {
   const RegisterPage({super.key});
@@ -35,15 +36,12 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
                 fontFamily: 'IBM Plex Sans',
                 fontSize: 40,
                 fontStyle: FontStyle.italic,
-                color: Colors.black87,
+                color: AppColors.textPrimary,
               ),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 12),
-            SizedBox(
-              height: 80,
-              child: Image.asset('assets/logo.png', fit: BoxFit.contain),
-            ),
+            // Removed irrelevant asset
             const SizedBox(height: 30),
             _buildForm(),
             const SizedBox(height: 24),
@@ -52,7 +50,7 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
                 Expanded(
                   child: ElevatedButton(
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.purple, // Elhaq purple theme
+                      backgroundColor: AppColors.secondary, // Orange
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(vertical: 16),
                       textStyle: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
@@ -105,8 +103,8 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
                 Expanded(
                   child: OutlinedButton(
                     style: OutlinedButton.styleFrom(
-                      foregroundColor: const Color(0xFF26667f),
-                      side: const BorderSide(color: Color(0xFF26667f)),
+                      foregroundColor: AppColors.primary,
+                      side: BorderSide(color: AppColors.primary),
                       padding: const EdgeInsets.symmetric(vertical: 16),
                       textStyle: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                     ),
@@ -123,7 +121,10 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
               onPressed: () {
                 Navigator.pushReplacementNamed(context, '/login');
               },
-              child: const Text("Already have an account? Login"),
+              child: Text(
+                "Already have an account? Login",
+                style: TextStyle(color: AppColors.primary),
+              ),
             ),
           ],
         ),
@@ -140,12 +141,16 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
           style: const TextStyle(color: Colors.black),
           decoration: InputDecoration(
             labelText: 'Phone Number',
-            labelStyle: const TextStyle(color: Colors.black54),
+            labelStyle: TextStyle(color: AppColors.textPrimary),
             filled: true,
             fillColor: Colors.white,
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
               borderSide: BorderSide.none,
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: AppColors.primary, width: 2),
             ),
           ),
         ),
@@ -156,11 +161,16 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
           obscureText: !_isPasswordVisible,
           decoration: InputDecoration(
             labelText: 'Password',
+            labelStyle: TextStyle(color: AppColors.textPrimary),
             filled: true,
             fillColor: Colors.white,
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
               borderSide: BorderSide.none,
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: AppColors.primary, width: 2),
             ),
             suffixIcon: IconButton(
               icon: Icon(

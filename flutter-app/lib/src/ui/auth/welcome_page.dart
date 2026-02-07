@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import '../../core/styles/app_colors.dart';
 
 class WelcomePage extends StatelessWidget {
   const WelcomePage({super.key});
@@ -14,11 +15,29 @@ class WelcomePage extends StatelessWidget {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              // Elhaq Logo
-              Image.asset(
-                'assets/logo.png',
-                width: 280,
-                height: 280,
+              // Removed irrelevant asset
+              const SizedBox(height: 50),
+
+              // Welcome Title
+              Text(
+                'Welcome to إلحق',
+                style: GoogleFonts.roboto(
+                  fontSize: 32,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.textPrimary, // Deep Teal
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 20),
+
+              // Subtitle
+              Text(
+                'Track deals, save money, stay ahead.',
+                style: GoogleFonts.roboto(
+                  fontSize: 18,
+                  color: AppColors.textSecondary,
+                ),
+                textAlign: TextAlign.center,
               ),
               const SizedBox(height: 50),
 
@@ -27,7 +46,7 @@ class WelcomePage extends StatelessWidget {
                 width: double.infinity,
                 child: ElevatedButton(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.purple, // Elhaq purple theme
+                    backgroundColor: AppColors.secondary, // Warm Orange
                     padding: const EdgeInsets.symmetric(vertical: 16),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(50),
@@ -53,7 +72,7 @@ class WelcomePage extends StatelessWidget {
                 width: double.infinity,
                 child: ElevatedButton(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.purple, // Elhaq purple theme
+                    backgroundColor: AppColors.secondary, // Warm Orange
                     padding: const EdgeInsets.symmetric(vertical: 16),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(50),

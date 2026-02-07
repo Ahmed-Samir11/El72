@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../core/styles/app_colors.dart';
 
 class SubscriptionScreen extends StatelessWidget {
   const SubscriptionScreen({super.key});
@@ -7,7 +8,11 @@ class SubscriptionScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Subscription Plans')),
+      appBar: AppBar(
+        title: const Text('Subscription Plans'),
+        backgroundColor: AppColors.primary,
+        foregroundColor: Colors.white,
+      ),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -16,7 +21,7 @@ class SubscriptionScreen extends StatelessWidget {
               'Free',
               'Basic tracking for 3 products',
               'EGP 0/month',
-              Colors.grey,
+              AppColors.primary.withOpacity(0.5), // Light teal
               () {
                 // Handle free plan
               },
@@ -26,7 +31,7 @@ class SubscriptionScreen extends StatelessWidget {
               'Pro',
               'Unlimited tracking + notifications',
               'EGP 50/month',
-              Colors.blue,
+              AppColors.secondary, // Orange
               () => _launchPayment('pro'),
             ),
             const SizedBox(height: 16),
@@ -34,7 +39,7 @@ class SubscriptionScreen extends StatelessWidget {
               'Business',
               'Advanced analytics + API access',
               'EGP 200/month',
-              Colors.purple,
+              AppColors.primary, // Deep teal
               () => _launchPayment('business'),
             ),
           ],
@@ -45,7 +50,7 @@ class SubscriptionScreen extends StatelessWidget {
 
   Widget _buildPlanCard(String title, String description, String price, Color color, VoidCallback onTap) {
     return Card(
-      color: color.withOpacity(0.1),
+      color: color,
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(12),
@@ -56,20 +61,24 @@ class SubscriptionScreen extends StatelessWidget {
             children: [
               Text(
                 title,
-                style: TextStyle(
+                style: const TextStyle(
                   fontSize: 24,
                   fontWeight: FontWeight.bold,
-                  color: color,
+                  color: Colors.white,
                 ),
               ),
               const SizedBox(height: 8),
-              Text(description),
+              Text(
+                description,
+                style: const TextStyle(color: Colors.white),
+              ),
               const SizedBox(height: 8),
               Text(
                 price,
                 style: const TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
+                  color: Colors.white,
                 ),
               ),
             ],

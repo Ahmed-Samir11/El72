@@ -16,7 +16,7 @@ class ElhaqApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Elhaq Tracker',
+      title: 'إلحق Tracker',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
@@ -27,6 +27,20 @@ class ElhaqApp extends StatelessWidget {
         ),
         scaffoldBackgroundColor: AppColors.backgroundLight,
         fontFamily: 'IBM Plex Sans',
+        textTheme: TextTheme(
+          headlineLarge: TextStyle(fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+          headlineMedium: TextStyle(fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+          headlineSmall: TextStyle(fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+          titleLarge: TextStyle(fontWeight: FontWeight.w600, color: AppColors.textPrimary),
+          titleMedium: TextStyle(fontWeight: FontWeight.w600, color: AppColors.textPrimary),
+          titleSmall: TextStyle(fontWeight: FontWeight.w600, color: AppColors.textPrimary),
+          bodyLarge: TextStyle(color: AppColors.textPrimary),
+          bodyMedium: TextStyle(color: AppColors.textPrimary),
+          bodySmall: TextStyle(color: AppColors.textSecondary),
+          labelLarge: TextStyle(fontWeight: FontWeight.w600, color: AppColors.textPrimary),
+          labelMedium: TextStyle(fontWeight: FontWeight.w600, color: AppColors.textPrimary),
+          labelSmall: TextStyle(fontWeight: FontWeight.w600, color: AppColors.textPrimary),
+        ),
       ),
       darkTheme: ThemeData(
         useMaterial3: true,

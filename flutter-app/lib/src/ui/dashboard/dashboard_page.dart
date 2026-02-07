@@ -3,6 +3,7 @@ import '../create_tracker_sheet.dart';
 import '../subscription_screen.dart';
 import '../widgets/deal_card.dart';
 import '../widgets/market_pulse_header.dart';
+import '../../core/styles/app_colors.dart';
 
 class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key});
@@ -22,7 +23,11 @@ class _DashboardPageState extends State<DashboardPage> {
       _ProfileTab(),
     ];
     return Scaffold(
-      appBar: AppBar(title: const Text('Elhaq Dashboard')),
+      appBar: AppBar(
+        title: const Text('إلحق Dashboard'),
+        backgroundColor: AppColors.primary,
+        foregroundColor: Colors.white,
+      ),
       body: pages[index],
       bottomNavigationBar: NavigationBar(
         selectedIndex: index,
@@ -41,6 +46,8 @@ class _DashboardPageState extends State<DashboardPage> {
             builder: (context) => const CreateTrackerSheet(),
           );
         },
+        backgroundColor: AppColors.secondary,
+        foregroundColor: Colors.white,
         child: const Icon(Icons.add),
       ) : null,
     );
@@ -113,7 +120,9 @@ class _DealsTab extends StatelessWidget {
         // SliverAppBar
         SliverAppBar(
           floating: true,
-          title: const Text('Elhaq'),
+          title: const Text('إلحق'),
+          backgroundColor: AppColors.primary,
+          foregroundColor: Colors.white,
           actions: [
             IconButton(
               icon: const Icon(Icons.notifications),
@@ -169,15 +178,80 @@ class _DealsTab extends StatelessWidget {
 class _ProfileTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: ElevatedButton(
-        onPressed: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (context) => const SubscriptionScreen()),
-          );
-        },
-        child: const Text('Manage Subscription'),
+    return Padding(
+      padding: const EdgeInsets.all(16.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          // Avatar
+          CircleAvatar(
+            radius: 50,
+            backgroundColor: AppColors.primary,
+            child: const Icon(Icons.person, size: 50, color: Colors.white),
+          ),
+          const SizedBox(height: 16),
+          // Name
+          Text(
+            'User Name', // Placeholder
+            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  color: AppColors.textPrimary,
+                  fontWeight: FontWeight.bold,
+                ),
+          ),
+          const SizedBox(height: 8),
+          // Email
+          Text(
+            'user@example.com', // Placeholder
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: AppColors.textSecondary,
+                ),
+          ),
+          const SizedBox(height: 24),
+          // Subscription Status
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: AppColors.primary.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.primary),
+            ),
+            child: Column(
+              children: [
+                Text(
+                  'Current Plan: Free',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        color: AppColors.textPrimary,
+                        fontWeight: FontWeight.w600,
+                      ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Upgrade for unlimited trackers and priority alerts.',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: AppColors.textSecondary,
+                      ),
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 24),
+          // Manage Subscription Button
+          ElevatedButton(
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const SubscriptionScreen()),
+              );
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.secondary,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 12),
+            ),
+            child: const Text('Manage Subscription'),
+          ),
+        ],
       ),
     );
   }

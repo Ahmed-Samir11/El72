@@ -74,10 +74,20 @@ class Crawl4AIEngine:
             extraction_type="schema",
             instruction=(
                 f"Extract up to {max_products} products from this e-commerce search "
-                "results page. For each product return: name, price (number only), "
-                "currency, image_url, product_url (href), delivery_estimate, "
-                "rating, review_count, in_stock (boolean), variants. "
-                "Return ONLY a JSON array of objects."
+                "results page. For EACH product, these fields are REQUIRED:\n"
+                "\n"
+                "1. name: the full product title as displayed\n"
+                "2. price: numeric price ONLY (no currency symbol, no commas). REQUIRED.\n"
+                "3. currency: the currency code shown on the page (USD, EGP, AED, etc.)\n"
+                "4. product_url: the FULL absolute URL to the product detail page (must start with http). REQUIRED — this is the link a user would click to see the product.\n"
+                "5. delivery_estimate: delivery/shipping text exactly as shown (e.g. 'Free delivery by Thu', 'Delivers in 3-5 days', 'Get it by Feb 12'). If not visible, set to null.\n"
+                "6. variants: list of product variants visible on the listing — sizes, colors, pack counts, quantities. E.g. ['Pack of 12', 'Pack of 24'] or ['Size M', 'Size L']. If none shown, return empty array [].\n"
+                "7. rating: numeric star rating (e.g. 4.5). Null if not shown.\n"
+                "8. review_count: number of reviews as integer. Null if not shown.\n"
+                "9. in_stock: boolean — true if available, false if out of stock.\n"
+                "10. image_url: always set to null.\n"
+                "\n"
+                "Return ONLY a valid JSON array of product objects. No markdown, no explanation."
             ),
             chunk_token_threshold=2000,
             overlap_rate=0.05,

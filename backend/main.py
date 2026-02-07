@@ -249,6 +249,26 @@ async def get_session_state(session_id: str):
 #  /health
 # =====================================================================
 
+@app.get("/")
+async def root():
+    return {
+        "name": "CartPilot — Agentic Commerce API",
+        "version": "0.1.0",
+        "endpoints": [
+            "GET  /health",
+            "POST /tools/search",
+            "POST /tools/cart/add",
+            "POST /tools/cart/remove",
+            "GET  /tools/cart?session_id=",
+            "POST /tools/ranking/explain",
+            "POST /tools/checkout?session_id=",
+            "GET  /session/{session_id}",
+            "WS   /ws/{session_id}",
+        ],
+        "docs": "/docs",
+    }
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}
