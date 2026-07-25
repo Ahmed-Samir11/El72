@@ -347,7 +347,7 @@ async def main():
         sys.exit(1)
     
     # Connect to Redis
-    redis_client = await aioredis.from_url(
+    redis_client = aioredis.from_url(
         REDIS_URL, 
         encoding="utf-8", 
         decode_responses=True

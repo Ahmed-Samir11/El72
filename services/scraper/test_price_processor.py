@@ -11,7 +11,7 @@ from services.scraper.store_scrapers import ScrapeResult
 @pytest.fixture
 def mock_db_pool():
     """Create mock database pool."""
-    pool = AsyncMock()
+    pool = MagicMock()
     conn = AsyncMock()
     pool.acquire.return_value.__aenter__.return_value = conn
     return pool, conn

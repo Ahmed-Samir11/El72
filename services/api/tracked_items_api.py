@@ -10,8 +10,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, validator
 from sqlalchemy.orm import Session
 
+from services.api.dependencies import get_db, get_current_user
 from services.api.models import User
-from services.api.main import get_db, get_current_user
 from services.api.tracked_items_models import TrackedItem, TrackedItemStore, CurrentPrice, LowestPrice
 
 

@@ -91,7 +91,7 @@ def get_dynamic_pricing():
     # Mock dynamic pricing based on demand
     # In real, query analytics
     return {
-        "basic": {"alerts": 10, "price": 100},
-        "plus": {"alerts": 50, "price": 250},
-        "pro": {"alerts": 200, "price": 500}
+        "free": {"alerts": 10, "price": 0},
+        "premium": {"alerts": 50, "price": 250},
+        "enterprise": {"alerts": 200, "price": 500}
     }

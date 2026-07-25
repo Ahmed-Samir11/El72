@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from sqlalchemy import Column, DateTime, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.ext.declarative import declarative_base
 
@@ -15,4 +17,4 @@ class PaymentLog(Base):
     status = Column(String(50), nullable=False)
     tier = Column(String(20), nullable=False)
     valid_until = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, nullable=False, default="now()")
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
