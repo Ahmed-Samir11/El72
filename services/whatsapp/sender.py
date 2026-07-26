@@ -32,6 +32,12 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://elhaq:elhaq_pass@postgres
 ACCESS_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN", "EAAMDRapIJBIBQEVaz8vkFSEGZAuLksuHY6lbOsD86eRRYIpZBzASnpnzCFjLGIeQyhJCzSvnmCqDE1cKcG0pAiYgYjKE5I3K4hx7sXcl0JmyDZCUSLrrIQ8erjdvyXupZB4vhs7DIZBnU1GfLXCsk2mn34TaZBt4YDNzC0MeEGJlKXa5TYFvyx6WZBt097eEdd07E6yJajZCCMjm8ZAed0bZAvJVBMJkpppxf5AFZBd5lmWuOh9ykY2nK0p5zJAcaD1sCyc3EYwpFUDXMrRnpxMUZCtZA")
 PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "966490223206963")
 WHATSAPP_API_VERSION = os.getenv("WHATSAPP_API_VERSION", "v18.0")
+# Free-form text is not reliably delivered from the Meta test number; use an approved template.
+# Custom el72_* templates may stay PENDING; jaspers_market_order_confirmation_v1 is pre-approved.
+WHATSAPP_TEMPLATE_NAME = os.getenv(
+    "WHATSAPP_TEMPLATE_NAME", "jaspers_market_order_confirmation_v1"
+)
+WHATSAPP_TEMPLATE_LANG = os.getenv("WHATSAPP_TEMPLATE_LANG", "en_US")
 
 # Feature Flags
 MOCK_MODE = os.getenv("MOCK_WHATSAPP", "false").lower() == "true"
@@ -104,15 +110,50 @@ async def ensure_consumer_group():
             raise
 
 
+def normalize_phone(phone: str) -> str:
+    """Normalize to E.164 with leading '+' (required for reliable Cloud API delivery)."""
+    phone = (phone or "").strip().replace(" ", "").replace("-", "")
+    if not phone:
+        return phone
+    if not phone.startswith("+"):
+        phone = f"+{phone}"
+    return phone
+
+
+def build_price_alert_template_params(payload: Dict[str, Any]) -> List[str]:
+    """Build positional template body params for the approved alert template.
+
+    Maps tracker fields onto jaspers_market_order_confirmation_v1:
+      Hi {{1}}, ... order number is {{2}}. ... Estimated delivery: {{3}}.
+    """
+    product = payload.get("product_title") or payload.get("sku") or "Product"
+    store = payload.get("store") or "store"
+    price = payload.get("price", "0")
+    original = payload.get("original_price")
+    discount = payload.get("discount_percent")
+    url = payload.get("url") or ""
+
+    line2 = f"{price} EGP on {store}"
+    details = []
+    if original is not None:
+        details.append(f"was {original} EGP")
+    if discount is not None:
+        details.append(f"{discount}% off")
+    if url:
+        details.append(str(url)[:80])
+    line3 = ", ".join(str(x) for x in details) if details else "price alert triggered"
+
+    return [
+        str(product)[:60] or "there",
+        str(line2)[:60] or "deal",
+        str(line3)[:80] or "see app for details",
+    ]
+
+
 async def send_whatsapp_message(phone: str, message_body: str) -> bool:
-    """Send WhatsApp message via Facebook Graph API.
+    """Send WhatsApp message via Facebook Graph API (legacy free-form text).
     
-    Args:
-        phone: Recipient phone number with country code (e.g., "201102526446")
-        message_body: Text message to send
-        
-    Returns:
-        True if message sent successfully, False otherwise
+    Prefer send_whatsapp_price_alert for real delivery on the Cloud API test number.
     """
     if MOCK_MODE:
         logger.info(f"[MOCK] WhatsApp to {phone}: {message_body}")
@@ -122,6 +163,7 @@ async def send_whatsapp_message(phone: str, message_body: str) -> bool:
         logger.error("WhatsApp credentials not configured. Set WHATSAPP_ACCESS_TOKEN and WHATSAPP_PHONE_NUMBER_ID")
         return False
 
+    phone = normalize_phone(phone)
     url = f"https://graph.facebook.com/{WHATSAPP_API_VERSION}/{PHONE_NUMBER_ID}/messages"
     
     headers = {
@@ -129,7 +171,6 @@ async def send_whatsapp_message(phone: str, message_body: str) -> bool:
         "Content-Type": "application/json"
     }
     
-    # Use text message type for custom messages
     payload = {
         "messaging_product": "whatsapp",
         "recipient_type": "individual",
@@ -154,6 +195,67 @@ async def send_whatsapp_message(phone: str, message_body: str) -> bool:
                 
     except Exception as e:
         logger.error(f"Failed to send WhatsApp message: {e}", exc_info=True)
+        return False
+
+
+async def send_whatsapp_price_alert(phone: str, payload: Dict[str, Any]) -> bool:
+    """Send price alert using an approved WhatsApp message template.
+
+    Free-form text is accepted by Graph API but often never delivered from the
+    Meta sandbox test number. Templates (like hello_world) do deliver.
+    """
+    message_preview = format_price_alert(payload)
+
+    if MOCK_MODE:
+        logger.info(f"[MOCK] WhatsApp template to {phone}: {message_preview}")
+        return True
+
+    if not ACCESS_TOKEN or not PHONE_NUMBER_ID:
+        logger.error("WhatsApp credentials not configured. Set WHATSAPP_ACCESS_TOKEN and WHATSAPP_PHONE_NUMBER_ID")
+        return False
+
+    phone = normalize_phone(phone)
+    params = build_price_alert_template_params(payload)
+    url = f"https://graph.facebook.com/{WHATSAPP_API_VERSION}/{PHONE_NUMBER_ID}/messages"
+    headers = {
+        "Authorization": f"Bearer {ACCESS_TOKEN}",
+        "Content-Type": "application/json",
+    }
+    api_payload = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": phone,
+        "type": "template",
+        "template": {
+            "name": WHATSAPP_TEMPLATE_NAME,
+            "language": {"code": WHATSAPP_TEMPLATE_LANG},
+            "components": [
+                {
+                    "type": "body",
+                    "parameters": [
+                        {"type": "text", "text": value} for value in params
+                    ],
+                }
+            ],
+        },
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.post(url, headers=headers, json=api_payload)
+
+            if response.status_code == 200:
+                logger.info(
+                    f"WhatsApp template '{WHATSAPP_TEMPLATE_NAME}' sent to {phone}: {response.json()}"
+                )
+                return True
+
+            logger.error(
+                f"WhatsApp template API error [{response.status_code}]: {response.text}"
+            )
+            return False
+    except Exception as e:
+        logger.error(f"Failed to send WhatsApp template message: {e}", exc_info=True)
         return False
 
 
@@ -250,9 +352,6 @@ async def process_message(message_id: str, fields: Dict[bytes, bytes]):
             await redis_client.xack(STREAM_NAME, CONSUMER_GROUP, message_id)
             return
         
-        # Format message once
-        message_text = format_price_alert(payload)
-        
         # Prepare tasks for concurrent sending
         async def send_to_subscriber(user_id: int, phone: str):
             """Send message to a single subscriber with deduplication check"""
@@ -263,19 +362,18 @@ async def process_message(message_id: str, fields: Dict[bytes, bytes]):
                 logger.info(f"Duplicate alert suppressed for user {user_id}:{sku}")
                 return None
             
-            # Strip '+' from phone number for WhatsApp API
-            phone_clean = phone.lstrip('+')
+            phone_clean = normalize_phone(phone)
             
-            # Send WhatsApp message
-            success = await send_whatsapp_message(phone_clean, message_text)
+            # Send via approved template (free-form text is not delivered reliably)
+            success = await send_whatsapp_price_alert(phone_clean, payload)
             
             if success:
                 # Set deduplication key (expires in 24 hours)
                 await redis_client.setex(dedup_key, 86400, "1")
-                logger.info(f"Sent alert to user {user_id} ({phone})")
+                logger.info(f"Sent alert to user {user_id} ({phone_clean})")
                 return True
             else:
-                logger.error(f"Failed to send alert to user {user_id} ({phone})")
+                logger.error(f"Failed to send alert to user {user_id} ({phone_clean})")
                 return False
         
         # Send to all subscribers concurrently

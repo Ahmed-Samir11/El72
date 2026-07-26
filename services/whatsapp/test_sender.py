@@ -234,7 +234,7 @@ async def test_process_message_user_phone_success():
 
     payload = {"sku": "SKU1", "price": 50, "user_phone": "+201234"}
     with patch(
-        "services.whatsapp.sender.send_whatsapp_message",
+        "services.whatsapp.sender.send_whatsapp_price_alert",
         new=AsyncMock(return_value=True),
     ) as send_mock:
         await sender.process_message("1-0", {"payload": json.dumps(payload)})
@@ -251,7 +251,7 @@ async def test_process_message_dedup_skips():
 
     payload = {"sku": "SKU1", "price": 50, "user_phone": "+201234"}
     with patch(
-        "services.whatsapp.sender.send_whatsapp_message",
+        "services.whatsapp.sender.send_whatsapp_price_alert",
         new=AsyncMock(return_value=True),
     ) as send_mock:
         await sender.process_message("1-0", {"payload": json.dumps(payload)})
@@ -267,13 +267,64 @@ async def test_process_message_send_failure():
 
     payload = {"sku": "SKU1", "price": 50, "user_phone": "+201234"}
     with patch(
-        "services.whatsapp.sender.send_whatsapp_message",
+        "services.whatsapp.sender.send_whatsapp_price_alert",
         new=AsyncMock(return_value=False),
     ):
         await sender.process_message("1-0", {"payload": json.dumps(payload)})
 
     sender.redis_client.setex.assert_not_awaited()
     sender.redis_client.xack.assert_awaited_once()
+
+
+def test_normalize_phone_adds_plus():
+    assert sender.normalize_phone("201091095176") == "+201091095176"
+    assert sender.normalize_phone("+201091095176") == "+201091095176"
+
+
+def test_build_price_alert_template_params():
+    params = sender.build_price_alert_template_params(
+        {
+            "product_title": "Laptop",
+            "store": "amazon_eg",
+            "price": 1000,
+            "original_price": 1200,
+            "discount_percent": 16,
+            "url": "https://example.com/p",
+        }
+    )
+    assert params[0] == "Laptop"
+    assert "1000 EGP on amazon_eg" == params[1]
+    assert "was 1200 EGP" in params[2]
+    assert "16% off" in params[2]
+
+
+@pytest.mark.asyncio
+async def test_send_whatsapp_price_alert_success():
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {"messages": [{"id": "wamid.1"}]}
+
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+    mock_client.__aenter__.return_value = mock_client
+    mock_client.__aexit__.return_value = False
+
+    with patch.object(sender, "MOCK_MODE", False), patch.object(
+        sender, "ACCESS_TOKEN", "token"
+    ), patch.object(sender, "PHONE_NUMBER_ID", "123"), patch.object(
+        sender, "WHATSAPP_TEMPLATE_NAME", "el72_price_alert"
+    ), patch(
+        "services.whatsapp.sender.httpx.AsyncClient", return_value=mock_client
+    ):
+        ok = await sender.send_whatsapp_price_alert(
+            "201091095176",
+            {"sku": "S1", "price": 10, "store": "x", "url": "https://x"},
+        )
+    assert ok is True
+    sent_json = mock_client.post.await_args.kwargs["json"]
+    assert sent_json["type"] == "template"
+    assert sent_json["to"] == "+201091095176"
+    assert sent_json["template"]["name"] == "el72_price_alert"
 
 
 @pytest.mark.asyncio

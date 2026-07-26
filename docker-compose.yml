@@ -28,7 +28,8 @@ services:
       POSTGRES_PASSWORD: elhaq_pass
       POSTGRES_DB: elhaq
     ports:
-      - "5432:5432"
+      # Host 5432 is often occupied by a local Postgres; use 5434 externally.
+      - "5434:5432"
     volumes:
       - pg-data:/var/lib/postgresql/data
 
@@ -118,6 +119,8 @@ services:
       WHATSAPP_ACCESS_TOKEN: "EAAMDRapIJBIBSJzUSLQpzUY2m9IYy2sYUZC4ykbUvBZAQLyZB9GUmfaRA22fNK3xqQIwHC2FOoRq1FlfZBGQaIeMk74IUKgwvchqqbKDsxPyZBMVNZA5ozCwfSmZAefrjLyQX6LTGZAwy4FKByVMBhyFWK3Fj7NCVQnPofuZBOJRZA1i56nrsCIsat2pAPNV7zVZCoCT3HFCLRzksKOLi3ZCz7KwZBUbktSgyhAK7ClEQyfY2FJP9iRLh6az0Xx3snZCXbBH3yboR1jOMZCRcujhMx2jKvN"
       WHATSAPP_PHONE_NUMBER_ID: "1193756023831033"
       WHATSAPP_API_VERSION: "v25.0"
+      WHATSAPP_TEMPLATE_NAME: "jaspers_market_order_confirmation_v1"
+      WHATSAPP_TEMPLATE_LANG: "en_US"
       MOCK_WHATSAPP: "false"
     restart: unless-stopped
 
