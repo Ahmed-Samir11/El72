@@ -12,6 +12,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
 
 from services.api.models import Alert, Base, User
+from services.api.tracked_items_models import Base as TrackedBase
 from services.common.redis_client import RedisStreamClient
 
 from services.api.dependencies import *
@@ -31,6 +32,7 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 # Create tables
 Base.metadata.create_all(bind=engine)
+TrackedBase.metadata.create_all(bind=engine)
 
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -77,9 +79,8 @@ async def push_to_stream(target_url: str, alert_id: int):
             "sku": sku,
             "store": store
         }
-        # Use scraper_tasks stream with "payload" field that scraper expects
-        await redis_client.xadd("scraper_tasks", {"payload": json.dumps(target)})
-        print(f"✅ Pushed alert {alert_id} to scraper_tasks: {target}")
+        await redis_client.xadd(TARGETS_STREAM, {"payload": json.dumps(target)})
+        print(f"✅ Pushed alert {alert_id} to {TARGETS_STREAM}: {target}")
     except Exception as e:
         # Log error but don't fail the request
         print(f"❌ Failed to push to stream: {e}")

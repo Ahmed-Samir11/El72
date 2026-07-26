@@ -30,8 +30,6 @@ DATABASE_URL = "postgresql://elhaq:elhaq_pass@localhost:5432/elhaq"
 # Test data
 TEST_USERS = [
     {"phone": "+201091095176", "password": "testpass123"},
-    {"phone": "+201102526446", "password": "test12345"},
-    {"phone": "+201118302763", "password": "test12345"},
 ]
 
 TEST_SKU = "B0CX23V2ZK"  # Example Amazon product ASIN

@@ -248,6 +248,7 @@ async def check_in_stock(html: str) -> bool:
     # Avoid false positives from variant selectors
     specific_out_of_stock = [
         'currently unavailable',
+        'out of stock',
         'this item is out of stock',
         'sold out',
         'المنتج غير متوفر',  # Product not available

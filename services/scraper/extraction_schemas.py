@@ -250,19 +250,20 @@ Extract ALL visible products, not just the first few.
 
 def get_product_schema_json() -> str:
     """Get JSON schema string for product page extraction."""
-    return ProductPriceSchema.model_json_schema()
+    # Pydantic v1 compatibility (project pins pydantic==1.10.x)
+    return ProductPriceSchema.schema_json()
 
 
 def get_search_schema_json() -> str:
     """Get JSON schema string for search results extraction."""
-    return SearchResultsSchema.model_json_schema()
+    return SearchResultsSchema.schema_json()
 
 
 def parse_product_response(response: dict) -> ProductPriceSchema:
     """Parse LLM response into ProductPriceSchema."""
-    return ProductPriceSchema.model_validate(response)
+    return ProductPriceSchema.parse_obj(response)
 
 
 def parse_search_response(response: dict) -> SearchResultsSchema:
     """Parse LLM response into SearchResultsSchema."""
-    return SearchResultsSchema.model_validate(response)
+    return SearchResultsSchema.parse_obj(response)

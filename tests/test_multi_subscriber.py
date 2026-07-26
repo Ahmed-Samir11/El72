@@ -23,8 +23,6 @@ DATABASE_URL = "postgresql://elhaq:elhaq_pass@localhost:5432/elhaq"
 
 TEST_USERS = [
     {"phone": "+201091095176", "password": "testpass123"},
-    {"phone": "+201102526446", "password": "test12345"},
-    {"phone": "+201118302763", "password": "test12345"},
 ]
 
 TEST_PRODUCT_URL = "https://example.com/product/SKU-TEST-123"
