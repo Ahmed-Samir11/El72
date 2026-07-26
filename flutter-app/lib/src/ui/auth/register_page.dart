@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/styles/app_colors.dart';
 import '../common/top_box.dart';
 import '../../data/providers.dart';
+import '../common/el72_brand_mark.dart';
 
 class RegisterPage extends ConsumerStatefulWidget {
   const RegisterPage({super.key});
@@ -19,7 +21,7 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white, // Elhaq theme background
+      backgroundColor: AppColors.backgroundLight,
       appBar: const PreferredSize(
         preferredSize: Size.fromHeight(100),
         child: TopBox(),
@@ -35,15 +37,13 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
                 fontFamily: 'IBM Plex Sans',
                 fontSize: 40,
                 fontStyle: FontStyle.italic,
-                color: Colors.black87,
+                fontWeight: FontWeight.w700,
+                color: AppColors.textPrimary,
               ),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 12),
-            SizedBox(
-              height: 80,
-              child: Image.asset('assets/logo.png', fit: BoxFit.contain),
-            ),
+            const El72BrandMark(size: 92, showTagline: false, alignCenter: true),
             const SizedBox(height: 30),
             _buildForm(),
             const SizedBox(height: 24),
@@ -52,7 +52,7 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
                 Expanded(
                   child: ElevatedButton(
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.purple, // Elhaq purple theme
+                      backgroundColor: AppColors.primary,
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(vertical: 16),
                       textStyle: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
@@ -105,8 +105,8 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
                 Expanded(
                   child: OutlinedButton(
                     style: OutlinedButton.styleFrom(
-                      foregroundColor: const Color(0xFF26667f),
-                      side: const BorderSide(color: Color(0xFF26667f)),
+                      foregroundColor: AppColors.accent,
+                      side: const BorderSide(color: AppColors.accent),
                       padding: const EdgeInsets.symmetric(vertical: 16),
                       textStyle: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                     ),
@@ -137,10 +137,10 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
         TextField(
           controller: _phoneController,
           keyboardType: TextInputType.phone,
-          style: const TextStyle(color: Colors.black),
+          style: const TextStyle(color: AppColors.textPrimary),
           decoration: InputDecoration(
             labelText: 'Phone Number',
-            labelStyle: const TextStyle(color: Colors.black54),
+            labelStyle: const TextStyle(color: AppColors.textSecondary),
             filled: true,
             fillColor: Colors.white,
             border: OutlineInputBorder(
@@ -152,7 +152,7 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
         const SizedBox(height: 12),
         TextField(
           controller: _passwordController,
-          style: const TextStyle(color: Colors.black),
+          style: const TextStyle(color: AppColors.textPrimary),
           obscureText: !_isPasswordVisible,
           decoration: InputDecoration(
             labelText: 'Password',
@@ -165,7 +165,7 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
             suffixIcon: IconButton(
               icon: Icon(
                 _isPasswordVisible ? Icons.visibility : Icons.visibility_off,
-                color: Colors.grey,
+                color: AppColors.textSecondary,
               ),
               onPressed: () {
                 setState(() {

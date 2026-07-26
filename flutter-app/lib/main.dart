@@ -7,16 +7,16 @@ import 'src/core/styles/app_colors.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(const ProviderScope(child: ElhaqApp()));
+  runApp(const ProviderScope(child: El72App()));
 }
 
-class ElhaqApp extends StatelessWidget {
-  const ElhaqApp({super.key});
+class El72App extends StatelessWidget {
+  const El72App({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Elhaq Tracker',
+      title: 'El72 Deals',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,

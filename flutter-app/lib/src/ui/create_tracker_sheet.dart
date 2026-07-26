@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../data/repositories/alerts_repository.dart';
+import '../data/providers/tracking_status_provider.dart';
 
 class CreateTrackerSheet extends ConsumerStatefulWidget {
   const CreateTrackerSheet({super.key});
@@ -12,6 +13,7 @@ class CreateTrackerSheet extends ConsumerStatefulWidget {
 class _CreateTrackerSheetState extends ConsumerState<CreateTrackerSheet> {
   final _urlController = TextEditingController();
   final _targetController = TextEditingController();
+  bool _isSubmitting = false;
 
   @override
   Widget build(BuildContext context) {
@@ -45,27 +47,50 @@ class _CreateTrackerSheetState extends ConsumerState<CreateTrackerSheet> {
             controller: _targetController,
             keyboardType: TextInputType.number,
             decoration: const InputDecoration(
-              labelText: 'Target Price (Optional)',
+              labelText: 'Target Price (Required)',
               border: OutlineInputBorder(),
             ),
           ),
           const SizedBox(height: 16),
           ElevatedButton(
-            onPressed: () async {
+            onPressed: _isSubmitting ? null : () async {
               print("🔘 Add Button Pressed!");
-              
+
               try {
-                final url = _urlController.text;
-                final price = double.tryParse(_targetController.text) ?? 0.0;
-                
+                final url = _urlController.text.trim();
+                final price = double.tryParse(_targetController.text.trim()) ?? 0.0;
+
+                if (url.isEmpty || !url.startsWith('http')) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Please enter a valid product URL.'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                  return;
+                }
+
+                if (price <= 0) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Please enter a target price above zero.'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                  return;
+                }
+
                 print("📤 Sending: URL=$url, Price=$price");
+                setState(() => _isSubmitting = true);
+
+                ref.read(trackingStatusProvider.notifier).startTracking(url, price);
 
                 // Call your repository
                 await ref.read(alertsRepositoryProvider).createAlert(url, price);
                 
                 print("✅ Success!");
-                Navigator.pop(context); // Close the sheet
-                
+                ref.read(trackingStatusProvider.notifier).complete();
+
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
@@ -74,10 +99,12 @@ class _CreateTrackerSheetState extends ConsumerState<CreateTrackerSheet> {
                       duration: Duration(seconds: 3),
                     ),
                   );
+                  Navigator.pop(context);
                 }
               } catch (e, stack) {
                 print("❌ ERROR: $e");
                 print(stack);
+                ref.read(trackingStatusProvider.notifier).error(e.toString());
                 
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
@@ -87,9 +114,19 @@ class _CreateTrackerSheetState extends ConsumerState<CreateTrackerSheet> {
                     ),
                   );
                 }
+              } finally {
+                if (mounted) {
+                  setState(() => _isSubmitting = false);
+                }
               }
             },
-            child: const Text('Start Tracking'),
+            child: _isSubmitting
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2.4),
+                  )
+                : const Text('Start Tracking'),
           ),
           const SizedBox(height: 16),
         ],

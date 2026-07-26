@@ -1,25 +1,23 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import '../../core/styles/app_colors.dart';
+import '../common/el72_brand_mark.dart';
+
 class WelcomePage extends StatelessWidget {
   const WelcomePage({super.key});
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white, // Elhaq theme background
+      backgroundColor: AppColors.backgroundLight,
       body: Center(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 24),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              // Elhaq Logo
-              Image.asset(
-                'assets/logo.png',
-                width: 280,
-                height: 280,
-              ),
+              const El72BrandMark(size: 160, alignCenter: true),
               const SizedBox(height: 50),
 
               // Register Button
@@ -27,10 +25,11 @@ class WelcomePage extends StatelessWidget {
                 width: double.infinity,
                 child: ElevatedButton(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.purple, // Elhaq purple theme
+                    backgroundColor: AppColors.primary,
+                    foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(vertical: 16),
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(50),
+                      borderRadius: BorderRadius.circular(18),
                     ),
                   ),
                   onPressed: () {
@@ -40,23 +39,24 @@ class WelcomePage extends StatelessWidget {
                     "Register",
                     style: GoogleFonts.roboto(
                       fontSize: 18,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
                 ),
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 14),
 
               // Login Button
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.purple, // Elhaq purple theme
+                    backgroundColor: Colors.white,
+                    foregroundColor: AppColors.accent,
+                    side: const BorderSide(color: AppColors.accent),
                     padding: const EdgeInsets.symmetric(vertical: 16),
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(50),
+                      borderRadius: BorderRadius.circular(18),
                     ),
                   ),
                   onPressed: () {
@@ -66,8 +66,7 @@ class WelcomePage extends StatelessWidget {
                     "Login",
                     style: GoogleFonts.roboto(
                       fontSize: 18,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
                 ),

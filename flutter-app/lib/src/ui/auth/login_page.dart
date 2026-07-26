@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/styles/app_colors.dart';
 import '../../routing/app_router.dart';
 import '../common/top_box.dart';
 import '../../data/providers.dart';
+import '../common/el72_brand_mark.dart';
 
 class LoginPage extends ConsumerStatefulWidget {
   const LoginPage({super.key});
@@ -20,7 +22,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white, // Elhaq theme background
+      backgroundColor: AppColors.backgroundLight,
       appBar: const PreferredSize(
         preferredSize: Size.fromHeight(100), // fixed height
         child: TopBox(), // stays pinned at the top
@@ -36,20 +38,13 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                 fontFamily: 'IBM Plex Sans',
                 fontSize: 40,
                 fontStyle: FontStyle.italic,
-                color: Colors.black87,
+                fontWeight: FontWeight.w700,
+                color: AppColors.textPrimary,
               ),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 12),
-
-            // Elhaq logo
-            SizedBox(
-              height: 80,
-              child: Image.asset(
-                'assets/logo.png',
-                fit: BoxFit.contain,
-              ),
-            ),
+            const El72BrandMark(size: 92, showTagline: false, alignCenter: true),
             const SizedBox(height: 30),
 
             // Form fields
@@ -77,7 +72,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                 Expanded(
                   child: ElevatedButton(
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.purple, // Elhaq purple theme
+                        backgroundColor: AppColors.primary,
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(vertical: 16),
                       textStyle: const TextStyle(
@@ -128,8 +123,8 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                 Expanded(
                   child: OutlinedButton(
                     style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.purple, // Elhaq purple theme
-                      side: const BorderSide(color: Colors.purple),
+                      foregroundColor: AppColors.accent,
+                      side: const BorderSide(color: AppColors.accent),
                       padding: const EdgeInsets.symmetric(vertical: 16),
                       textStyle: const TextStyle(
                           fontSize: 18, fontWeight: FontWeight.bold),
@@ -155,10 +150,10 @@ class _LoginPageState extends ConsumerState<LoginPage> {
         TextField(
           controller: _phoneController,
           keyboardType: TextInputType.phone,
-          style: const TextStyle(color: Colors.black),
+          style: const TextStyle(color: AppColors.textPrimary),
           decoration: InputDecoration(
             labelText: 'Phone Number',
-            labelStyle: const TextStyle(color: Colors.black54),
+            labelStyle: const TextStyle(color: AppColors.textSecondary),
             filled: true,
             fillColor: Colors.white,
             border: OutlineInputBorder(
@@ -170,7 +165,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
         const SizedBox(height: 12),
         TextField(
           controller: _passwordController,
-          style: const TextStyle(color: Colors.black),
+          style: const TextStyle(color: AppColors.textPrimary),
           obscureText: !_isLoginPasswordVisible,
           decoration: InputDecoration(
             labelText: 'Password',
@@ -183,7 +178,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
             suffixIcon: IconButton(
               icon: Icon(
                 _isLoginPasswordVisible ? Icons.visibility : Icons.visibility_off,
-                color: Colors.grey,
+                color: AppColors.textSecondary,
               ),
               onPressed: () {
                 setState(() {
