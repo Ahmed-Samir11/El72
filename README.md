@@ -130,7 +130,7 @@ pytest tests/e2e_test.py
 
 ### Test Structure
 
-- **Unit Tests**: 34 passing tests across all services
+- **Unit Tests**: 153 passing tests across all services
 - **Integration Tests**: End-to-end stream processing validation
 - **Mocking**: httpx for API calls, in-memory SQLite for DB isolation
 - **Coverage**: HTML reports in `htmlcov/`
