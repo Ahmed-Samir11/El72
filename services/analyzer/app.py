@@ -14,6 +14,7 @@ from pythonjsonlogger import jsonlogger
 
 from services.analyzer import ml_detector
 from services.analyzer.intent_upsert import upsert_retailer_analytics_batch
+from services.analyzer.routers.intelligence import router as intelligence_router
 from services.analyzer.settings import AnalyzerSettings
 from services.common.redis_client import RedisStreamClient
 
@@ -40,6 +41,7 @@ root.addFilter(TraceIdFilter())
 logger = logging.getLogger(settings.service_name)
 
 app = FastAPI(title="Elhaq Analyzer")
+app.include_router(intelligence_router)
 
 # Prometheus metrics
 PUBLISH_QUEUE_SIZE = Gauge(
