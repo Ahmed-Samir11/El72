@@ -57,6 +57,22 @@ app.add_middleware(
 from services.api.routers import auth
 app.include_router(auth.router, prefix="/auth", tags=["Auth"])
 
+# Demo mode: seed realistic demo data on startup (idempotent).
+# Toggle with DEMO_MODE=True (default) for the investor demo.
+DEMO_MODE = os.getenv("DEMO_MODE", "True").lower() in ("1", "true", "yes", "on")
+
+
+@app.on_event("startup")
+def _seed_demo_data_on_startup() -> None:
+    if not DEMO_MODE:
+        return
+    try:
+        from services.api.seed_demo_data import run_seed
+        summary = run_seed(engine=engine)
+        print(f"🌱 Demo data seeded on startup: {summary}")
+    except Exception as e:  # fail-soft: demo data is non-critical
+        print(f"⚠️  Demo seed failed (continuing): {e}")
+
 # Background task function to push new alert targets to scraper stream
 async def push_to_stream(target_url: str, alert_id: int):
     """Push new alert target to Redis stream for scraper service"""

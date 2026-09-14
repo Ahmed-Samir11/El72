@@ -1,25 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../core/styles/app_colors.dart';
-
-class Deal {
-  final String id;
-  final String title;
-  final String storeName;
-  final String imageUrl;
-  final double price;
-  final double originalPrice;
-  final double discountPercentage;
-
-  const Deal({
-    required this.id,
-    required this.title,
-    required this.storeName,
-    required this.imageUrl,
-    required this.price,
-    required this.originalPrice,
-    required this.discountPercentage,
-  });
-}
+import '../../data/models/deal_model.dart';
 
 class DealCard extends StatelessWidget {
   final Deal deal;

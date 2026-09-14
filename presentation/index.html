@@ -1,0 +1,628 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Elhaq — Price Intelligence</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        :root {
+            --bg-dark: #070f14;
+            --bg-card: rgba(16, 25, 33, 0.7);
+            --bg-card-hover: rgba(22, 34, 46, 0.9);
+            --text-main: #f0f4f8;
+            --text-muted: #8b9eb0;
+            --accent-green: #10b981;
+            --accent-green-dark: #059669;
+            --accent-gold: #f59e0b;
+            --accent-red: #ef4444;
+            --border: rgba(16, 185, 129, 0.2);
+            --border-muted: rgba(255, 255, 255, 0.08);
+            --font-sans: 'Inter', sans-serif;
+            --font-mono: 'JetBrains Mono', monospace;
+        }
+
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            background-color: var(--bg-dark);
+            color: var(--text-main);
+            font-family: var(--font-sans);
+            overflow: hidden;
+            width: 100vw;
+            height: 100vh;
+            background-image: 
+                radial-gradient(circle at 0% 0%, rgba(16, 185, 129, 0.03), transparent 30%),
+                radial-gradient(circle at 100% 100%, rgba(245, 158, 11, 0.02), transparent 30%);
+        }
+
+        .presentation {
+            position: relative;
+            width: 100%;
+            height: 100%;
+        }
+
+        .slide {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.5s ease-in-out, transform 0.5s ease;
+            transform: translateY(15px);
+            padding: 5vw;
+        }
+
+        .slide.active {
+            opacity: 1;
+            pointer-events: auto;
+            transform: translateY(0);
+        }
+
+        .content {
+            width: 100%;
+            max-width: 1200px;
+        }
+
+        /* Typography */
+        h1 {
+            font-size: clamp(2.5rem, 4.5vw, 4rem);
+            font-weight: 800;
+            line-height: 1.1;
+            margin-bottom: 24px;
+            letter-spacing: -0.02em;
+        }
+
+        h2 {
+            font-size: clamp(2rem, 3.5vw, 3rem);
+            font-weight: 700;
+            margin-bottom: 24px;
+            letter-spacing: -0.02em;
+        }
+
+        p {
+            font-size: clamp(1.1rem, 1.5vw, 1.3rem);
+            color: var(--text-muted);
+            line-height: 1.6;
+            margin-bottom: 20px;
+        }
+
+        .text-green { color: var(--accent-green); }
+        .text-gold { color: var(--accent-gold); }
+        .text-white { color: var(--text-main); }
+
+        /* Layouts */
+        .grid-2 {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 60px;
+            align-items: center;
+        }
+
+        .grid-4 {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 24px;
+            margin-top: 40px;
+        }
+
+        /* UI Elements */
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-muted);
+            border-radius: 16px;
+            padding: 32px;
+            backdrop-filter: blur(10px);
+            transition: border-color 0.3s ease;
+        }
+        
+        .card.highlight {
+            border-color: var(--border);
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 24px;
+            background: rgba(16, 185, 129, 0.1);
+            color: var(--accent-green);
+            border: 1px solid rgba(16, 185, 129, 0.2);
+        }
+
+        /* Code Block */
+        .code-block {
+            background: #0d131a;
+            border: 1px solid var(--border-muted);
+            border-radius: 12px;
+            padding: 24px;
+            font-family: var(--font-mono);
+            font-size: 0.95rem;
+            line-height: 1.6;
+            color: #ccc;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            overflow-x: auto;
+        }
+        .code-block .keyword { color: #ff7ab2; font-weight: 700; }
+        .code-block .string { color: #ff8170; }
+        .code-block .comment { color: #6c7986; font-style: italic; }
+        .code-block .function { color: #daba8b; }
+        .code-block .variable { color: #9ab2c8; }
+
+        /* CSS WhatsApp Mockup */
+        .wa-mockup {
+            background: #0b141a;
+            border-radius: 20px;
+            width: 100%;
+            max-width: 350px;
+            margin: 0 auto;
+            border: 1px solid var(--border-muted);
+            overflow: hidden;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.5);
+        }
+        .wa-header {
+            background: #202c33;
+            padding: 16px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .wa-avatar {
+            width: 40px; height: 40px;
+            background: var(--accent-green);
+            border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            font-weight: bold; color: #fff;
+        }
+        .wa-body {
+            padding: 20px;
+            background-image: url('data:image/svg+xml;utf8,<svg opacity="0.05" xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100" fill="none"/><path d="M0,0 L100,100 M100,0 L0,100" stroke="%23ffffff" stroke-width="1"/></svg>');
+        }
+        .wa-bubble {
+            background: #005c4b;
+            color: #e9edef;
+            padding: 12px 16px;
+            border-radius: 12px;
+            border-top-left-radius: 2px;
+            font-size: 0.95rem;
+            margin-bottom: 12px;
+            line-height: 1.4;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.3);
+        }
+        .wa-meta {
+            display: flex;
+            justify-content: flex-end;
+            align-items: center;
+            gap: 4px;
+            font-size: 0.75rem;
+            color: rgba(255,255,255,0.6);
+            margin-top: 4px;
+        }
+
+        /* Fake Chart / UI Elements */
+        .fake-chart {
+            display: flex;
+            align-items: flex-end;
+            gap: 12px;
+            height: 200px;
+            padding: 20px;
+            border-bottom: 2px solid var(--border-muted);
+            border-left: 2px solid var(--border-muted);
+        }
+        .bar {
+            flex: 1;
+            background: var(--border-muted);
+            border-top-left-radius: 4px;
+            border-top-right-radius: 4px;
+            transition: background 0.3s;
+        }
+        .bar.active { background: var(--accent-green); }
+        .bar.danger { background: var(--accent-red); }
+
+        /* Architecture Nodes */
+        .arch-grid {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        .arch-row {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+        .arch-node {
+            background: var(--bg-card);
+            border: 1px solid var(--border-muted);
+            padding: 16px 24px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-weight: 500;
+            flex: 1;
+        }
+        .arch-node i { color: var(--accent-green); }
+        .arch-arrow { color: var(--border-muted); }
+
+        /* Metrics */
+        .metric-value {
+            font-size: 3.5rem;
+            font-weight: 800;
+            color: var(--accent-green);
+            line-height: 1;
+            margin-bottom: 8px;
+            letter-spacing: -0.05em;
+        }
+        .metric-label {
+            font-size: 1rem;
+            font-weight: 500;
+            color: var(--text-main);
+        }
+
+        /* Lists */
+        .feature-list { list-style: none; margin-top: 24px; }
+        .feature-list li {
+            font-size: 1.15rem; margin-bottom: 16px;
+            display: flex; align-items: flex-start; gap: 12px;
+        }
+        .feature-list i { color: var(--accent-gold); margin-top: 4px; }
+
+        /* Navigation */
+        .nav-controls {
+            position: fixed; bottom: 30px; right: 40px;
+            display: flex; gap: 10px; z-index: 100;
+        }
+        .nav-dot {
+            width: 10px; height: 10px; border-radius: 50%;
+            background: rgba(255,255,255,0.2); cursor: pointer;
+            border: none; transition: all 0.3s ease;
+        }
+        .nav-dot.active {
+            background: var(--accent-green);
+            box-shadow: 0 0 10px var(--accent-green);
+            transform: scale(1.2);
+        }
+        .progress {
+            position: fixed; top: 0; left: 0; height: 3px;
+            background: var(--accent-green); transition: width 0.3s ease; z-index: 100;
+        }
+        
+        /* Logo / Title Block */
+        .logo-box {
+            display: inline-flex; align-items: center; justify-content: center;
+            width: 64px; height: 64px; border-radius: 16px;
+            background: linear-gradient(135deg, var(--accent-green), var(--accent-green-dark));
+            color: white; font-weight: 800; font-size: 24px;
+            margin-bottom: 32px; box-shadow: 0 10px 20px rgba(16,185,129,0.3);
+        }
+    </style>
+</head>
+<body>
+
+<div class="progress" id="progress"></div>
+
+<div class="presentation">
+
+    <!-- Slide 1: Hero -->
+    <div class="slide active">
+        <div class="content">
+            <div class="grid-2">
+                <div>
+                    <div class="logo-box">72</div>
+                    <h1>Real-Time<br>Price Intelligence.</h1>
+                    <p style="font-size: 1.4rem; color: var(--text-main);">Elhaq protects Egyptian consumers from fake discounts using autonomous, AI-verified monitoring.</p>
+                    <p>Event-driven architecture. Delivered via WhatsApp.</p>
+                </div>
+                <div>
+                    <!-- Pure CSS Abstract Graphic -->
+                    <div style="position:relative; height: 400px; display:flex; align-items:center; justify-content:center;">
+                        <div style="position:absolute; width: 300px; height: 300px; border-radius: 50%; border: 1px dashed var(--border); animation: spin 20s linear infinite;"></div>
+                        <div style="position:absolute; width: 200px; height: 200px; border-radius: 50%; background: radial-gradient(circle, rgba(16,185,129,0.1) 0%, transparent 70%);"></div>
+                        <div class="card highlight" style="position:relative; z-index:2; text-align:center; padding: 24px 40px;">
+                            <i data-lucide="activity" style="width:48px; height:48px; color:var(--accent-green); margin-bottom:16px;"></i>
+                            <div style="font-size: 1.2rem; font-weight: 600; color: white;">Market Stream Active</div>
+                            <div style="font-size: 0.9rem; color: var(--text-muted); font-family: var(--font-mono); margin-top:8px;">Listening for anomalies...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Slide 2: The Problem -->
+    <div class="slide">
+        <div class="content">
+            <div class="grid-2">
+                <div>
+                    <!-- Pure CSS Fake Chart showing a fake discount -->
+                    <div class="card" style="padding: 24px;">
+                        <h3 style="font-size:1rem; color:var(--text-muted); margin-bottom:24px; text-transform:uppercase; letter-spacing:1px;">The "Fake Discount" Pattern</h3>
+                        <div class="fake-chart">
+                            <div class="bar" style="height: 30%;"></div>
+                            <div class="bar" style="height: 35%;"></div>
+                            <div class="bar" style="height: 32%;"></div>
+                            <!-- Price artificially inflated -->
+                            <div class="bar danger" style="height: 80%; position:relative;">
+                                <div style="position:absolute; top:-25px; left:50%; transform:translateX(-50%); font-size:12px; color:var(--accent-red); font-weight:bold;">+150%</div>
+                            </div>
+                            <div class="bar danger" style="height: 85%;"></div>
+                            <!-- "Discounted" but still higher than original -->
+                            <div class="bar active" style="height: 50%; position:relative;">
+                                <div style="position:absolute; top:-25px; left:50%; transform:translateX(-50%); font-size:12px; color:var(--accent-green); font-weight:bold;">"Sale"</div>
+                            </div>
+                            <div class="bar active" style="height: 48%;"></div>
+                        </div>
+                        <div style="display:flex; justify-content:space-between; margin-top:12px; font-size:0.8rem; color:var(--text-muted);">
+                            <span>Week 1</span>
+                            <span>Week 2 (Inflation)</span>
+                            <span>Week 3 (Fake Sale)</span>
+                        </div>
+                    </div>
+                </div>
+                <div>
+                    <div class="badge">The Problem</div>
+                    <h2>Why bots fail.</h2>
+                    <p>Static scrapers only read HTML. They cannot distinguish a genuine deal from artificial pre-sale price inflation.</p>
+                    <p>The Egyptian e-commerce market is plagued by fabricated discounts. Previous platforms that relied on basic scraping have failed because they required too much manual engineering to maintain.</p>
+                    <ul class="feature-list">
+                        <li><i data-lucide="x-circle"></i>Yaoota returns 503 errors (Dead).</li>
+                        <li><i data-lucide="pause-circle"></i>Kanbkam is dormant (Last active 2022).</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Slide 3: What we built -->
+    <div class="slide">
+        <div class="content">
+            <div class="badge">Architecture</div>
+            <h2>An event-driven platform.</h2>
+            <p style="max-width: 900px;">We built a fault-tolerant microservices architecture that tracks, analyzes, and alerts autonomously. No polling loops, no blocking I/O.</p>
+            
+            <div class="grid-4" style="margin-bottom: 40px;">
+                <div class="card">
+                    <div class="metric-value">7</div>
+                    <div class="metric-label">Microservices</div>
+                </div>
+                <div class="card">
+                    <div class="metric-value">30<span style="font-size:1.5rem">s</span></div>
+                    <div class="metric-label">Scraping Interval</div>
+                </div>
+                <div class="card">
+                    <div class="metric-value">4</div>
+                    <div class="metric-label">Store Scrapers</div>
+                </div>
+                <div class="card">
+                    <div class="metric-value">97<span style="font-size:1.5rem">%</span></div>
+                    <div class="metric-label">Test Coverage</div>
+                </div>
+            </div>
+
+            <!-- CSS Architecture Flow -->
+            <div class="arch-grid">
+                <div class="arch-row">
+                    <div class="arch-node"><i data-lucide="download"></i> Scraper (Playwright)</div>
+                    <i data-lucide="arrow-right" class="arch-arrow"></i>
+                    <div class="arch-node highlight"><i data-lucide="database"></i> Redis Streams (Ingest)</div>
+                    <i data-lucide="arrow-right" class="arch-arrow"></i>
+                    <div class="arch-node"><i data-lucide="brain-circuit"></i> Analyzer (ML Models)</div>
+                    <i data-lucide="arrow-right" class="arch-arrow"></i>
+                    <div class="arch-node"><i data-lucide="smartphone"></i> WhatsApp Notification</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Slide 4: AI Layer -->
+    <div class="slide">
+        <div class="content">
+            <div class="grid-2">
+                <div>
+                    <div class="badge">Machine Learning</div>
+                    <h2>How we verify deals.</h2>
+                    <p>A two-tiered anomaly detection system ensures alerts are only triggered for genuine market shifts, saving API costs and maintaining user trust.</p>
+                    
+                    <ul class="feature-list" style="margin-top: 32px;">
+                        <li>
+                            <i data-lucide="zap"></i>
+                            <div>
+                                <strong class="text-white">Layer 1: MAD (Fast Path)</strong><br>
+                                <span style="font-size:0.95rem;">Median Absolute Deviation. Sub-millisecond execution. Catches 99% of straightforward price drops.</span>
+                            </div>
+                        </li>
+                        <li>
+                            <i data-lucide="network"></i>
+                            <div>
+                                <strong class="text-white">Layer 2: Isolation Forest (Deep)</strong><br>
+                                <span style="font-size:0.95rem;">Pre-trained unsupervised model. Analyzes historical TimescaleDB data for subtle manipulation.</span>
+                            </div>
+                        </li>
+                    </ul>
+                </div>
+                <div>
+                    <!-- Actual code snippet styling -->
+                    <div class="code-block">
+<span class="comment"># ml_detector.py</span>
+<span class="keyword">def</span> <span class="function">score_prices</span>(window, method=<span class="string">"isolation"</span>):
+    <span class="comment"># Pre-loaded model — no retraining at request time</span>
+    scores = _loaded_model.decision_function(
+        window.reshape(-1, 1)
+    )
+    
+    <span class="comment"># Normalize to [0,1] confidence score</span>
+    <span class="keyword">return</span> <span class="variable">float</span>(
+        np.clip((np.tanh(-scores[-1])+1)/2, 0, 1)
+    )
+
+<span class="comment"># Threshold configured for 0.01 USD idempotency</span>
+<span class="keyword">if</span> score > <span class="string">0.85</span> <span class="keyword">and</span> is_genuine_drop:
+    <span class="keyword">await</span> redis.xadd(<span class="string">"stream:alerts"</span>, payload)
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Slide 5: WhatsApp -->
+    <div class="slide">
+        <div class="content">
+            <div class="grid-2">
+                <div>
+                    <!-- Pure CSS WhatsApp Mockup -->
+                    <div class="wa-mockup">
+                        <div class="wa-header">
+                            <div class="wa-avatar">E</div>
+                            <div>
+                                <div style="color:white; font-weight:600; font-size:1rem;">Elhaq Alerts <i data-lucide="badge-check" style="display:inline; width:14px; height:14px; color:var(--accent-green); margin-left:4px; vertical-align:middle;"></i></div>
+                                <div style="color:var(--text-muted); font-size:0.8rem;">Official Business Account</div>
+                            </div>
+                        </div>
+                        <div class="wa-body">
+                            <div class="wa-bubble">
+                                🔔 <strong>Verified Deal Detected</strong><br><br>
+                                <strong>Logitech MX Master 3S</strong><br>
+                                Current: <span style="text-decoration:line-through; color:rgba(255,255,255,0.6)">5,200 EGP</span><br>
+                                Drop: <strong style="color:#69f0ae">4,100 EGP</strong> (-21%)<br><br>
+                                <em>Lowest price in 4 months. Verified by Elhaq ML.</em>
+                                <div class="wa-meta">10:42 AM <i data-lucide="check-check" style="width:14px; height:14px; color:#53bdeb;"></i></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div>
+                    <div class="badge">Delivery</div>
+                    <h2>Cost-effective alerts.</h2>
+                    <p>Email open rates in Egypt are ~3%. WhatsApp open rates are 98%. Delivery via WhatsApp Cloud API is mandatory, but expensive if done wrong.</p>
+                    <p>By structuring our alerts purely as user-triggered transactional messages, we qualify for Meta's Utility rate rather than the Marketing rate.</p>
+                    
+                    <div class="card" style="margin-top: 24px; display:flex; justify-content:space-between; align-items:center;">
+                        <div>
+                            <div style="font-size:0.9rem; color:var(--text-muted);">Marketing Rate</div>
+                            <div style="font-size:1.5rem; color:var(--accent-red); font-weight:700;">$0.1073</div>
+                        </div>
+                        <div style="color:var(--border-muted);">VS</div>
+                        <div style="text-align:right;">
+                            <div style="font-size:0.9rem; color:var(--text-muted);">Utility Rate (Elhaq)</div>
+                            <div style="font-size:1.5rem; color:var(--accent-green); font-weight:700;">$0.0036</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Slide 6: Revenue -->
+    <div class="slide">
+        <div class="content">
+            <div class="badge">Business Model</div>
+            <h2>Revenue Streams.</h2>
+            <p style="max-width: 800px;">Multi-stream revenue designed for Egyptian consumer behavior and B2B data demands.</p>
+            
+            <div class="grid-2" style="margin-top: 48px;">
+                <div class="card highlight">
+                    <div style="display:flex; align-items:center; gap:12px; margin-bottom:20px;">
+                        <i data-lucide="users" style="color:var(--text-main); width:28px; height:28px;"></i>
+                        <h3 style="font-size: 1.5rem; color:var(--text-main); margin:0;">B2C</h3>
+                    </div>
+                    
+                    <div style="margin-bottom: 24px;">
+                        <h4 style="font-size:1.1rem; color:var(--text-muted); margin-bottom:8px;">Pay-As-You-Track</h4>
+                        <p style="font-size:0.95rem; margin:0;">Tracking credits via Vodafone Cash, mirroring local "fakka card" micro-recharge habits.</p>
+                    </div>
+                    <div>
+                        <h4 style="font-size:1.1rem; color:var(--accent-gold); margin-bottom:8px;"><i data-lucide="zap" style="width:16px; height:16px; display:inline; margin-right:6px; vertical-align:-2px;"></i>Premium Fast-Lane</h4>
+                        <p style="font-size:0.95rem; margin:0;">Zero-delay routing for highly competitive hardware drops (where 15 minutes means sold out).</p>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <div style="display:flex; align-items:center; gap:12px; margin-bottom:20px;">
+                        <i data-lucide="briefcase" style="color:var(--text-main); width:28px; height:28px;"></i>
+                        <h3 style="font-size: 1.5rem; color:var(--text-main); margin:0;">B2B</h3>
+                    </div>
+                    
+                    <div style="margin-bottom: 24px;">
+                        <h4 style="font-size:1.1rem; color:var(--text-muted); margin-bottom:8px;">Affiliate Integration</h4>
+                        <p style="font-size:0.95rem; margin:0;">Auto-appended parameters yield 2-7% affiliate commission on converted sales.</p>
+                    </div>
+                    <div>
+                        <h4 style="font-size:1.1rem; color:var(--accent-green); margin-bottom:8px;"><i data-lucide="bar-chart-2" style="width:16px; height:16px; display:inline; margin-right:6px; vertical-align:-2px;"></i>Demand Intelligence</h4>
+                        <p style="font-size:0.95rem; margin:0;">Anonymized, aggregate tracking data packaged for retailers showing exact consumer price targets.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Slide 7: End -->
+    <div class="slide">
+        <div class="content" style="text-align: center;">
+            <div class="logo-box" style="margin: 0 auto 32px auto; transform: scale(1.5);">72</div>
+            <h1>Elhaq</h1>
+            <p style="font-size: 1.5rem;">Seize the deal before it's gone.</p>
+        </div>
+    </div>
+
+</div>
+
+<div class="nav-controls" id="nav"></div>
+
+<script>
+    lucide.createIcons();
+
+    const slides = document.querySelectorAll('.slide');
+    const nav = document.getElementById('nav');
+    const progress = document.getElementById('progress');
+    let current = 0;
+
+    slides.forEach((_, i) => {
+        const dot = document.createElement('button');
+        dot.className = `nav-dot ${i === 0 ? 'active' : ''}`;
+        dot.onclick = () => goTo(i);
+        nav.appendChild(dot);
+    });
+
+    function updateProgress() {
+        progress.style.width = `${((current + 1) / slides.length) * 100}%`;
+    }
+    updateProgress();
+
+    function goTo(index) {
+        if (index < 0 || index >= slides.length) return;
+        
+        slides[current].classList.remove('active');
+        nav.children[current].classList.remove('active');
+        
+        current = index;
+        
+        slides[current].classList.add('active');
+        nav.children[current].classList.add('active');
+        updateProgress();
+    }
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowRight' || e.key === ' ') goTo(current + 1);
+        if (e.key === 'ArrowLeft') goTo(current - 1);
+    });
+
+    let touchStartX = 0;
+    document.addEventListener('touchstart', e => touchStartX = e.touches[0].clientX);
+    document.addEventListener('touchend', e => {
+        const touchEndX = e.changedTouches[0].clientX;
+        if (touchStartX - touchEndX > 50) goTo(current + 1);
+        if (touchStartX - touchEndX < -50) goTo(current - 1);
+    });
+</script>
+
+</body>
+</html>

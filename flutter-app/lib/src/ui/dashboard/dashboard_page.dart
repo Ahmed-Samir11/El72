@@ -1,8 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../data/providers.dart';
 import '../create_tracker_sheet.dart';
+import '../price_history/price_history_page.dart';
 import '../subscription_screen.dart';
 import '../widgets/deal_card.dart';
 import '../widgets/market_pulse_header.dart';
+import '../widgets/tracker_card.dart';
 
 class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key});
@@ -47,66 +52,62 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 }
 
-class _TrackersTab extends StatelessWidget {
+class _TrackersTab extends ConsumerWidget {
   @override
-  Widget build(BuildContext context) {
-    return const Center(
-      child: Text('Active Price Trackers'),
+  Widget build(BuildContext context, WidgetRef ref) {
+    final itemsAsync = ref.watch(trackedItemsProvider);
+    return itemsAsync.when(
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (e, _) => Center(
+        child: Text(
+          'Failed to load your trackers.\n$e',
+          textAlign: TextAlign.center,
+        ),
+      ),
+      data: (items) {
+        if (items.isEmpty) {
+          return const Center(
+            child: Text(
+              'No active trackers yet.\nTap + to start tracking a product.',
+              textAlign: TextAlign.center,
+            ),
+          );
+        }
+        return ListView.builder(
+          itemCount: items.length,
+          itemBuilder: (context, i) {
+            final item = items[i];
+            final lowest = item.lowestPrice;
+            return TrackerCard(
+              imageUrl: lowest?.url ?? '',
+              title: item.displayName,
+              currentPrice: lowest?.priceLocal ?? 0.0,
+              targetPrice: item.targetPrice ?? 0.0,
+              isActive: item.isActive,
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => PriceHistoryPage(
+                      sku: item.canonicalProductId,
+                      title: item.displayName,
+                    ),
+                  ),
+                );
+              },
+            );
+          },
+        );
+      },
     );
   }
 }
 
-class _DealsTab extends StatelessWidget {
+class _DealsTab extends ConsumerWidget {
   @override
-  Widget build(BuildContext context) {
-    // Mock data for immediate UI rendering
-    final mockDeals = [
-      const Deal(
-        id: '1',
-        title: 'iPhone 15 Pro Max 256GB',
-        storeName: 'Amazon EG',
-        imageUrl: '',
-        price: 1299.99,
-        originalPrice: 1499.99,
-        discountPercentage: 13.3,
-      ),
-      const Deal(
-        id: '2',
-        title: 'PlayStation 5 Slim Bundle',
-        storeName: 'Jumia EG',
-        imageUrl: '',
-        price: 499.99,
-        originalPrice: 599.99,
-        discountPercentage: 16.7,
-      ),
-      const Deal(
-        id: '3',
-        title: 'NVIDIA RTX 4060 Graphics Card',
-        storeName: 'Newegg',
-        imageUrl: '',
-        price: 299.99,
-        originalPrice: 399.99,
-        discountPercentage: 25.0,
-      ),
-      const Deal(
-        id: '4',
-        title: 'Samsung 55" 4K Smart TV',
-        storeName: 'Carrefour EG',
-        imageUrl: '',
-        price: 699.99,
-        originalPrice: 899.99,
-        discountPercentage: 22.2,
-      ),
-      const Deal(
-        id: '5',
-        title: 'MacBook Air M2 13"',
-        storeName: 'Apple Store EG',
-        imageUrl: '',
-        price: 1099.99,
-        originalPrice: 1199.99,
-        discountPercentage: 8.3,
-      ),
-    ];
+  Widget build(BuildContext context, WidgetRef ref) {
+    final dealsAsync = ref.watch(liveDealsProvider);
+    final statsAsync = ref.watch(platformStatsProvider);
 
     return CustomScrollView(
       slivers: [
@@ -130,12 +131,16 @@ class _DealsTab extends StatelessWidget {
           ],
         ),
 
-        // Market Pulse Header
+        // Market Pulse Header (real stats, with demo fallback)
         SliverToBoxAdapter(
-          child: MarketPulseHeader(
-            activeAlerts: 12,
-            dealsToday: 47,
-            savings: 2847.50,
+          child: statsAsync.when(
+            loading: () => const SizedBox(height: 120),
+            error: (e, _) => const SizedBox.shrink(),
+            data: (stats) => MarketPulseHeader(
+              activeAlerts: stats.totalTrackers,
+              dealsToday: stats.dealsToday,
+              savings: stats.totalSavings,
+            ),
           ),
         ),
 
@@ -152,14 +157,36 @@ class _DealsTab extends StatelessWidget {
           ),
         ),
 
-        // Deals List
-        SliverList(
-          delegate: SliverChildBuilderDelegate(
-            (context, index) {
-              return DealCard(deal: mockDeals[index]);
-            },
-            childCount: mockDeals.length,
+        // Deals List (real data, with demo fallback)
+        dealsAsync.when(
+          loading: () => SliverToBoxAdapter(
+            child: const Padding(
+              padding: EdgeInsets.all(32),
+              child: Center(child: CircularProgressIndicator()),
+            ),
           ),
+          error: (e, _) => SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text('Failed to load deals.\n$e'),
+            ),
+          ),
+          data: (deals) {
+            if (deals.isEmpty) {
+              return SliverToBoxAdapter(
+                child: const Padding(
+                  padding: EdgeInsets.all(16),
+                  child: Text('No live deals right now.'),
+                ),
+              );
+            }
+            return SliverList(
+              delegate: SliverChildBuilderDelegate(
+                (context, index) => DealCard(deal: deals[index]),
+                childCount: deals.length,
+              ),
+            );
+          },
         ),
       ],
     );
