@@ -57,6 +57,15 @@ app.add_middleware(
 from services.api.routers import auth
 app.include_router(auth.router, prefix="/auth", tags=["Auth"])
 
+# Public demo endpoints (no auth) consumed by the landing page and Flutter app:
+# /stats, /deals/live, /price-history/{sku}, /pricing.
+from services.api.routers import public_api
+app.include_router(public_api.router)
+
+# Credit balance endpoints (auth required): /credits/balance, /credits/transactions.
+from services.api.routers import credits as credits_router
+app.include_router(credits_router.router)
+
 # Demo mode: seed realistic demo data on startup (idempotent).
 # Toggle with DEMO_MODE=True (default) for the investor demo.
 DEMO_MODE = os.getenv("DEMO_MODE", "True").lower() in ("1", "true", "yes", "on")

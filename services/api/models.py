@@ -1,6 +1,7 @@
 import uuid
+from datetime import datetime
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Numeric, String, Text, UUID as sqlalchemy_UUID
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, Numeric, String, Text, UUID as sqlalchemy_UUID
 from sqlalchemy.dialects.postgresql import UUID as postgres_UUID
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
@@ -19,6 +20,7 @@ class User(Base):
     valid_until = Column(DateTime, nullable=True)
 
     alerts = relationship("Alert", back_populates="user", cascade="all, delete-orphan")
+    credits = relationship("UserCredit", back_populates="user", uselist=False, cascade="all, delete-orphan")
 
 
 class Alert(Base):
@@ -41,3 +43,29 @@ class Alert(Base):
     notify_channel = Column(Text, default="whatsapp")
 
     user = relationship("User", back_populates="alerts")
+
+
+class UserCredit(Base):
+    """Per-user credit balance (one row per user).
+
+    Keyed by the canonical ``User`` (UUID). Lazy-provisioned: a user with no
+    row is treated as having their tier's starting balance.
+    """
+    __tablename__ = "user_credits"
+
+    user_id = Column(postgres_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    balance = Column(Integer, nullable=False, default=0)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user = relationship("User", back_populates="credits")
+
+
+class CreditTransaction(Base):
+    """Immutable ledger of credit grants and deductions."""
+    __tablename__ = "credit_transactions"
+
+    id = Column(postgres_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(postgres_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    amount = Column(Integer, nullable=False)  # + grant, - deduction
+    reason = Column(String(50), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
