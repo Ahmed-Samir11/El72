@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import '../../core/styles/app_colors.dart';
 import '../../data/repositories/auth_repository.dart';
 import '../../routing/app_router.dart';
 
@@ -66,8 +67,8 @@ class _SplashPageState extends State<SplashPage> {
                 width: 250,
                 child: LinearProgressIndicator(
                   value: _progress,
-                  backgroundColor: const Color(0xFF757575), // gray
-                  color: const Color(0xFF4caf50), // green
+                  backgroundColor: const Color(0xFFE8D9B0), // light tan
+                  color: AppColors.primary, // Falcon Orange
                   minHeight: 12,
                 ),
               ),
@@ -83,8 +84,8 @@ class _SplashPageState extends State<SplashPage> {
             ),
             const SizedBox(height: 16),
             if (_statusIndex < statuses.length - 1)
-              const CircularProgressIndicator(
-                color: Color(0xFF4caf50),
+              CircularProgressIndicator(
+                color: AppColors.primary,
                 strokeWidth: 3,
               ),
           ],

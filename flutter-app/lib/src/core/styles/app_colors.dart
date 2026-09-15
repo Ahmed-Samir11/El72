@@ -2,21 +2,22 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 class AppColors {
-  // Primary Colors - Elhaq Fintech Theme
-  static const Color primary = Color(0xFF0F172A); // Dark Navy
-  static const Color secondary = Color(0xFF10B981); // Emerald (Deal Green)
+  // Primary Colors - El72 Falcon Theme (framed logo palette)
+  static const Color primary = Color(0xFFF2841A); // Falcon Orange
+  static const Color secondary = Color(0xFFF6E832); // Falcon Yellow
+  static const Color accent = Color(0xFFCF9D3F); // Tan / Bronze
 
   // Semantic Colors for Price Tracking
   static const Color priceUp = Color(0xFFEF4444); // Red for price increase
   static const Color priceDown = Color(0xFF10B981); // Green for price decrease/deals
 
   // Background Colors
-  static const Color backgroundLight = Color(0xFFF8FAFC); // Light Gray
-  static const Color backgroundDark = Color(0xFF0F172A); // Dark Navy
+  static const Color backgroundLight = Color(0xFFFDFCEB); // Cream
+  static const Color backgroundDark = Color(0xFF241505); // Deep Warm Brown
 
   // Text Colors
-  static const Color textPrimary = Color(0xFF1E293B);
-  static const Color textSecondary = Color(0xFF64748B);
+  static const Color textPrimary = Color(0xFF3D2B0F); // Dark Brown
+  static const Color textSecondary = Color(0xFF8A6D3B); // Muted Brown
   static const Color textOnPrimary = Colors.white;
 
   // Status Colors
@@ -27,12 +28,12 @@ class AppColors {
 
   // Card and Surface Colors
   static const Color cardBackground = Colors.white;
-  static const Color cardBorder = Color(0xFFE2E8F0);
+  static const Color cardBorder = Color(0xFFE8D9B0); // Light Tan
 
   // Button Colors
-  static const Color buttonPrimary = Color(0xFF0F172A);
-  static const Color buttonSecondary = Color(0xFF10B981);
-  static const Color buttonDisabled = Color(0xFFCBD5E1);
+  static const Color buttonPrimary = Color(0xFFF2841A); // Falcon Orange
+  static const Color buttonSecondary = Color(0xFFF6E832); // Falcon Yellow
+  static const Color buttonDisabled = Color(0xFFD9C9A0); // Muted Tan
 
   // Text Styles
   static TextStyle priceTextStyle = GoogleFonts.jetBrainsMono(
