@@ -118,6 +118,7 @@ def test_deals_live():
         assert top["price"] < top["original_price"]
         assert top["discount_percentage"] > 0
         assert top["store_name"] == "Amazon EG"
+        assert top["url"].startswith("http://localhost:8000/affiliate/redirect?")
         # Ranked by discount depth (descending).
         discounts = [d["discount_percentage"] for d in deals]
         assert discounts == sorted(discounts, reverse=True)

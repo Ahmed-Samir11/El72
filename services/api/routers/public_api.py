@@ -27,9 +27,13 @@ Design notes
 
 from __future__ import annotations
 
+import os
 from typing import Dict, List
+from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
@@ -37,6 +41,7 @@ from sqlalchemy.orm import Session
 from services.api.dependencies import get_db
 
 router = APIRouter(tags=["public"])
+limiter = Limiter(key_func=get_remote_address)
 
 # Store display names (id -> human label). Mirrors the seeder catalogue.
 STORE_NAMES: Dict[str, str] = {
@@ -104,18 +109,41 @@ def _first_last_per_sku(rows: List[dict]) -> Dict[str, dict]:
         price = float(r["price_local"])
         e = per_sku.setdefault(sku, {"first": None, "last": None})
         if e["first"] is None or t < e["first"]["_t"]:
-            e["first"] = {"_t": t, "price_local": price, "store_id": r["store_id"]}
+            e["first"] = {
+                "_t": t,
+                "price_local": price,
+                "store_id": r["store_id"],
+                "source_url": r.get("source_url"),
+            }
         elif t == e["first"]["_t"] and price < e["first"]["price_local"]:
-            e["first"] = {"_t": t, "price_local": price, "store_id": r["store_id"]}
+            e["first"] = {
+                "_t": t,
+                "price_local": price,
+                "store_id": r["store_id"],
+                "source_url": r.get("source_url"),
+            }
         if e["last"] is None or t > e["last"]["_t"]:
-            e["last"] = {"_t": t, "price_local": price, "store_id": r["store_id"]}
+            e["last"] = {
+                "_t": t,
+                "price_local": price,
+                "store_id": r["store_id"],
+                "source_url": r.get("source_url"),
+            }
         elif t == e["last"]["_t"] and price < e["last"]["price_local"]:
-            e["last"] = {"_t": t, "price_local": price, "store_id": r["store_id"]}
+            e["last"] = {
+                "_t": t,
+                "price_local": price,
+                "store_id": r["store_id"],
+                "source_url": r.get("source_url"),
+            }
     return per_sku
 
 
 @router.get("/price-history/{sku}")
-def get_price_history(sku: str, db: Session = Depends(get_db)) -> List[dict]:
+@limiter.limit("60/minute")
+def get_price_history(
+    request: Request, sku: str, db: Session = Depends(get_db)
+) -> List[dict]:
     """Best (lowest) price across stores per day for a product.
 
     Returns one clean series (a single point per day) so the Flutter chart
@@ -141,7 +169,8 @@ def get_price_history(sku: str, db: Session = Depends(get_db)) -> List[dict]:
 
 
 @router.get("/deals/live")
-def get_live_deals(db: Session = Depends(get_db)) -> List[dict]:
+@limiter.limit("60/minute")
+def get_live_deals(request: Request, db: Session = Depends(get_db)) -> List[dict]:
     """Live deal discovery feed.
 
     A "deal" is a product whose current (latest-day) lowest price is below its
@@ -158,6 +187,14 @@ def get_live_deals(db: Session = Depends(get_db)) -> List[dict]:
         if original <= 0 or current >= original:
             continue  # no genuine drop
         discount = (original - current) / original * 100
+        source_url = e["last"].get("source_url") or ""
+        redirect_url = source_url
+        if source_url:
+            base_url = os.getenv("PUBLIC_API_BASE_URL", "http://localhost:8000").rstrip("/")
+            redirect_url = (
+                f"{base_url}/affiliate/redirect?"
+                f"{urlencode({'target_url': source_url, 'sku': sku, 'deal_id': sku})}"
+            )
         deals.append(
             {
                 "id": sku,
@@ -167,6 +204,7 @@ def get_live_deals(db: Session = Depends(get_db)) -> List[dict]:
                 "price": round(current, 2),
                 "original_price": round(original, 2),
                 "discount_percentage": round(discount, 1),
+                "url": redirect_url,
             }
         )
 
@@ -175,7 +213,8 @@ def get_live_deals(db: Session = Depends(get_db)) -> List[dict]:
 
 
 @router.get("/stats")
-def get_stats(db: Session = Depends(get_db)) -> dict:
+@limiter.limit("60/minute")
+def get_stats(request: Request, db: Session = Depends(get_db)) -> dict:
     """Platform-wide stats derived from the seeded price history.
 
     Returns both key sets so the two consumers are satisfied:
@@ -215,7 +254,8 @@ def get_stats(db: Session = Depends(get_db)) -> dict:
 
 
 @router.get("/pricing")
-def get_pricing() -> dict:
+@limiter.limit("60/minute")
+def get_pricing(request: Request) -> dict:
     """Tiered pricing (matches the landing page pricing section)."""
     return {
         "currency": "EGP",
@@ -224,6 +264,7 @@ def get_pricing() -> dict:
                 "id": "free",
                 "name": "Free",
                 "price_egp": 0,
+                "credits": 3,
                 "max_trackers": 3,
                 "features": [
                     "3 active trackers",
@@ -235,7 +276,8 @@ def get_pricing() -> dict:
                 "id": "standard",
                 "name": "Standard",
                 "price_egp": 30,
-                "max_trackers": 10,
+                "credits": 10,
+                "max_trackers": -1,
                 "features": [
                     "10 active trackers",
                     "Cross-store best-price",
@@ -246,6 +288,7 @@ def get_pricing() -> dict:
                 "id": "premium",
                 "name": "Premium",
                 "price_egp": 90,
+                "credits": 30,
                 "max_trackers": -1,  # unlimited
                 "features": [
                     "Unlimited trackers",

@@ -16,13 +16,12 @@ from sqlalchemy.orm import Session
 
 from services.api.models import CreditTransaction, User, UserCredit
 
-# Starting credits granted per tier (matches the /pricing tiers).
-# "Premium / unlimited" is metered at a large balance for the demo; a
-# production system would skip metering entirely for unlimited tiers.
+# Free users receive their initial allowance lazily. Standard and Premium are
+# purchased packages, so their credits are granted by the payment flow.
 TIER_STARTING_CREDITS = {
     "free": 3,
-    "standard": 10,
-    "premium": 1000,
+    "standard": 0,
+    "premium": 0,
 }
 DEFAULT_STARTING_CREDITS = 3
 

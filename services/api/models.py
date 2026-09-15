@@ -69,3 +69,17 @@ class CreditTransaction(Base):
     amount = Column(Integer, nullable=False)  # + grant, - deduction
     reason = Column(String(50), nullable=False)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class AffiliateClick(Base):
+    """A merchant click with enough context for deal attribution."""
+
+    __tablename__ = "affiliate_clicks"
+
+    id = Column(postgres_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    store_id = Column(String(32), nullable=False)
+    sku = Column(String(255), nullable=True)
+    deal_id = Column(String(255), nullable=True)
+    target_url = Column(Text, nullable=False)
+    affiliate_url = Column(Text, nullable=False)
+    clicked_at = Column(DateTime, nullable=False, default=datetime.utcnow)

@@ -1,104 +1,189 @@
-# Engineer B — "The Revenue Engine" — Work Status
+# Engineer B - Revenue Engine - Work Status
 
-Branch: `feature/storefront` (analyzer branch already merged in)
-Plan reference: `implementation_plan.md` → Engineer B scope
-Last updated: 2026-09-14 (work interrupted by power loss — resume from "In progress")
+Branch: `feature/storefront`
+Plan reference: `implementation_plan.md` - Engineer B scope
+Last updated: 2026-09-15
 
-> ⚠️ **Resume note:** The credit-system deduction hook was **interrupted mid-way**.
-> `services/api/tracked_items_api.py` imports `deduct` (line 13) but does **not** call it
-> yet in `create_tracked_item`. Finish that hook, then add credit tests. Everything else
-> below that is marked DONE is complete and (where noted) verified.
+## Current Status
 
----
+Engineer B's implementation work is complete on `feature/storefront`. The branch is ready to be pushed or merged into the next working branch.
 
-## Completed
+The remaining work is deployment configuration, database migration, credential configuration, and full-environment integration testing.
 
-### 1. Public API endpoints — DONE, verified ✅
+## Completed Implementation
 
-`services/api/routers/public_api.py` — one consolidated router (DRY: all four share the
-`price_history` source + one query helper). Wired into `services/api/main.py` (no-auth,
-fail-soft if `price_history` is missing).
+### Public Demo API
 
-| Endpoint | Returns |
-|---|---|
-| `GET /stats` | Both consumer key sets — Flutter (`total_trackers`/`deals_today`/`total_savings`) **and** landing page (`deals_found_today`/`total_savings_egp`/`stores_monitored`) |
-| `GET /deals/live` | Products whose current price < 90-day-high, ranked by discount depth |
-| `GET /price-history/{sku}` | One clean series (lowest price across stores per day) for the chart |
-| `GET /pricing` | Free / Standard / Premium tiers (matches the landing page) |
+Implemented and registered in `services/api/main.py`:
 
-- **Tests:** `services/api/test_public_api.py` — **6/6 passing** (series shape, unknown-SKU→`[]`,
-  deals ranking, stats counts, pricing tiers, fail-soft on missing table).
-- **Verified live:** `GET /pricing` returns 200 on the main app with correct tiers.
+- `GET /stats`
+- `GET /deals/live`
+- `GET /price-history/{sku}`
+- `GET /pricing`
+- `GET /affiliate/redirect`
+- `GET /credits/balance`
+- `GET /credits/transactions`
 
-### 2. Credit system — models + service + balance API — DONE ✅
+Public endpoints are fail-soft when demo price-history data is unavailable and include rate limiting through `slowapi`.
 
-- **Models** (`services/api/models.py`): `UserCredit` (`user_credits`, one row per user,
-  keyed by canonical `User` UUID, lazy-provisioned) and `CreditTransaction`
-  (`credit_transactions`, immutable ledger). Both share the canonical `Base` and
-  `User` relationship; tables auto-created via `Base.metadata.create_all` in `main.py`.
-- **Service** (`services/api/credits.py`): `get_balance` (read-only, lazy-provisioned),
-  `deduct` (raises 402 on insufficient balance, atomic in caller's session), `grant`
-  (for Paymob top-ups). `TIER_STARTING_CREDITS = {free: 3, standard: 10, premium: 1000}`.
-- **Balance API** (`services/api/routers/credits.py`): `GET /credits/balance`,
-  `GET /credits/transactions` (auth required). Wired into `main.py`.
+`/deals/live` now returns tracked affiliate redirect URLs based on the merchant source URL.
 
----
+### Credit System
 
-## In progress (interrupted here)
+Implemented in `services/api/credits.py` and `services/api/models.py`:
 
-### 3. Credit deduction on tracker creation — ⚠️ PARTIAL
+- Free allowance: 3 credits.
+- Standard package: 10 credits for 30 EGP.
+- Premium package: 30 credits for 90 EGP.
+- One credit tracks one item for one week.
+- Credit deduction is atomic with tracked-item creation.
+- Insufficient balance returns HTTP 402.
+- Credit grants and deductions are recorded in `credit_transactions`.
+- Balance and transaction history endpoints are available.
 
-- `services/api/tracked_items_api.py` line 13: `from services.api.credits import deduct`
-  is **imported but NOT yet called**.
-- **TODO (next step):** call `deduct(db, current_user, amount=1, reason="tracker_created")`
-  inside `create_tracked_item` (before `db.commit()`), so a 402 rolls back the pending
-  `TrackedItem`. Design already decided:
-  - **Lazy provisioning** — a user with no credit row gets their tier's starting balance,
-    so the existing free-tier `test_create_tracked_item` still returns 201.
-  - **Atomic** — deduction runs in the same session/transaction as tracker creation.
-- **TODO:** add `services/api/test_credits.py` (balance, deduct success, 402 on insufficient,
-  grant, ledger ordering, lazy provisioning).
+The tracked-item router is registered in `services/api/main.py` and tracked-item IDs/user references use UUIDs consistent with the canonical schema.
 
----
+### Paymob Billing
 
-## Not started
+Implemented in `services/billing/main.py` and `services/billing/models.py`:
 
-- **Paymob webhook HMAC validation** — `services/billing/main.py` `verify_paymob_webhook()`
-  still returns `True` always; mock fallback data on parse failure. Replace with real HMAC.
-- **Affiliate link injection** — `services/api/middleware/affiliate.py` + `affiliate_clicks`
-  table (store-specific programs: Amazon Associates EG, Noon Affiliate, Jumia KOL).
-- **Rate limiting** — slowapi middleware on public endpoints.
-- **Tiered pricing in billing** — `services/billing/main.py` `get_dynamic_pricing()` still
-  returns hardcoded mock tiers; align with the `/pricing` tiers.
+- Signed webhook validation using `services/common/paymob.py`.
+- Invalid signatures and malformed payloads are rejected.
+- Package amount validation:
+  - Standard: 30 EGP / 10 credits.
+  - Premium: 90 EGP / 30 credits.
+- Duplicate Paymob order protection.
+- Atomic payment log, credit balance, and credit transaction updates.
+- Purchase-intent endpoint: `POST /purchase`.
+- Canonical UUID user/payment identifiers.
+- SQLite-compatible UUID model type for local tests.
 
----
+### Affiliate Revenue
 
-## Cross-cutting hardening (still needed)
+Implemented in:
 
-- **`print()` → `logging`** — `services/api/main.py` (several) and `services/billing/main.py`.
-- **Wire `tracked_items` router** — `services/api/main.py` only includes `auth`,
-  `public_api`, and `credits`; the full `tracked_items_api.router` is still commented out
-  (L414-415). Needed before the credit deduction is reachable in the running app.
-- **Externalize hardcoded `DATABASE_URL`** — `docker-compose.yml` L114
-  (`postgresql://elhaq:elhaq_pass@...`) and `services/billing/main.py` default.
+- `services/api/affiliate.py`
+- `services/api/routers/affiliate.py`
+- `services/api/models.py`
+- `infra/sql/schema.sql`
 
----
+Features:
 
-## Known pre-existing issue (flagged, not yet fixed)
+- Amazon Egypt, Noon, and Jumia host allowlisting.
+- Store-specific affiliate parameters from environment variables.
+- Safe URL parsing and query preservation.
+- Click persistence in `affiliate_clicks`.
+- Merchant redirect endpoint with open-redirect protection.
+- SKU and deal ID attribution fields.
 
-- **UUID vs Integer user-id fork:** `services/api/models.py` `User.id` is a **UUID**, but
-  `services/api/tracked_items_models.py` re-declares its own `users` table with an
-  **Integer** id and `TrackedItem.user_id` as an Integer FK (a separate `declarative_base()`
-  SQLite shim). The credit system is keyed by the canonical UUID `User`. The
-  `TrackedItem.user_id` Integer FK is a separate pre-existing bug to reconcile when the
-  tracked-items router is wired in.
+### Security and Configuration
 
----
+- API/billing production-path `print()` calls replaced with logging.
+- Docker database, Paymob, WhatsApp, and application secrets externalized.
+- Required variables documented in `.env.example`.
+- `slowapi` added to `services/api/requirements.txt`.
+- Canonical schema updated with `user_credits`, `credit_transactions`, and `affiliate_clicks`.
 
-## Environment note
+## Validation
 
-- `projects` conda env (`C:\Users\Compumarts\miniconda3\envs\projects\python.exe`) has
-  `fastapi` + `sqlalchemy` but **not** `python-jose` / `passlib`. API tests that import
-  `services.api.dependencies` need those installed (pre-existing gap — `test_main.py` and
-  `test_tracked_items_api.py` have the same requirement). Public-API tests were verified via
-  a throwaway stub harness (no installs, no source changes).
+The focused Engineer B test suite passes in the `dev-ai` environment:
+
+```text
+30 passed, 2 warnings
+```
+
+Validated areas:
+
+- Public API endpoints.
+- Credit balance, deduction, grants, and insufficient-balance behavior.
+- Affiliate URL generation and merchant allowlisting.
+- Paymob HMAC validation.
+- Paymob billing, package validation, duplicate protection, and credit fulfillment.
+- Billing and credit models.
+
+Python compilation, `git diff --check`, and Docker Compose configuration validation also pass.
+
+The warnings are SQLAlchemy/Pydantic deprecation warnings and do not currently fail the tests.
+
+## Remaining Operational Work
+
+### 1. Database Migration
+
+Apply `infra/sql/schema.sql` to the target PostgreSQL and TimescaleDB databases. Existing databases must be migrated carefully because SQLAlchemy `create_all()` does not convert legacy integer tables to UUID-based tables.
+
+Before applying in production:
+
+- Back up the database.
+- Inspect existing table types and constraints.
+- Plan data conversion for legacy integer IDs if required.
+- Apply the schema in a staging database first.
+- Run API and integration tests against PostgreSQL, not only SQLite.
+
+### 2. Environment Configuration
+
+Configure real values for:
+
+```env
+DATABASE_URL=
+TIMESCALE_URL=
+SECRET_KEY=
+PAYMOB_HMAC_SECRET=
+PAYMOB_CHECKOUT_URL=
+AMAZON_AFFILIATE_TAG=
+NOON_AFFILIATE_TAG=
+JUMIA_AFFILIATE_TAG=
+WHATSAPP_ACCESS_TOKEN=
+WHATSAPP_PHONE_NUMBER_ID=
+```
+
+The Paymob checkout endpoint currently returns a configured checkout URL; the actual Paymob merchant/order API integration still requires valid merchant credentials and endpoint details.
+
+### 3. Credential Rotation
+
+The WhatsApp token previously committed to repository history must be revoked in Meta Business Manager and replaced with a new environment-only token.
+
+### 4. Full Validation
+
+Run after dependencies and infrastructure are available:
+
+```powershell
+conda activate dev-ai
+cd C:\EL72\El72
+pytest services/api -q
+pytest services/billing -q
+pytest services/common -q
+pytest tests -q
+docker compose config --quiet
+```
+
+## Environment
+
+The `dev-ai` environment now contains the API, billing, and test dependencies:
+
+- FastAPI 0.104.1
+- Pydantic 2.5.0
+- SQLAlchemy 2.0.23
+- python-jose
+- passlib/bcrypt
+- Redis client
+- psycopg2-binary
+- slowapi
+- pytest, pytest-asyncio, and httpx
+
+Do not install the root `requirements.txt` over this environment without resolving its older FastAPI/Pydantic pins, which target analyzer compatibility.
+
+## Handoff Checklist
+
+- [x] Credit system implemented.
+- [x] Credit deduction wired to tracker creation.
+- [x] Public demo APIs implemented.
+- [x] Paymob HMAC validation implemented.
+- [x] Paymob package fulfillment implemented.
+- [x] Affiliate generation and click attribution implemented.
+- [x] Public API rate limiting implemented.
+- [x] Secrets externalized from Compose.
+- [x] Focused Engineer B tests passing.
+- [ ] Apply database migration to target infrastructure.
+- [ ] Configure production credentials.
+- [ ] Rotate exposed WhatsApp token.
+- [ ] Run full PostgreSQL/Redis integration validation.
