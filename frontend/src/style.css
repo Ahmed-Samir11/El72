@@ -5,9 +5,9 @@
 :root {
   --navy: #0f172a;
   --navy-2: #1e293b;
-  --emerald: #10b981;
-  --emerald-dark: #059669;
-  --emerald-soft: #d1fae5;
+  --emerald: #f8e72c;
+  --emerald-dark: #ca8a04;
+  --emerald-soft: #fef9c3;
   --bg: #f8fafc;
   --white: #ffffff;
   --text: #1e293b;
@@ -65,7 +65,7 @@ a { color: inherit; text-decoration: none; }
   white-space: nowrap;
 }
 .btn--primary { background: var(--emerald); color: #04211a; }
-.btn--primary:hover { background: var(--emerald-dark); color: #fff; transform: translateY(-2px); box-shadow: 0 12px 24px rgba(16, 185, 129, 0.35); }
+.btn--primary:hover { background: var(--emerald-dark); color: #fff; transform: translateY(-2px); box-shadow: 0 12px 24px rgba(248, 231, 44, 0.35); }
 .btn--ghost { background: transparent; border-color: var(--navy); color: var(--navy); }
 .btn--ghost:hover { background: var(--navy); color: #fff; transform: translateY(-2px); }
 .btn--lg { padding: 15px 30px; font-size: 16px; }
@@ -112,7 +112,7 @@ a { color: inherit; text-decoration: none; }
 .hero {
   padding: 72px 0 40px;
   background:
-    radial-gradient(1200px 400px at 80% -10%, rgba(16, 185, 129, 0.10), transparent 60%),
+    radial-gradient(1200px 400px at 80% -10%, rgba(248, 231, 44, 0.10), transparent 60%),
     var(--bg);
 }
 .hero__grid {
