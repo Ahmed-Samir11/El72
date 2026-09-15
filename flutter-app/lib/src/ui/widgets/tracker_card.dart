@@ -6,6 +6,7 @@ class TrackerCard extends StatelessWidget {
   final double currentPrice;
   final double targetPrice;
   final bool isActive;
+  final VoidCallback? onTap;
 
   const TrackerCard({
     super.key,
@@ -14,28 +15,37 @@ class TrackerCard extends StatelessWidget {
     required this.currentPrice,
     required this.targetPrice,
     required this.isActive,
+    this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Row(
-          children: [
-            // Product Image
-            Container(
-              width: 60,
-              height: 60,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(8),
-                image: DecorationImage(
-                  image: NetworkImage(imageUrl),
-                  fit: BoxFit.cover,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            children: [
+              // Product Image
+              Container(
+                width: 60,
+                height: 60,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(8),
+                  color: Colors.grey.shade200,
+                  image: imageUrl.isNotEmpty
+                      ? DecorationImage(
+                          image: NetworkImage(imageUrl),
+                          fit: BoxFit.cover,
+                        )
+                      : null,
                 ),
+                child: imageUrl.isEmpty
+                    ? const Icon(Icons.shopping_bag_outlined, size: 30)
+                    : null,
               ),
-            ),
             const SizedBox(width: 16),
             // Details
             Expanded(
@@ -83,6 +93,7 @@ class TrackerCard extends StatelessWidget {
             ),
           ],
         ),
+      ),
       ),
     );
   }

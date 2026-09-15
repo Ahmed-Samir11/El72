@@ -95,15 +95,12 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                       }
 
                       setState(() => _isLoading = true);
-                      
+
                       try {
                         final authRepo = ref.read(authRepositoryProvider);
-                        print('🔐 Attempting login with phone: $phone');
-                        bool isValid = await authRepo.login(phone, password);
-                        print('✅ Login result: $isValid');
+                        final isValid = await authRepo.login(phone, password);
 
                         if (isValid && mounted) {
-                          print('📱 Navigating to dashboard');
                           Navigator.pushReplacementNamed(context, AppRoutes.dashboard);
                         } else if (mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
@@ -111,7 +108,6 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                           );
                         }
                       } catch (e) {
-                        print('❌ Login error: $e');
                         if (mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(content: Text("Login failed: $e"), backgroundColor: Colors.red),

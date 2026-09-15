@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>El72 — Egypt's Price Intelligence Engine</title>
+  <meta name="description" content="El72 hunts real price drops across Amazon Egypt, Noon and Jumia, verifies they're genuine, and delivers them to your WhatsApp. Built for the Egyptian market." />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📉</text></svg>" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&family=Cairo:wght@400;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+  <!-- ============ NAV ============ -->
+  <header class="nav" id="nav">
+    <div class="nav__inner container">
+      <a class="nav__brand" href="#top" aria-label="El72 home">
+        <span class="nav__logo" aria-hidden="true">
+          <svg viewBox="0 0 32 32" width="28" height="28" fill="none">
+            <rect x="1" y="1" width="30" height="30" rx="8" fill="#10B981"/>
+            <path d="M8 22 L14 15 L19 18 L24 9" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M24 9 L24 14 M24 9 L19 9" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
+          </svg>
+        </span>
+        <span class="nav__name">El72</span>
+      </a>
+      <nav class="nav__links" aria-label="Primary">
+        <a href="#how">How it works</a>
+        <a href="#stats">Live stats</a>
+        <a href="#pricing">Pricing</a>
+        <a href="#egypt">Egypt</a>
+      </nav>
+      <div class="nav__actions">
+        <button id="langToggle" class="lang-toggle" aria-label="Toggle Arabic / English">ع</button>
+        <a class="btn btn--primary btn--sm" href="#cta">Track a Deal</a>
+      </div>
+    </div>
+  </header>
+
+  <main id="top">
+    <!-- ============ HERO ============ -->
+    <section class="hero">
+      <div class="container hero__grid">
+        <div class="hero__copy">
+          <p class="hero__eyebrow">🇪🇬 Built for the Egyptian market</p>
+          <h1 class="hero__title">
+            We hunt the deal.<br />
+            <span class="hero__title-accent">We verify it's real.</span><br />
+            <span class="hero__title-whats">We send it on WhatsApp.</span>
+          </h1>
+          <p class="hero__sub">
+            El72 tracks prices across <strong>Amazon Egypt, Noon &amp; Jumia</strong>, detects genuine
+            price drops with machine learning, and delivers them straight to your phone —
+            before the deal is gone.
+          </p>
+          <div class="hero__ctas">
+            <a class="btn btn--primary btn--lg" href="#cta">Track Your First Deal</a>
+            <a class="btn btn--ghost btn--lg" href="#how">See how it works</a>
+          </div>
+          <ul class="hero__proof">
+            <li>✓ No fake discounts</li>
+            <li>✓ WhatsApp-native alerts</li>
+            <li>✓ Cross-store price intelligence</li>
+          </ul>
+        </div>
+
+        <!-- Animated price-drop visualization -->
+        <div class="hero__viz" aria-hidden="true">
+          <div class="viz-card">
+            <div class="viz-card__head">
+              <span class="viz-card__title">RTX 4060 Gaming GPU</span>
+              <span class="viz-card__store">amazon.eg</span>
+            </div>
+            <svg class="viz-chart" viewBox="0 0 320 160" preserveAspectRatio="none">
+              <defs>
+                <linearGradient id="dropFill" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stop-color="#10B981" stop-opacity="0.35"/>
+                  <stop offset="100%" stop-color="#10B981" stop-opacity="0"/>
+                </linearGradient>
+              </defs>
+              <path class="viz-area" d="M0,40 L40,44 L80,38 L120,52 L160,48 L200,60 L240,96 L280,104 L320,100 L320,160 L0,160 Z" fill="url(#dropFill)"/>
+              <path class="viz-line" d="M0,40 L40,44 L80,38 L120,52 L160,48 L200,60 L240,96 L280,104 L320,100" fill="none" stroke="#10B981" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+              <circle class="viz-dot" cx="240" cy="96" r="5" fill="#10B981"/>
+            </svg>
+            <div class="viz-card__foot">
+              <div>
+                <span class="viz-price-old">28,500 EGP</span>
+                <span class="viz-price-new">21,675 EGP</span>
+              </div>
+              <span class="viz-badge">−24% · verified</span>
+            </div>
+            <div class="viz-whatsapp">
+              <span class="viz-whatsapp__icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="#25D366"><path d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2zm5.5 14.1c-.2.1-1.4.3-3.4-.4-1.6-.6-3.1-1.6-4-2.5-.3-.3-.5-.5-.7-.8-.2-.3-.3-.5-.4-.7-.1-.2 0-.4.1-.6l.4-.5c.1-.2.3-.3.4-.4.1-.1.3-.2.4-.1l1 .5c.2.1.4.1.5-.1l.5-.6c.1-.2.2-.3.1-.5l-.5-1.2c-.1-.3-.2-.4-.4-.4h-.6c-.2 0-.4.1-.5.3-.2.2-.4.4-.6.6-.2.2-.4.2-.6.1-1-.3-1.9-1.2-2.4-2.1-.2-.4-.3-.7-.2-1 .1-.3.3-.5.5-.7.2-.1.4-.2.6-.2h.3c.1 0 .2.1.3.3l.6 1.2c.1.2.2.3.4.3.2 0 .3-.1.5-.3l.4-.4c.1-.1.2-.2.2-.4 0-.2 0-.3-.1-.5l-.7-1.6c-.2-.4-.4-.7-.7-.7h-.6c-.2 0-.4.1-.6.2-.5.2-.9.6-1.1 1.1-.2.5-.3 1.1-.1 1.7.2.6.5 1.2.9 1.8.9 1.2 2 2.2 3.3 2.9.4.2.8.4 1.2.5.4.1.8.2 1.2.1.5-.1 1-.4 1.3-.8.2-.3.3-.6.2-.9l-.3-.9c-.1-.2-.2-.3-.4-.4l-1.2-.5c-.2-.1-.4-.1-.5.1l-.6.6c-.1.1-.3.2-.5.1l-.9-.4c-.3-.1-.4-.2-.5-.4l-.3-.9c-.1-.2 0-.4.1-.5l.4-.4c.1-.1.2-.2.4-.2h.3c.2 0 .3.1.4.3l.6 1.2c.1.2.2.3.4.3.2 0 .3-.1.5-.3l.4-.4c.1-.1.2-.2.1-.5l-.7-1.6c-.2-.4-.4-.7-.7-.7z"/></svg>
+              </span>
+              <span class="viz-whatsapp__text">
+                <strong>Deal confirmed ✓</strong><br/>
+                RTX 4060 dropped to 21,675 EGP on Amazon EG
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ LIVE STATS TICKER ============ -->
+    <section class="stats" id="stats">
+      <div class="stats__ticker" id="statsTicker" aria-live="polite">
+        <span class="stats__item">Loading live platform stats…</span>
+      </div>
+      <div class="container stats__grid" id="statsGrid">
+        <div class="stat-card">
+          <span class="stat-card__value" id="statTrackers">—</span>
+          <span class="stat-card__label">Active price trackers</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-card__value" id="statDeals">—</span>
+          <span class="stat-card__label">Deals found today</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-card__value" id="statSavings">—</span>
+          <span class="stat-card__label">Total savings (EGP)</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-card__value" id="statStores">3</span>
+          <span class="stat-card__label">Stores monitored</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ HOW IT WORKS ============ -->
+    <section class="how" id="how">
+      <div class="container">
+        <h2 class="section-title">How it works</h2>
+        <p class="section-sub">Three steps. Zero fake discounts.</p>
+        <div class="how__steps">
+          <article class="step">
+            <div class="step__num">1</div>
+            <h3>Paste the link</h3>
+            <p>Drop any product URL from Amazon Egypt, Noon or Jumia. We start watching it across stores.</p>
+          </article>
+          <article class="step">
+            <div class="step__num">2</div>
+            <h3>We verify the drop</h3>
+            <p>Our ML engine scores every price change — magnitude, history, cross-store comparison — and flags fake "discounts" before they reach you.</p>
+          </article>
+          <article class="step">
+            <div class="step__num">3</div>
+            <h3>Get it on WhatsApp</h3>
+            <p>Real deals land in your WhatsApp in seconds, with the best price across stores and a direct buy link.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ PRICING ============ -->
+    <section class="pricing" id="pricing">
+      <div class="container">
+        <h2 class="section-title">Simple, pay-as-you-track pricing</h2>
+        <p class="section-sub">Start free. Upgrade when you're tracking more.</p>
+        <div class="pricing__tiers">
+          <article class="tier">
+            <h3 class="tier__name">Free</h3>
+            <div class="tier__price"><span class="tier__amount">0</span> <span class="tier__currency">EGP</span></div>
+            <ul class="tier__list">
+              <li>3 active trackers</li>
+              <li>WhatsApp deal alerts</li>
+              <li>Price history charts</li>
+            </ul>
+            <a class="btn btn--ghost" href="#cta">Start free</a>
+          </article>
+          <article class="tier tier--featured">
+            <span class="tier__badge">Most popular</span>
+            <h3 class="tier__name">Standard</h3>
+            <div class="tier__price"><span class="tier__amount">30</span> <span class="tier__currency">EGP/mo</span></div>
+            <ul class="tier__list">
+              <li>10 active trackers</li>
+              <li>Everything in Free</li>
+              <li>Cross-store best-price</li>
+              <li>Priority deal queue</li>
+            </ul>
+            <a class="btn btn--primary" href="#cta">Upgrade</a>
+          </article>
+          <article class="tier">
+            <h3 class="tier__name">Premium</h3>
+            <div class="tier__price"><span class="tier__amount">90</span> <span class="tier__currency">EGP/mo</span></div>
+            <ul class="tier__list">
+              <li>Unlimited trackers</li>
+              <li>Everything in Standard</li>
+              <li>Category deal feed</li>
+              <li>Early access features</li>
+            </ul>
+            <a class="btn btn--ghost" href="#cta">Go Premium</a>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ EGYPT POSITIONING ============ -->
+    <section class="egypt" id="egypt">
+      <div class="container egypt__grid">
+        <div>
+          <h2 class="section-title">Why Egypt, why now</h2>
+          <p>
+            Egypt's e-commerce is exploding — but price trust is broken. Stores inflate
+            "original" prices, discounts are fake, and no one compares across Amazon,
+            Noon and Jumia for you.
+          </p>
+          <p>
+            El72 is the <strong>cross-store price intelligence layer</strong> for the Egyptian
+            market: we watch every store, verify every drop, and deliver through the channel
+            Egyptians actually use — WhatsApp.
+          </p>
+        </div>
+        <div class="egypt__facts">
+          <div class="fact"><span class="fact__big">3</span><span>major stores tracked in one engine</span></div>
+          <div class="fact"><span class="fact__big">10×</span><span>more effective than email — WhatsApp-native delivery</span></div>
+          <div class="fact"><span class="fact__big">0</span><span>fake discounts delivered — ML-verified drops only</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ CTA ============ -->
+    <section class="cta" id="cta">
+      <div class="container cta__inner">
+        <h2>Track your first deal in 30 seconds</h2>
+        <p>Paste a product link. We'll handle the rest.</p>
+        <div class="cta__actions">
+          <a class="btn btn--primary btn--lg" id="ctaApp" href="https://wa.me/201000000000?text=I%20want%20to%20track%20a%20deal%20with%20El72" target="_blank" rel="noopener">
+            Track Your First Deal
+          </a>
+          <a class="btn btn--ghost btn--lg" href="https://wa.me/201000000000?text=El72%20demo" target="_blank" rel="noopener">
+            Chat on WhatsApp
+          </a>
+        </div>
+        <p class="cta__note">Free tier · 3 trackers · no card required</p>
+      </div>
+    </section>
+  </main>
+
+  <!-- ============ FOOTER ============ -->
+  <footer class="footer">
+    <div class="container footer__inner">
+      <span>© 2026 El72 — Egypt's price intelligence engine</span>
+      <span class="footer__links">
+        <a href="#how">How it works</a>
+        <a href="#pricing">Pricing</a>
+        <a href="#stats">Live stats</a>
+      </span>
+    </div>
+  </footer>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

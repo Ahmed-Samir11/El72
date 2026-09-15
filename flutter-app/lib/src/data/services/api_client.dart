@@ -1,6 +1,8 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import '../config.dart';
+
 class ApiClient {
   static final ApiClient _instance = ApiClient._internal();
   late final Dio _dio;
@@ -13,8 +15,7 @@ class ApiClient {
   ApiClient._internal() {
     _dio = Dio(
       BaseOptions(
-        // Use your computer's IP address for physical device
-        baseUrl: 'http://192.168.1.106:8000',
+        baseUrl: AppConfig.apiBaseUrl,
         connectTimeout: const Duration(seconds: 30), // Increased for scraper
         receiveTimeout: const Duration(seconds: 30), // Increased for scraper
       ),

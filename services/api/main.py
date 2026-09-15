@@ -1,9 +1,13 @@
 import os
 import json
+import logging
 from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, status
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -14,6 +18,8 @@ from sqlalchemy.orm import sessionmaker, Session
 from services.api.models import Alert, Base, User
 from services.api.tracked_items_models import Base as TrackedBase
 from services.common.redis_client import RedisStreamClient
+
+logger = logging.getLogger(__name__)
 
 from services.api.dependencies import *
 
@@ -37,6 +43,9 @@ TrackedBase.metadata.create_all(bind=engine)
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="Elhaq API")
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # CORS
 origins = [
@@ -56,6 +65,39 @@ app.add_middleware(
 # Include routers
 from services.api.routers import auth
 app.include_router(auth.router, prefix="/auth", tags=["Auth"])
+
+# Public demo endpoints (no auth) consumed by the landing page and Flutter app:
+# /stats, /deals/live, /price-history/{sku}, /pricing.
+from services.api.routers import public_api
+app.include_router(public_api.router)
+
+# Credit balance endpoints (auth required): /credits/balance, /credits/transactions.
+from services.api.routers import credits as credits_router
+app.include_router(credits_router.router)
+
+# Affiliate click tracking and safe merchant redirects.
+from services.api.routers import affiliate as affiliate_router
+app.include_router(affiliate_router.router)
+
+# Tracked-item lifecycle, including one-credit deduction per new tracker.
+from services.api.tracked_items_api import router as tracked_items_router
+app.include_router(tracked_items_router)
+
+# Demo mode: seed realistic demo data on startup (idempotent).
+# Toggle with DEMO_MODE=True (default) for the investor demo.
+DEMO_MODE = os.getenv("DEMO_MODE", "True").lower() in ("1", "true", "yes", "on")
+
+
+@app.on_event("startup")
+def _seed_demo_data_on_startup() -> None:
+    if not DEMO_MODE:
+        return
+    try:
+        from services.api.seed_demo_data import run_seed
+        summary = run_seed(engine=engine)
+        logger.info("Demo data seeded on startup", extra={"summary": summary})
+    except Exception as e:  # fail-soft: demo data is non-critical
+        logger.exception("Demo seed failed; continuing", extra={"error": str(e)})
 
 # Background task function to push new alert targets to scraper stream
 async def push_to_stream(target_url: str, alert_id: int):
@@ -80,10 +122,16 @@ async def push_to_stream(target_url: str, alert_id: int):
             "store": store
         }
         await redis_client.xadd(TARGETS_STREAM, {"payload": json.dumps(target)})
-        print(f"✅ Pushed alert {alert_id} to {TARGETS_STREAM}: {target}")
+        logger.info(
+            "Pushed alert target to Redis",
+            extra={"alert_id": alert_id, "stream": TARGETS_STREAM, "target": target},
+        )
     except Exception as e:
         # Log error but don't fail the request
-        print(f"❌ Failed to push to stream: {e}")
+        logger.exception(
+            "Failed to push alert target to Redis",
+            extra={"alert_id": alert_id, "stream": TARGETS_STREAM, "error": str(e)},
+        )
 
 # Pydantic models
 class AlertCreate(BaseModel):

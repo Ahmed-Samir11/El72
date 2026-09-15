@@ -52,20 +52,14 @@ class _CreateTrackerSheetState extends ConsumerState<CreateTrackerSheet> {
           const SizedBox(height: 16),
           ElevatedButton(
             onPressed: () async {
-              print("🔘 Add Button Pressed!");
-              
               try {
                 final url = _urlController.text;
                 final price = double.tryParse(_targetController.text) ?? 0.0;
-                
-                print("📤 Sending: URL=$url, Price=$price");
 
-                // Call your repository
                 await ref.read(alertsRepositoryProvider).createAlert(url, price);
-                
-                print("✅ Success!");
+
                 Navigator.pop(context); // Close the sheet
-                
+
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
@@ -75,10 +69,7 @@ class _CreateTrackerSheetState extends ConsumerState<CreateTrackerSheet> {
                     ),
                   );
                 }
-              } catch (e, stack) {
-                print("❌ ERROR: $e");
-                print(stack);
-                
+              } catch (e) {
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(

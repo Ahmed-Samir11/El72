@@ -243,6 +243,18 @@ async def test_consume_loop_filters_out_of_stock_and_acks():
 
 
 @pytest.mark.asyncio
+async def test_consume_loop_waits_when_stream_is_empty():
+    redis = AsyncMock()
+    redis.xreadgroup.side_effect = [[], asyncio.CancelledError()]
+    analyzer_app.app.state.redis = redis
+    analyzer_app.app.state.ts_pool = MagicMock()
+    analyzer_app.app.state.pg_pool = MagicMock()
+
+    await analyzer_app.consume_loop()
+    assert redis.xreadgroup.await_count == 2
+
+
+@pytest.mark.asyncio
 async def test_consume_loop_anomaly_publishes():
     redis = AsyncMock()
     payload = {
@@ -315,6 +327,49 @@ async def test_shutdown_cancels_tasks():
     redis.close.assert_awaited()
     pg_pool.close.assert_awaited()
     ts_pool.close.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_startup_initializes_stream_pools_and_background_tasks():
+    redis = MagicMock()
+    redis.ensure_group = AsyncMock()
+    redis.close = AsyncMock()
+    redis.redis = MagicMock()
+    redis.redis.xlen = AsyncMock(return_value=0)
+    redis.redis.xpending = AsyncMock(return_value=0)
+    pg_pool = MagicMock()
+    pg_pool.close = AsyncMock()
+    ts_pool = MagicMock()
+    ts_pool.close = AsyncMock()
+
+    async def forever():
+        await asyncio.Event().wait()
+
+    with patch("services.analyzer.app.RedisStreamClient.create", new=AsyncMock(return_value=redis)), \
+        patch("services.analyzer.app.asyncpg.create_pool", new=AsyncMock(side_effect=[pg_pool, ts_pool])), \
+        patch("services.analyzer.app.consume_loop", new=forever), \
+        patch("services.analyzer.app.publisher_loop", new=forever), \
+        patch("services.analyzer.app.ml_detector.load_model_from_dir") as load_model:
+        await analyzer_app.startup()
+
+    redis.ensure_group.assert_awaited_once()
+    assert analyzer_app.app.state.pg_pool is pg_pool
+    assert analyzer_app.app.state.ts_pool is ts_pool
+    load_model.assert_called_once_with(settings.model_dir)
+    assert any(route.path == "/metrics" for route in analyzer_app.app.routes)
+    await analyzer_app.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_startup_fails_fast_without_database_url():
+    original_database_url = settings.database_url
+    settings.database_url = ""
+    try:
+        with patch("services.analyzer.app.RedisStreamClient.create", new=AsyncMock(return_value=AsyncMock())):
+            with pytest.raises(SystemExit, match="DATABASE_URL is required"):
+                await analyzer_app.startup()
+    finally:
+        settings.database_url = original_database_url
 
 
 @pytest.mark.asyncio

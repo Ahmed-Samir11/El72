@@ -120,6 +120,31 @@ CREATE TABLE IF NOT EXISTS payment_logs (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS user_credits (
+    user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    balance INTEGER NOT NULL DEFAULT 0 CHECK (balance >= 0),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS credit_transactions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    amount INTEGER NOT NULL,
+    reason VARCHAR(50) NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Affiliate clicks for merchant revenue attribution
+CREATE TABLE IF NOT EXISTS affiliate_clicks (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    store_id VARCHAR(32) NOT NULL,
+    sku VARCHAR(255),
+    deal_id VARCHAR(255),
+    target_url TEXT NOT NULL,
+    affiliate_url TEXT NOT NULL,
+    clicked_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
 -- Retailer Analytics (Aggregated B2B metrics, no PII)
 CREATE TABLE IF NOT EXISTS retailer_analytics (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -152,6 +177,12 @@ CREATE INDEX IF NOT EXISTS idx_price_history_store_id ON price_history(store_id)
 
 CREATE INDEX IF NOT EXISTS idx_payment_logs_user_id ON payment_logs(user_id);
 CREATE INDEX IF NOT EXISTS idx_payment_logs_status ON payment_logs(status);
+CREATE INDEX IF NOT EXISTS idx_credit_transactions_user_id ON credit_transactions(user_id);
+CREATE INDEX IF NOT EXISTS idx_credit_transactions_created_at ON credit_transactions(created_at);
+
+CREATE INDEX IF NOT EXISTS idx_affiliate_clicks_store_id ON affiliate_clicks(store_id);
+CREATE INDEX IF NOT EXISTS idx_affiliate_clicks_sku ON affiliate_clicks(sku);
+CREATE INDEX IF NOT EXISTS idx_affiliate_clicks_clicked_at ON affiliate_clicks(clicked_at);
 
 CREATE INDEX IF NOT EXISTS idx_retailer_analytics_store_id ON retailer_analytics(store_id);
 CREATE INDEX IF NOT EXISTS idx_retailer_analytics_period ON retailer_analytics(period_start, period_end);

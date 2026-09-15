@@ -69,15 +69,12 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
                       }
 
                       setState(() => _isLoading = true);
-                      
+
                       final authRepo = ref.read(authRepositoryProvider);
                       try {
-                        print('📝 Attempting registration with phone: $phone');
-                        bool isValid = await authRepo.register(phone, password);
-                        print('✅ Registration result: $isValid');
-                        
+                        final isValid = await authRepo.register(phone, password);
+
                         if (isValid && mounted) {
-                          print('📱 Navigating to dashboard');
                           Navigator.pushReplacementNamed(context, '/dashboard');
                         } else if (mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
@@ -85,7 +82,6 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
                           );
                         }
                       } catch (e) {
-                        print('❌ Registration error: $e');
                         if (mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(

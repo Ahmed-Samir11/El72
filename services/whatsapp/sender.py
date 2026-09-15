@@ -29,7 +29,7 @@ CONSUMER_NAME = os.getenv("CONSUMER_NAME", "whatsapp-1")
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://elhaq:elhaq_pass@postgres:5432/elhaq")
 
 # WhatsApp Business API Configuration
-ACCESS_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN", "EAAMDRapIJBIBQEVaz8vkFSEGZAuLksuHY6lbOsD86eRRYIpZBzASnpnzCFjLGIeQyhJCzSvnmCqDE1cKcG0pAiYgYjKE5I3K4hx7sXcl0JmyDZCUSLrrIQ8erjdvyXupZB4vhs7DIZBnU1GfLXCsk2mn34TaZBt4YDNzC0MeEGJlKXa5TYFvyx6WZBt097eEdd07E6yJajZCCMjm8ZAed0bZAvJVBMJkpppxf5AFZBd5lmWuOh9ykY2nK0p5zJAcaD1sCyc3EYwpFUDXMrRnpxMUZCtZA")
+ACCESS_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN", "")
 PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "966490223206963")
 WHATSAPP_API_VERSION = os.getenv("WHATSAPP_API_VERSION", "v18.0")
 # Free-form text is not reliably delivered from the Meta test number; use an approved template.

@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import '../../data/repositories/auth_repository.dart';
+import '../../routing/app_router.dart';
+
 class SplashPage extends StatefulWidget {
   const SplashPage({Key? key}) : super(key: key);
 
@@ -32,8 +35,14 @@ class _SplashPageState extends State<SplashPage> {
         _progress = (i + 1) / statuses.length;
       });
     }
-    // TODO: Navigate to the next page after loading
-    Navigator.pushReplacementNamed(context, '/welcome');
+    // Route based on existing auth state: a stored token means the user is
+    // already registered, so skip straight to the dashboard.
+    final token = await AuthRepository().getToken();
+    if (!mounted) return;
+    Navigator.pushReplacementNamed(
+      context,
+      token != null ? AppRoutes.dashboard : AppRoutes.welcome,
+    );
   }
 
   @override

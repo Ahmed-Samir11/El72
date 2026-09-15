@@ -13,9 +13,9 @@ services:
   timescaledb:
     image: timescale/timescaledb:latest-pg15
     environment:
-      POSTGRES_USER: elhaq
-      POSTGRES_PASSWORD: elhaq_pass
-      POSTGRES_DB: elhaq_ts
+      POSTGRES_USER: ${POSTGRES_USER:-elhaq}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-elhaq_pass}
+      POSTGRES_DB: ${TIMESCALE_DB:-elhaq_ts}
     ports:
       - "5433:5432"
     volumes:
@@ -24,9 +24,9 @@ services:
   postgres:
     image: postgres:15
     environment:
-      POSTGRES_USER: elhaq
-      POSTGRES_PASSWORD: elhaq_pass
-      POSTGRES_DB: elhaq
+      POSTGRES_USER: ${POSTGRES_USER:-elhaq}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-elhaq_pass}
+      POSTGRES_DB: ${POSTGRES_DB:-elhaq}
     ports:
       # Host 5432 is often occupied by a local Postgres; use 5434 externally.
       - "5434:5432"
@@ -43,7 +43,7 @@ services:
       - postgres
     environment:
       REDIS_URL: "redis://redis:6379"
-      DATABASE_URL: "postgresql://elhaq:elhaq_pass@postgres:5432/elhaq"
+      DATABASE_URL: "${DATABASE_URL:-postgresql://elhaq:elhaq_pass@postgres:5432/elhaq}"
     ports:
       - "8001:8000"
 
@@ -56,7 +56,7 @@ services:
       - postgres
     environment:
       REDIS_URL: "redis://redis:6379"
-      DATABASE_URL: "postgresql://elhaq:elhaq_pass@postgres:5432/elhaq"
+      DATABASE_URL: "${DATABASE_URL:-postgresql://elhaq:elhaq_pass@postgres:5432/elhaq}"
     ports:
       - "8000:8000"
 
@@ -79,7 +79,7 @@ services:
       - postgres
       - timescaledb
     environment:
-      DATABASE_URL: "postgresql://elhaq:elhaq_pass@postgres:5432/elhaq"
+      DATABASE_URL: "${DATABASE_URL:-postgresql://elhaq:elhaq_pass@postgres:5432/elhaq}"
       REDIS_URL: "redis://redis:6379"
       SCRAPE_INTERVAL: "30"
       MAX_CONCURRENT_SCRAPES: "10"
@@ -95,7 +95,7 @@ services:
       - redis
       - postgres
     environment:
-      DATABASE_URL: "postgresql://elhaq:elhaq_pass@postgres:5432/elhaq"
+      DATABASE_URL: "${DATABASE_URL:-postgresql://elhaq:elhaq_pass@postgres:5432/elhaq}"
       REDIS_URL: "redis://redis:6379"
       SCRAPER_TARGETS_SOURCE: "redis_stream"
       SCRAPER_TARGETS_STREAM: "stream:targets"
@@ -116,12 +116,12 @@ services:
       STREAM_NAME: "stream:confirmed_deals"
       CONSUMER_GROUP: "cg_whatsapp"
       CONSUMER_NAME: "whatsapp-1"
-      WHATSAPP_ACCESS_TOKEN: "EAAMDRapIJBIBSJzUSLQpzUY2m9IYy2sYUZC4ykbUvBZAQLyZB9GUmfaRA22fNK3xqQIwHC2FOoRq1FlfZBGQaIeMk74IUKgwvchqqbKDsxPyZBMVNZA5ozCwfSmZAefrjLyQX6LTGZAwy4FKByVMBhyFWK3Fj7NCVQnPofuZBOJRZA1i56nrsCIsat2pAPNV7zVZCoCT3HFCLRzksKOLi3ZCz7KwZBUbktSgyhAK7ClEQyfY2FJP9iRLh6az0Xx3snZCXbBH3yboR1jOMZCRcujhMx2jKvN"
-      WHATSAPP_PHONE_NUMBER_ID: "1193756023831033"
-      WHATSAPP_API_VERSION: "v25.0"
-      WHATSAPP_TEMPLATE_NAME: "jaspers_market_order_confirmation_v1"
-      WHATSAPP_TEMPLATE_LANG: "en_US"
-      MOCK_WHATSAPP: "false"
+      WHATSAPP_ACCESS_TOKEN: "${WHATSAPP_ACCESS_TOKEN}"
+      WHATSAPP_PHONE_NUMBER_ID: "${WHATSAPP_PHONE_NUMBER_ID:-}"
+      WHATSAPP_API_VERSION: "${WHATSAPP_API_VERSION:-v25.0}"
+      WHATSAPP_TEMPLATE_NAME: "${WHATSAPP_TEMPLATE_NAME:-jaspers_market_order_confirmation_v1}"
+      WHATSAPP_TEMPLATE_LANG: "${WHATSAPP_TEMPLATE_LANG:-en_US}"
+      MOCK_WHATSAPP: "${MOCK_WHATSAPP:-true}"
     restart: unless-stopped
 
 volumes:

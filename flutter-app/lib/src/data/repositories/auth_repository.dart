@@ -33,8 +33,6 @@ class AuthRepository {
   Future<bool> login(String phone, String password) async {
     try {
       final formattedPhone = _formatPhone(phone);
-      print('🔐 Login - Original: $phone, Formatted: $formattedPhone');
-      
       final response = await _apiClient.dio.post(
         '/auth/login',
         data: {
@@ -43,29 +41,24 @@ class AuthRepository {
         },
       );
 
-      print('📥 Login response: ${response.statusCode}');
       if (response.statusCode == 200) {
         final token = response.data['access_token'] as String;
         await _storage.write(key: 'access_token', value: token);
-        print('✅ Token saved');
         return true;
       }
       return false;
-    } on DioException catch (e) {
-      print('❌ Login DioException: ${e.message}');
-      print('Response: ${e.response?.data}');
+    } on DioException catch (_) {
       return false;
-    } catch (e) {
-      print('❌ Login error: $e');
+    } catch (_) {
       return false;
     }
   }
 
   Future<bool> register(String phone, String password) async {
-    print('Register attempt with phone: $phone');
+    final formattedPhone = _formatPhone(phone);
     try {
-      final formattedPhone = _formatPhone(phone);
-      print('Formatted phone: $formattedPhone');
+      // `POST /auth/register` returns the token directly, so no second
+      // login call is needed.
       final response = await _apiClient.dio.post(
         '/auth/register',
         data: {
@@ -73,10 +66,10 @@ class AuthRepository {
           'password': password,
         },
       );
-      print('Register response status: ${response.statusCode}');
       if (response.statusCode == 200) {
-        // Assuming registration succeeds, but login to get token
-        return await login(formattedPhone, password);
+        final token = response.data['access_token'] as String;
+        await _storage.write(key: 'access_token', value: token);
+        return true;
       }
       return false;
     } on DioException catch (e) {
@@ -88,7 +81,6 @@ class AuthRepository {
       }
       throw 'Registration failed: ${e.message}';
     } catch (e) {
-      print('Register error: $e');
       throw 'Registration failed: $e';
     }
   }

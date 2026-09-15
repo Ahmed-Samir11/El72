@@ -1,7 +1,7 @@
 services:
   api:
     environment:
-      SECRET_KEY: "your-secret-key-change-in-prod"
+      SECRET_KEY: "${SECRET_KEY:-}"
 
   billing:
     build:
@@ -12,7 +12,7 @@ services:
       - postgres
     environment:
       REDIS_URL: "redis://redis:6379"
-      DATABASE_URL: "postgresql://elhaq:elhaq_pass@postgres:5432/elhaq"
-      PAYMOB_HMAC_SECRET: "your-hmac-secret"
+      DATABASE_URL: "${DATABASE_URL:-postgresql://elhaq:elhaq_pass@postgres:5432/elhaq}"
+      PAYMOB_HMAC_SECRET: "${PAYMOB_HMAC_SECRET:-}"
     ports:
       - "8002:8000"

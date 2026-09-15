@@ -5,11 +5,13 @@ Add these endpoints to services/api/main.py to enable frontend integration.
 
 from typing import List, Optional
 from datetime import datetime
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, validator
 from sqlalchemy.orm import Session
 
+from services.api.credits import deduct
 from services.api.dependencies import get_db, get_current_user
 from services.api.models import User
 from services.api.tracked_items_models import TrackedItem, TrackedItemStore, CurrentPrice, LowestPrice
@@ -76,7 +78,7 @@ class PriceInfo(BaseModel):
 
 class TrackedItemResponse(BaseModel):
     """Response model for tracked item."""
-    id: int
+    id: UUID
     canonical_product_id: str
     specs: Optional[dict]
     target_price: Optional[float]
@@ -134,6 +136,8 @@ async def create_tracked_item(
     )
     db.add(db_item)
     db.flush()
+
+    deduct(db, current_user, amount=1, reason="tracker_created")
     
     # Add store mappings
     for store in item.stores:
@@ -209,7 +213,7 @@ async def list_tracked_items(
 
 @router.get("/{item_id}", response_model=dict)
 async def get_tracked_item(
-    item_id: int,
+    item_id: UUID,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ) -> dict:
@@ -271,7 +275,7 @@ async def get_tracked_item(
 
 @router.patch("/{item_id}/target-price")
 async def update_target_price(
-    item_id: int,
+    item_id: UUID,
     target_price: float,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -306,7 +310,7 @@ async def update_target_price(
 
 @router.patch("/{item_id}/toggle")
 async def toggle_tracked_item(
-    item_id: int,
+    item_id: UUID,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ) -> dict:
@@ -334,7 +338,7 @@ async def toggle_tracked_item(
 
 @router.delete("/{item_id}")
 async def delete_tracked_item(
-    item_id: int,
+    item_id: UUID,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ) -> dict:
@@ -362,7 +366,7 @@ async def delete_tracked_item(
 
 @router.post("/{item_id}/stores")
 async def add_store_mapping(
-    item_id: int,
+    item_id: UUID,
     store: StoreMapping,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
