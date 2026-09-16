@@ -25,6 +25,7 @@ void main() {
           'price_local': 129999.0,
           'currency': 'EGP',
           'url': 'https://amazon.eg/dp/B0C9L8XYZ',
+          'image_url': 'https://cdn.example.com/iphone.jpg',
         },
       });
 
@@ -35,6 +36,7 @@ void main() {
       expect(item.storeCount, 3);
       expect(item.lowestPrice?.storeId, 'amazon_eg');
       expect(item.lowestPrice?.priceLocal, 129999.0);
+      expect(item.lowestPrice?.imageUrl, 'https://cdn.example.com/iphone.jpg');
     });
 
     test('handles a missing lowest price', () {
@@ -88,6 +90,7 @@ void main() {
         'id': '1',
         'title': 'iPhone 15 Pro Max 256GB',
         'store_name': 'Amazon EG',
+        'image_url': 'https://cdn.example.com/iphone.jpg',
         'price': 129999.0,
         'original_price': 149999.0,
         'discount_percentage': 13.3,
@@ -96,8 +99,20 @@ void main() {
       expect(deal.id, '1');
       expect(deal.title, 'iPhone 15 Pro Max 256GB');
       expect(deal.storeName, 'Amazon EG');
+      expect(deal.imageUrl, 'https://cdn.example.com/iphone.jpg');
       expect(deal.price, 129999.0);
       expect(deal.discountPercentage, 13.3);
+    });
+
+    test('accepts a thumbnail alias and ignores invalid image values', () {
+      final aliased = Deal.fromJson({
+        'id': '2',
+        'thumbnail': 'https://cdn.example.com/thumb.jpg',
+      });
+      final invalid = Deal.fromJson({'id': '3', 'image_url': '/relative.jpg'});
+
+      expect(aliased.imageUrl, 'https://cdn.example.com/thumb.jpg');
+      expect(invalid.imageUrl, isEmpty);
     });
   });
 

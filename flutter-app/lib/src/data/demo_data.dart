@@ -10,90 +10,82 @@ class DemoData {
   static const List<TrackedItem> trackedItems = [
     TrackedItem(
       id: 1,
-      canonicalProductId: 'iphone-15-pro-max-256gb',
-      targetPrice: 125000.0,
-      isActive: true,
-      storeCount: 3,
-      lowestPrice: TrackedItemLowestPrice(
-        storeId: 'amazon_eg',
-        priceLocal: 129999.0,
-        currency: 'EGP',
-        url: 'https://amazon.eg/dp/B0C9L8XYZ',
-      ),
-    ),
-    TrackedItem(
-      id: 2,
-      canonicalProductId: 'playstation-5-slim-bundle',
-      targetPrice: 11000.0,
-      isActive: true,
-      storeCount: 2,
-      lowestPrice: TrackedItemLowestPrice(
-        storeId: 'jumia_eg',
-        priceLocal: 11499.0,
-        currency: 'EGP',
-        url: 'https://www.jumia.com.eg/playstation-5',
-      ),
-    ),
-    TrackedItem(
-      id: 3,
-      canonicalProductId: 'nvidia-rtx-4060-8gb',
-      targetPrice: 14500.0,
+      canonicalProductId: 'rtx-5060-compumarts',
+      targetPrice: 19000.0,
       isActive: true,
       storeCount: 4,
       lowestPrice: TrackedItemLowestPrice(
-        storeId: 'noon_eg',
-        priceLocal: 14999.0,
+        storeId: 'compumarts_eg',
+        priceLocal: 19900.0,
         currency: 'EGP',
-        url: 'https://www.noon.com/egypt-en/rtx-4060',
+        url:
+            'https://www.compumarts.com/products/zotac-gaming-rtx-5060-twin-edge-8gb-egypt',
+        imageUrl:
+            'https://www.compumarts.com/cdn/shop/files/ZOTAC-GAMING-GeForce-RTX-5060-Twin-Edge_01.jpg?v=1767519263&width=600',
       ),
     ),
   ];
 
   static const List<Deal> deals = [
     Deal(
-      id: '1',
-      title: 'iPhone 15 Pro Max 256GB',
-      storeName: 'Amazon EG',
-      imageUrl: '',
-      price: 129999.0,
-      originalPrice: 149999.0,
-      discountPercentage: 13.3,
-    ),
-    Deal(
-      id: '2',
-      title: 'PlayStation 5 Slim Bundle',
-      storeName: 'Jumia EG',
-      imageUrl: '',
-      price: 11499.0,
-      originalPrice: 13499.0,
-      discountPercentage: 14.8,
-    ),
-    Deal(
       id: '3',
-      title: 'NVIDIA RTX 4060 8GB',
-      storeName: 'Noon EG',
-      imageUrl: '',
-      price: 14999.0,
-      originalPrice: 19999.0,
-      discountPercentage: 25.0,
+      title: 'Gigabyte RTX 5060 WINDFORCE MAX OC 8GB',
+      storeName: 'El Badr Group',
+      imageUrl:
+          'https://elbadrgroupeg.store/image/cache/catalog/products_2026/T17M1ZRxF4mkemQhgK1CO6lOgm-550x550.png',
+      sourceUrl:
+          'https://elbadrgroupeg.store/gigabyte-geforce-rtx-5060-windforce-max-oc-8gb-gddr7',
+      price: 22499.0,
+      originalPrice: 22499.0,
+      discountPercentage: 0.0,
     ),
     Deal(
-      id: '4',
-      title: 'Samsung 55" 4K Crystal TV',
-      storeName: 'Carrefour EG',
-      imageUrl: '',
-      price: 24999.0,
-      originalPrice: 31999.0,
-      discountPercentage: 21.9,
+      id: 'rtx-5060-compumarts',
+      title: 'ZOTAC RTX 5060 Twin Edge 8GB',
+      storeName: 'CompuMarts',
+      imageUrl:
+          'https://www.compumarts.com/cdn/shop/files/ZOTAC-GAMING-GeForce-RTX-5060-Twin-Edge_01.jpg?v=1767519263&width=600',
+      sourceUrl:
+          'https://www.compumarts.com/products/zotac-gaming-rtx-5060-twin-edge-8gb-egypt',
+      price: 19900.0,
+      originalPrice: 19900.0,
+      discountPercentage: 0.0,
     ),
     Deal(
-      id: '5',
-      title: 'MacBook Air M2 13"',
-      storeName: 'iStyle EG',
-      imageUrl: '',
-      price: 42999.0,
-      originalPrice: 46999.0,
-      discountPercentage: 8.5,
+      id: 'tie-house-3-shirts-999',
+      title: '3 Classic Shirts for 999 LE',
+      storeName: 'Tie House',
+      imageUrl:
+          'https://images.unsplash.com/photo-1602810318383-e386cc2a3ccf?auto=format&fit=crop&w=600&q=80',
+      sourceUrl:
+          'https://tie-house.com/products/classic-shirt-regular-fit-gray-1',
+      price: 999.0,
+      originalPrice: 1299.0,
+      discountPercentage: 23.1,
+    ),
+    Deal(
+      id: 'asus-rog-hatsune-miku-xg27acmeg-g',
+      title: 'ASUS ROG Strix Hatsune Miku 27 XG27ACMEG-G',
+      storeName: 'Geeks Store',
+      imageUrl:
+          'https://bunny-wp-pullzone-ekicvdt3ci.b-cdn.net/wp-content/uploads/2026/01/ASUS-XG27ACMEG-G-06-1-600x600.webp',
+      sourceUrl:
+          'https://geeksstoreeg.com/product/asus-rog-strix-hatsune-miku-27-xg27acmeg-g/',
+      price: 19500.0,
+      originalPrice: 20999.0,
+      discountPercentage: 7.1,
+    ),
+    Deal(
+      id: 'ravin-white-fruit-print-tee-r219636',
+      title: 'White Oversized Fresh and Tasty Graphic Tee',
+      storeName: 'Ravin',
+      imageUrl:
+          'https://shop.iravin.com/cdn/shop/files/r219636a.jpg?v=1788688999',
+      sourceUrl:
+          'https://shop.iravin.com/products/white-oversized-graphic-fruit-print-tee-r219636',
+      price: 337.50,
+      originalPrice: 749.99,
+      discountPercentage: 55.0,
     ),
   ];
 
@@ -120,12 +112,14 @@ class DemoData {
       final noise = _noise(seed + i) * base * 0.02;
       final dip = (i % 23 == 10) ? -base * 0.05 : 0.0;
       final price = (trend + noise + dip).roundToDouble();
-      points.add(PricePoint(
-        time: DateTime(t.year, t.month, t.day),
-        priceLocal: price,
-        priceUsd: price / 48.0,
-        inStock: true,
-      ));
+      points.add(
+        PricePoint(
+          time: DateTime(t.year, t.month, t.day),
+          priceLocal: price,
+          priceUsd: price / 48.0,
+          inStock: true,
+        ),
+      );
     }
     return points;
   }

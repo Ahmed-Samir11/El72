@@ -72,6 +72,25 @@ STORES: Dict[str, Dict[str, str]] = {
     "noon_eg": {"name": "Noon EG", "url_base": "https://www.noon.com/egypt-en/"},
     "jumia_eg": {"name": "Jumia EG", "url_base": "https://www.jumia.com.eg/"},
     "istyle_eg": {"name": "iStyle EG", "url_base": "https://www.istyle.com.eg/"},
+    "tie_house_eg": {
+        "name": "Tie House",
+        "url_base": "https://tie-house.com/products/",
+    },
+    "town_team_eg": {"name": "Town Team", "url_base": "https://townteam.com/"},
+    "elbadr_eg": {
+        "name": "El Badr Group",
+        "url_base": "https://elbadrgroupeg.store/",
+    },
+    "compumarts_eg": {
+        "name": "CompuMarts",
+        "url_base": "https://www.compumarts.com/products/",
+    },
+    "geeks_store_eg": {
+        "name": "Geeks Store",
+        "url_base": "https://geeksstoreeg.com/product/",
+    },
+    "ravin_eg": {"name": "Ravin", "url_base": "https://shop.iravin.com/products/"},
+    "alfrensia_eg": {"name": "Alfrensia", "url_base": "https://alfrensia.com/en/product/"},
 }
 
 # Per-store price factor so stores differ slightly (makes the "lowest price"
@@ -81,6 +100,13 @@ STORE_PRICE_FACTOR: Dict[str, float] = {
     "noon_eg": 0.98,
     "jumia_eg": 1.02,
     "istyle_eg": 1.05,
+    "tie_house_eg": 1.00,
+    "town_team_eg": 0.98,
+    "elbadr_eg": 1.00,
+    "compumarts_eg": 1.00,
+    "geeks_store_eg": 1.00,
+    "ravin_eg": 1.00,
+    "alfrensia_eg": 1.00,
 }
 
 # Realistic Egyptian-market products. ``current_price_egp`` is the price the
@@ -88,24 +114,59 @@ STORE_PRICE_FACTOR: Dict[str, float] = {
 # chart and the list stay consistent.
 DEMO_PRODUCTS: List[Dict] = [
     {
-        "sku": "iphone-15-pro-max-256gb",
-        "title": "Apple iPhone 15 Pro Max 256GB",
-        "current_price_egp": 129999.0,
-        "stores": ["amazon_eg", "noon_eg", "jumia_eg"],
+        "sku": "rtx-5060-el-badr",
+        "title": "Gigabyte RTX 5060 WINDFORCE MAX OC 8GB",
+        "current_price_egp": 22499.0,
+        "stores": ["elbadr_eg"],
+        "source_url": "https://elbadrgroupeg.store/gigabyte-geforce-rtx-5060-windforce-max-oc-8gb-gddr7",
     },
     {
-        "sku": "playstation-5-slim-bundle",
-        "title": "PlayStation 5 Slim Bundle",
-        "current_price_egp": 11499.0,
-        "stores": ["jumia_eg", "noon_eg"],
+        "sku": "rtx-5060-compumarts",
+        "title": "ZOTAC RTX 5060 Twin Edge 8GB",
+        "current_price_egp": 19900.0,
+        "stores": ["compumarts_eg"],
+        "source_url": "https://www.compumarts.com/products/zotac-gaming-rtx-5060-twin-edge-8gb-egypt",
     },
     {
-        "sku": "nvidia-rtx-4060-8gb",
-        "title": "NVIDIA GeForce RTX 4060 8GB",
-        "current_price_egp": 14999.0,
-        "stores": ["noon_eg", "amazon_eg", "jumia_eg", "istyle_eg"],
+        "sku": "tie-house-classic-shirt-gray",
+        "title": "3 Classic Shirts for 999 LE",
+        "current_price_egp": 999.0,
+        "stores": ["tie_house_eg"],
+        "source_url": "https://tie-house.com/products/classic-shirt-regular-fit-gray-1",
+    },
+    {
+        "sku": "asus-rog-hatsune-miku-xg27acmeg-g",
+        "title": "ASUS ROG Strix Hatsune Miku 27 XG27ACMEG-G",
+        "current_price_egp": 19500.0,
+        "stores": ["geeks_store_eg"],
+        "source_url": "https://geeksstoreeg.com/product/asus-rog-strix-hatsune-miku-27-xg27acmeg-g/",
+        "original_price_egp": 20999.0,
+    },
+    {
+        "sku": "ravin-white-fruit-print-tee-r219636",
+        "title": "White Oversized Fresh and Tasty Graphic Tee",
+        "current_price_egp": 337.50,
+        "stores": ["ravin_eg"],
+        "source_url": "https://shop.iravin.com/products/white-oversized-graphic-fruit-print-tee-r219636",
+        "original_price_egp": 749.99,
     },
 ]
+
+DEMO_IMAGE_URLS = {
+    "rtx-5060-el-badr": "https://elbadrgroupeg.store/image/cache/catalog/products_2026/T17M1ZRxF4mkemQhgK1CO6lOgm-550x550.png",
+    "rtx-5060-compumarts": "https://www.compumarts.com/cdn/shop/files/ZOTAC-GAMING-GeForce-RTX-5060-Twin-Edge_01.jpg?v=1767519263&width=600",
+    "tie-house-classic-shirt-gray": "https://images.unsplash.com/photo-1602810318383-e386cc2a3ccf?auto=format&fit=crop&w=600&q=80",
+    "asus-rog-hatsune-miku-xg27acmeg-g": "https://bunny-wp-pullzone-ekicvdt3ci.b-cdn.net/wp-content/uploads/2026/01/ASUS-XG27ACMEG-G-06-1-600x600.webp",
+    "ravin-white-fruit-print-tee-r219636": "https://shop.iravin.com/cdn/shop/files/r219636a.jpg?v=1788688999",
+}
+
+REMOVED_DEMO_SKUS = (
+    "concrete-casual-cotton-shirt",
+    "nvidia-rtx-4060-8gb",
+    "iphone-15-pro-max-256gb",
+    "playstation-5-slim-bundle",
+    "town-team-classic-polo",
+)
 
 # Portable DDL: works on SQLite and PostgreSQL/TimescaleDB.
 _PRICE_HISTORY_DDL = """
@@ -118,6 +179,7 @@ CREATE TABLE IF NOT EXISTS price_history (
     currency VARCHAR(10) NOT NULL DEFAULT 'USD',
     in_stock BOOLEAN NOT NULL DEFAULT 1,
     source_url TEXT,
+    image_url TEXT,
     PRIMARY KEY (time, sku, store_id)
 )
 """
@@ -164,11 +226,20 @@ def _ensure_price_history_table(engine: Engine) -> None:
     """Create ``price_history`` if it does not already exist (portable)."""
     with engine.begin() as conn:
         conn.execute(text(_PRICE_HISTORY_DDL))
+        try:
+            conn.execute(text("ALTER TABLE price_history ADD COLUMN image_url TEXT"))
+        except Exception:
+            pass
 
 
 def _seed_price_history(session: Session) -> int:
     """Insert 90 days of price history per SKU/store. Returns rows inserted."""
     inserted = 0
+    for sku in REMOVED_DEMO_SKUS:
+        session.execute(
+            text("DELETE FROM price_history WHERE sku = :sku"),
+            {"sku": sku},
+        )
     for product in DEMO_PRODUCTS:
         sku = product["sku"]
         # Idempotency: skip SKUs that already have history.
@@ -177,6 +248,15 @@ def _seed_price_history(session: Session) -> int:
             {"sku": sku},
         ).scalar()
         if existing:
+            image_url = DEMO_IMAGE_URLS.get(sku)
+            if image_url:
+                session.execute(
+                    text(
+                        "UPDATE price_history SET image_url = :image_url "
+                        "WHERE sku = :sku"
+                    ),
+                    {"sku": sku, "image_url": image_url},
+                )
             continue
 
         for store_id in product["stores"]:
@@ -184,7 +264,8 @@ def _seed_price_history(session: Session) -> int:
             store_current = product["current_price_egp"] * factor
             series = _generate_series(sku, store_id, store_current)
             url_base = STORES.get(store_id, {}).get("url_base", "")
-            source_url = f"{url_base}{sku}"
+            source_url = product.get("source_url") or f"{url_base}{sku}"
+            image_url = DEMO_IMAGE_URLS.get(sku, "")
 
             rows = [
                 {
@@ -196,6 +277,7 @@ def _seed_price_history(session: Session) -> int:
                     "currency": "EGP",
                     "in_stock": True,
                     "source_url": source_url,
+                    "image_url": image_url,
                 }
                 for (t, price) in series
             ]
@@ -203,9 +285,9 @@ def _seed_price_history(session: Session) -> int:
                 text(
                     "INSERT INTO price_history "
                     "(time, sku, store_id, price_usd, price_local, currency, "
-                    " in_stock, source_url) "
+                    " in_stock, source_url, image_url) "
                     "VALUES (:time, :sku, :store_id, :price_usd, :price_local, "
-                    " :currency, :in_stock, :source_url)"
+                    " :currency, :in_stock, :source_url, :image_url)"
                 ),
                 rows,
             )

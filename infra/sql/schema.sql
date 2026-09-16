@@ -99,6 +99,7 @@ CREATE TABLE IF NOT EXISTS price_history (
     currency VARCHAR(10) NOT NULL DEFAULT 'USD',
     in_stock BOOLEAN DEFAULT TRUE,
     source_url TEXT,
+    image_url TEXT,
     PRIMARY KEY (time, sku, store_id)
 );
 

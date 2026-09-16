@@ -4,15 +4,72 @@ from datetime import datetime
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, Numeric, String, Text, UUID as sqlalchemy_UUID
 from sqlalchemy.dialects.postgresql import UUID as postgres_UUID
 from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.types import TypeDecorator
 from sqlalchemy.orm import relationship
 
 Base = declarative_base()
 
 
+class DialectIdType(TypeDecorator):
+    """Integer on SQLite, native UUID on PostgreSQL.
+
+    Lets the same ORM models run against the local SQLite dev database and
+    the production PostgreSQL database without dialect-specific code.
+    """
+
+    impl = String
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect):
+        if dialect.name == "sqlite":
+            return dialect.type_descriptor(Integer())
+        return dialect.type_descriptor(postgres_UUID(as_uuid=True))
+
+
+# Backwards-compatible alias (User.id historically used this name).
+UserIdType = DialectIdType
+
+
+def _new_user_id(context):
+    """Keep the legacy SQLite schema compatible with PostgreSQL UUIDs."""
+    if context.dialect.name == "sqlite":
+        return context.connection.exec_driver_sql(
+            "SELECT COALESCE(MAX(id), 0) + 1 FROM users"
+        ).scalar_one()
+    return uuid.uuid4()
+
+
+def _new_alert_id(context):
+    """SQLite-safe auto-increment id; native UUID on PostgreSQL."""
+    if context.dialect.name == "sqlite":
+        return context.connection.exec_driver_sql(
+            "SELECT COALESCE(MAX(id), 0) + 1 FROM alerts"
+        ).scalar_one()
+    return uuid.uuid4()
+
+
+def _new_credit_tx_id(context):
+    """SQLite-safe auto-increment id for credit_transactions; UUID on Postgres."""
+    if context.dialect.name == "sqlite":
+        return context.connection.exec_driver_sql(
+            "SELECT COALESCE(MAX(id), 0) + 1 FROM credit_transactions"
+        ).scalar_one()
+    return uuid.uuid4()
+
+
+def _new_affiliate_click_id(context):
+    """SQLite-safe auto-increment id for affiliate_clicks; UUID on Postgres."""
+    if context.dialect.name == "sqlite":
+        return context.connection.exec_driver_sql(
+            "SELECT COALESCE(MAX(id), 0) + 1 FROM affiliate_clicks"
+        ).scalar_one()
+    return uuid.uuid4()
+
+
 class User(Base):
     __tablename__ = "users"
 
-    id = Column(postgres_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id = Column(UserIdType(), primary_key=True, default=_new_user_id)
     phone = Column(String(20), unique=True, nullable=False)
     name = Column(String(100), nullable=False, default="Customer")
     preferred_language = Column(String(10), nullable=False, default="en")
@@ -28,8 +85,8 @@ class User(Base):
 class Alert(Base):
     __tablename__ = "alerts"
 
-    id = Column(postgres_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(postgres_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    id = Column(DialectIdType(), primary_key=True, default=_new_alert_id)
+    user_id = Column(DialectIdType(), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     
     # Original ddl.sql columns
     target_url = Column(Text, nullable=True)
@@ -55,7 +112,7 @@ class UserCredit(Base):
     """
     __tablename__ = "user_credits"
 
-    user_id = Column(postgres_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    user_id = Column(DialectIdType(), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     balance = Column(Integer, nullable=False, default=0)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -66,8 +123,8 @@ class CreditTransaction(Base):
     """Immutable ledger of credit grants and deductions."""
     __tablename__ = "credit_transactions"
 
-    id = Column(postgres_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(postgres_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    id = Column(DialectIdType(), primary_key=True, default=_new_credit_tx_id)
+    user_id = Column(DialectIdType(), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     amount = Column(Integer, nullable=False)  # + grant, - deduction
     reason = Column(String(50), nullable=False)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
@@ -78,7 +135,7 @@ class AffiliateClick(Base):
 
     __tablename__ = "affiliate_clicks"
 
-    id = Column(postgres_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id = Column(DialectIdType(), primary_key=True, default=_new_affiliate_click_id)
     store_id = Column(String(32), nullable=False)
     sku = Column(String(255), nullable=True)
     deal_id = Column(String(255), nullable=True)

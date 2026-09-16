@@ -4,9 +4,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'src/routing/app_router.dart';
 import 'src/ui/common/splash_page.dart';
 import 'src/core/styles/app_colors.dart';
+import 'src/data/config.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await AppConfig.initialize();
   runApp(const ProviderScope(child: ElhaqApp()));
 }
 
@@ -16,7 +18,7 @@ class ElhaqApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Elhaq Tracker',
+      title: 'إلحق',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,

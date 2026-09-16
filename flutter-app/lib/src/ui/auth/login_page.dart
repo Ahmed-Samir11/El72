@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../routing/app_router.dart';
 import '../common/top_box.dart';
 import '../../data/providers.dart';
+import '../../core/styles/app_colors.dart';
 
 class LoginPage extends ConsumerStatefulWidget {
   const LoginPage({super.key});
@@ -45,10 +46,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
             // Elhaq logo
             SizedBox(
               height: 80,
-              child: Image.asset(
-                'assets/logo.png',
-                fit: BoxFit.contain,
-              ),
+              child: Image.asset('assets/logo.png', fit: BoxFit.contain),
             ),
             const SizedBox(height: 30),
 
@@ -77,46 +75,66 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                 Expanded(
                   child: ElevatedButton(
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.purple, // Elhaq purple theme
+                      backgroundColor: AppColors.primary,
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(vertical: 16),
                       textStyle: const TextStyle(
-                          fontSize: 18, fontWeight: FontWeight.bold),
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
-                    onPressed: _isLoading ? null : () async {
-                      String phone = _phoneController.text.trim();
-                      String password = _passwordController.text.trim();
+                    onPressed: _isLoading
+                        ? null
+                        : () async {
+                            String phone = _phoneController.text.trim();
+                            String password = _passwordController.text.trim();
 
-                      if (phone.isEmpty || password.isEmpty) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text("Please fill all fields")),
-                        );
-                        return;
-                      }
+                            if (phone.isEmpty || password.isEmpty) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text("Please fill all fields"),
+                                ),
+                              );
+                              return;
+                            }
 
-                      setState(() => _isLoading = true);
+                            setState(() => _isLoading = true);
 
-                      try {
-                        final authRepo = ref.read(authRepositoryProvider);
-                        final isValid = await authRepo.login(phone, password);
+                            try {
+                              final authRepo = ref.read(authRepositoryProvider);
+                              final isValid = await authRepo.login(
+                                phone,
+                                password,
+                              );
 
-                        if (isValid && mounted) {
-                          Navigator.pushReplacementNamed(context, AppRoutes.dashboard);
-                        } else if (mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text("Invalid credentials. Please try again.")),
-                          );
-                        }
-                      } catch (e) {
-                        if (mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text("Login failed: $e"), backgroundColor: Colors.red),
-                          );
-                        }
-                      } finally {
-                        if (mounted) setState(() => _isLoading = false);
-                      }
-                    },
+                              if (isValid && mounted) {
+                                Navigator.pushNamedAndRemoveUntil(
+                                  context,
+                                  AppRoutes.dashboard,
+                                  (_) => false,
+                                );
+                              } else if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text(
+                                      "Invalid credentials. Please try again.",
+                                    ),
+                                  ),
+                                );
+                              }
+                            } catch (e) {
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text("Login failed: $e"),
+                                    backgroundColor: Colors.red,
+                                  ),
+                                );
+                              }
+                            } finally {
+                              if (mounted) setState(() => _isLoading = false);
+                            }
+                          },
                     child: const Text("Log In"),
                   ),
                 ),
@@ -124,11 +142,13 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                 Expanded(
                   child: OutlinedButton(
                     style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.purple, // Elhaq purple theme
-                      side: const BorderSide(color: Colors.purple),
+                      foregroundColor: AppColors.primary,
+                      side: const BorderSide(color: AppColors.primary),
                       padding: const EdgeInsets.symmetric(vertical: 16),
                       textStyle: const TextStyle(
-                          fontSize: 18, fontWeight: FontWeight.bold),
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                     onPressed: () {
                       Navigator.pushReplacementNamed(context, '/welcome');
@@ -137,7 +157,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                   ),
                 ),
               ],
-            )
+            ),
           ],
         ),
       ),
@@ -178,7 +198,9 @@ class _LoginPageState extends ConsumerState<LoginPage> {
             ),
             suffixIcon: IconButton(
               icon: Icon(
-                _isLoginPasswordVisible ? Icons.visibility : Icons.visibility_off,
+                _isLoginPasswordVisible
+                    ? Icons.visibility
+                    : Icons.visibility_off,
                 color: Colors.grey,
               ),
               onPressed: () {

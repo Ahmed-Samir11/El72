@@ -108,7 +108,8 @@ class PriceProcessor:
                     price_usd,
                     result.price,
                     result.currency,
-                    result.in_stock
+                    result.in_stock,
+                    result.image_url
                 )
             
             # Recalculate lowest price across stores
@@ -181,7 +182,8 @@ class PriceProcessor:
         price_usd: float,
         price_local: float,
         currency: str,
-        in_stock: bool
+        in_stock: bool,
+        image_url: Optional[str] = None
     ):
         """Update current price snapshot (upsert)."""
         query = """
@@ -221,16 +223,16 @@ class PriceProcessor:
         """
         query = """
             INSERT INTO price_history (
-                time, sku, store_id, price_egp, in_stock
+                time, sku, store_id, price_egp, in_stock, image_url
             )
-            VALUES (NOW(), $1, $2, $3, $4)
+            VALUES (NOW(), $1, $2, $3, $4, $5)
             ON CONFLICT (time, sku, store_id) DO NOTHING
         """
         # Note: price_egp column is legacy - storing USD converted to EGP equivalent
         # In production, you'd want to add a price_usd column to price_history
         price_egp = price_local if currency == "EGP" else price_usd / EXCHANGE_RATES.get("EGP", 0.032)
         
-        await conn.execute(query, sku, store_id, price_egp, in_stock)
+        await conn.execute(query, sku, store_id, price_egp, in_stock, image_url)
     
     async def _update_lowest_price(
         self,

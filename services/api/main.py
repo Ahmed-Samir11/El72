@@ -115,6 +115,22 @@ async def push_to_stream(target_url: str, alert_id: int):
             store = "jumia_eg"
         elif "noon.com" in target_url:
             store = "noon_eg"
+        elif "elbadrgroupeg.store" in target_url:
+            store = "elbadr_eg"
+        elif "compumarts.com" in target_url:
+            store = "compumarts_eg"
+        elif "sigma-computer.com" in target_url:
+            store = "sigma_eg"
+        elif "geeksstoreeg.com" in target_url:
+            store = "geeks_store_eg"
+        elif "iravin.com" in target_url:
+            store = "ravin_eg"
+        elif "tie-house.com" in target_url:
+            store = "tie_house_eg"
+        elif "townteam.com" in target_url:
+            store = "town_team_eg"
+        elif "alfrensia.com" in target_url:
+            store = "alfrensia_eg"
         
         target = {
             "url": target_url,
@@ -136,12 +152,12 @@ async def push_to_stream(target_url: str, alert_id: int):
 # Pydantic models
 class AlertCreate(BaseModel):
     target_url: str
-    target_price: float
+    target_price: float = 0.0
 
     @validator("target_price")
     def validate_price(cls, v):
-        if v <= 0:
-            raise ValueError("Target price must be positive")
+        if v < 0:
+            raise ValueError("Target price must be zero or positive")
         return v
 
 

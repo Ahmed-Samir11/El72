@@ -1,29 +1,28 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../core/styles/app_colors.dart';
 import '../../data/models/deal_model.dart';
 
 class DealCard extends StatelessWidget {
   final Deal deal;
 
-  const DealCard({
-    super.key,
-    required this.deal,
-  });
+  const DealCard({super.key, required this.deal});
 
   @override
   Widget build(BuildContext context) {
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-      ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       elevation: 2,
       child: InkWell(
-        onTap: () {
-          // TODO: Navigate to ProductDetailsPage
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Navigate to ${deal.title} details')),
-          );
+        onTap: () async {
+          final uri = Uri.tryParse(deal.sourceUrl);
+          if (uri == null || !await launchUrl(uri)) {
+            if (!context.mounted) return;
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Unable to open ${deal.title}')),
+            );
+          }
         },
         borderRadius: BorderRadius.circular(12),
         child: Padding(
@@ -63,8 +62,8 @@ class DealCard extends StatelessWidget {
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.w600,
-                          ),
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                     const SizedBox(height: 4),
 
@@ -72,8 +71,8 @@ class DealCard extends StatelessWidget {
                     Text(
                       deal.storeName,
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                            color: AppColors.textSecondary,
-                          ),
+                        color: AppColors.textSecondary,
+                      ),
                     ),
                   ],
                 ),
@@ -86,7 +85,7 @@ class DealCard extends StatelessWidget {
                 children: [
                   // Price
                   Text(
-                    '\$${deal.price.toStringAsFixed(2)}',
+                    'ج.م ${deal.price.toStringAsFixed(2)}',
                     style: AppColors.priceTextStyle.copyWith(
                       fontSize: 18,
                       fontWeight: FontWeight.bold,
@@ -96,7 +95,7 @@ class DealCard extends StatelessWidget {
                   // Original Price (strikethrough)
                   if (deal.originalPrice > deal.price)
                     Text(
-                      '\$${deal.originalPrice.toStringAsFixed(2)}',
+                      'ج.م ${deal.originalPrice.toStringAsFixed(2)}',
                       style: TextStyle(
                         fontSize: 14,
                         color: AppColors.textSecondary,
@@ -108,7 +107,10 @@ class DealCard extends StatelessWidget {
 
                   // Discount Badge
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
                     decoration: BoxDecoration(
                       color: AppColors.priceDown,
                       borderRadius: BorderRadius.circular(12),

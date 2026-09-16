@@ -21,7 +21,20 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 import uuid
 
+from .models import DialectIdType
+
 Base = declarative_base()
+
+
+def _new_id(table: str):
+    """Dialect-aware PK default: auto-increment int on SQLite, UUID on Postgres."""
+    def _fn(context):
+        if context.dialect.name == "sqlite":
+            return context.connection.exec_driver_sql(
+                f"SELECT COALESCE(MAX(id), 0) + 1 FROM {table}"
+            ).scalar_one()
+        return uuid.uuid4()
+    return _fn
 
 users = Table(
     "users",
@@ -45,8 +58,8 @@ class TrackedItem(Base):
     """
     __tablename__ = "tracked_items"
 
-    id = Column(postgres_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(postgres_UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    id = Column(DialectIdType(), primary_key=True, default=_new_id("tracked_items"))
+    user_id = Column(DialectIdType(), ForeignKey("users.id"), nullable=False)
     canonical_product_id = Column(Text, nullable=False)
     specs = Column(JSON, nullable=True)  # JSONB for spec-based tracking
     target_price = Column(Numeric(10, 2), nullable=True)
@@ -74,8 +87,8 @@ class TrackedItemStore(Base):
     """
     __tablename__ = "tracked_item_stores"
 
-    id = Column(postgres_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tracked_item_id = Column(postgres_UUID(as_uuid=True), ForeignKey("tracked_items.id", ondelete="CASCADE"), nullable=False)
+    id = Column(DialectIdType(), primary_key=True, default=_new_id("tracked_item_stores"))
+    tracked_item_id = Column(DialectIdType(), ForeignKey("tracked_items.id", ondelete="CASCADE"), nullable=False)
     store_id = Column(Text, nullable=False)  # e.g., 'amazon_eg', 'noon', 'jumia'
     store_sku = Column(Text, nullable=False)
     store_url = Column(Text, nullable=False)
@@ -100,7 +113,7 @@ class CurrentPrice(Base):
     """
     __tablename__ = "current_prices"
 
-    tracked_item_id = Column(postgres_UUID(as_uuid=True), ForeignKey("tracked_items.id", ondelete="CASCADE"), primary_key=True)
+    tracked_item_id = Column(DialectIdType(), ForeignKey("tracked_items.id", ondelete="CASCADE"), primary_key=True)
     store_id = Column(Text, primary_key=True)
     price_usd = Column(Numeric(10, 4), nullable=False)
     price_local = Column(Numeric(10, 2), nullable=False)
@@ -125,7 +138,7 @@ class LowestPrice(Base):
     """
     __tablename__ = "lowest_prices"
 
-    tracked_item_id = Column(postgres_UUID(as_uuid=True), ForeignKey("tracked_items.id", ondelete="CASCADE"), primary_key=True)
+    tracked_item_id = Column(DialectIdType(), ForeignKey("tracked_items.id", ondelete="CASCADE"), primary_key=True)
     store_id = Column(Text, nullable=False)
     price_usd = Column(Numeric(10, 4), nullable=False)
     price_local = Column(Numeric(10, 2), nullable=False)

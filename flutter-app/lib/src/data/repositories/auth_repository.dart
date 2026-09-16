@@ -1,5 +1,6 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import '../config.dart';
 import '../services/api_client.dart';
 
 class AuthRepository {
@@ -31,6 +32,10 @@ class AuthRepository {
   }
 
   Future<bool> login(String phone, String password) async {
+    if (AppConfig.demoMode) {
+      await _storage.write(key: 'access_token', value: 'demo-token');
+      return true;
+    }
     try {
       final formattedPhone = _formatPhone(phone);
       final response = await _apiClient.dio.post(
@@ -55,6 +60,10 @@ class AuthRepository {
   }
 
   Future<bool> register(String phone, String password) async {
+    if (AppConfig.demoMode) {
+      await _storage.write(key: 'access_token', value: 'demo-token');
+      return true;
+    }
     final formattedPhone = _formatPhone(phone);
     try {
       // `POST /auth/register` returns the token directly, so no second

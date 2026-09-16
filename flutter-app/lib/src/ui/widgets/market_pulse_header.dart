@@ -47,7 +47,7 @@ class MarketPulseHeader extends StatelessWidget {
           ),
           _StatItem(
             label: 'Savings',
-            value: '\$${savings.toStringAsFixed(0)}',
+            value: 'ج.م ${savings.toStringAsFixed(0)}',
             icon: Icons.savings,
           ),
         ],
@@ -72,11 +72,7 @@ class _StatItem extends StatelessWidget {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(
-          icon,
-          color: Colors.white,
-          size: 20,
-        ),
+        Icon(icon, color: Colors.white, size: 20),
         const SizedBox(height: 4),
         Text(
           value,

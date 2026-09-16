@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../common/top_box.dart';
 import '../../data/providers.dart';
+import '../../core/styles/app_colors.dart';
 
 class RegisterPage extends ConsumerStatefulWidget {
   const RegisterPage({super.key});
@@ -52,48 +53,66 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
                 Expanded(
                   child: ElevatedButton(
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.purple, // Elhaq purple theme
+                      backgroundColor: AppColors.primary,
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(vertical: 16),
-                      textStyle: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                      textStyle: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
-                    onPressed: _isLoading ? null : () async {
-                      String phone = _phoneController.text.trim();
-                      String password = _passwordController.text.trim();
+                    onPressed: _isLoading
+                        ? null
+                        : () async {
+                            String phone = _phoneController.text.trim();
+                            String password = _passwordController.text.trim();
 
-                      if (phone.isEmpty || password.isEmpty) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text("Please fill all fields")),
-                        );
-                        return;
-                      }
+                            if (phone.isEmpty || password.isEmpty) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text("Please fill all fields"),
+                                ),
+                              );
+                              return;
+                            }
 
-                      setState(() => _isLoading = true);
+                            setState(() => _isLoading = true);
 
-                      final authRepo = ref.read(authRepositoryProvider);
-                      try {
-                        final isValid = await authRepo.register(phone, password);
+                            final authRepo = ref.read(authRepositoryProvider);
+                            try {
+                              final isValid = await authRepo.register(
+                                phone,
+                                password,
+                              );
 
-                        if (isValid && mounted) {
-                          Navigator.pushReplacementNamed(context, '/dashboard');
-                        } else if (mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text("Registration failed. Please try again.")),
-                          );
-                        }
-                      } catch (e) {
-                        if (mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text(e.toString()),
-                              backgroundColor: Colors.red,
-                            ),
-                          );
-                        }
-                      } finally {
-                        if (mounted) setState(() => _isLoading = false);
-                      }
-                    },
+                              if (isValid && mounted) {
+                                Navigator.pushNamedAndRemoveUntil(
+                                  context,
+                                  '/dashboard',
+                                  (_) => false,
+                                );
+                              } else if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text(
+                                      "Registration failed. Please try again.",
+                                    ),
+                                  ),
+                                );
+                              }
+                            } catch (e) {
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(e.toString()),
+                                    backgroundColor: Colors.red,
+                                  ),
+                                );
+                              }
+                            } finally {
+                              if (mounted) setState(() => _isLoading = false);
+                            }
+                          },
                     child: const Text("Register"),
                   ),
                 ),
@@ -104,7 +123,10 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
                       foregroundColor: const Color(0xFF26667f),
                       side: const BorderSide(color: Color(0xFF26667f)),
                       padding: const EdgeInsets.symmetric(vertical: 16),
-                      textStyle: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                      textStyle: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                     onPressed: () {
                       Navigator.pushReplacementNamed(context, '/welcome');

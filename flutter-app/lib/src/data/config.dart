@@ -1,27 +1,33 @@
-/// Central, build-time configuration for the Elhaq app.
+import 'package:shared_preferences/shared_preferences.dart';
+
+/// Central configuration for the إلحق app.
 ///
 /// Values are overridable at build/run time via `--dart-define`, e.g.:
 /// ```
 /// flutter run \
 ///   --dart-define=API_BASE_URL=http://192.168.1.106:8000 \
-///   --dart-define=DEMO_MODE=true
 /// ```
 ///
-/// `DEMO_MODE` (default `true`) lets the UI render realistic demo data when
-/// the backend is unreachable, so the investor demo works end-to-end even
-/// before Engineer B's public endpoints (`/stats`, `/deals/live`,
-/// `/price-history/{sku}`) are merged.
+/// Demo mode is a persistent runtime setting and defaults to Full mode.
 class AppConfig {
-  /// Base URL of the Elhaq API gateway (`services/api`).
+  /// Base URL of the Elhaq API gateway (`services/api`). Android emulators
+  /// reach services running on the host machine through `10.0.2.2`.
   static const String apiBaseUrl = String.fromEnvironment(
     'API_BASE_URL',
-    defaultValue: 'http://localhost:8000',
+    defaultValue: 'http://10.0.2.2:8000',
   );
 
-  /// When true, repositories fall back to [DemoData] if the API is
-  /// unreachable or returns an error.
-  static const bool demoMode = bool.fromEnvironment(
-    'DEMO_MODE',
-    defaultValue: true,
-  );
+  static const String _demoModeKey = 'demo_mode';
+  static late SharedPreferences _preferences;
+  static bool demoMode = false;
+
+  static Future<void> initialize() async {
+    _preferences = await SharedPreferences.getInstance();
+    demoMode = _preferences.getBool(_demoModeKey) ?? false;
+  }
+
+  static Future<void> setDemoMode(bool enabled) async {
+    demoMode = enabled;
+    await _preferences.setBool(_demoModeKey, enabled);
+  }
 }

@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../data/repositories/alerts_repository.dart';
+import '../data/providers.dart';
 
 class CreateTrackerSheet extends ConsumerStatefulWidget {
   const CreateTrackerSheet({super.key});
@@ -27,16 +27,13 @@ class _CreateTrackerSheetState extends ConsumerState<CreateTrackerSheet> {
         children: [
           const Text(
             'Create Price Tracker',
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-            ),
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 16),
           TextField(
             controller: _urlController,
             decoration: const InputDecoration(
-              labelText: 'Product URL (Amazon/Noon)',
+              labelText: 'Product URL (any supported store)',
               border: OutlineInputBorder(),
             ),
           ),
@@ -53,17 +50,24 @@ class _CreateTrackerSheetState extends ConsumerState<CreateTrackerSheet> {
           ElevatedButton(
             onPressed: () async {
               try {
-                final url = _urlController.text;
+                final url = _urlController.text.trim();
                 final price = double.tryParse(_targetController.text) ?? 0.0;
 
-                await ref.read(alertsRepositoryProvider).createAlert(url, price);
+                await ref
+                    .read(trackedItemsRepositoryProvider)
+                    .createFromUrl(url, targetPrice: price > 0 ? price : null);
+
+                // Refresh the Trackers list so the new item appears.
+                ref.invalidate(trackedItemsProvider);
 
                 Navigator.pop(context); // Close the sheet
 
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
-                      content: Text('✅ Tracker created! You\'ll get a WhatsApp notification when we find a deal.'),
+                      content: Text(
+                        '✅ Tracker created! You\'ll get a WhatsApp notification when we find a deal.',
+                      ),
                       backgroundColor: Colors.green,
                       duration: Duration(seconds: 3),
                     ),

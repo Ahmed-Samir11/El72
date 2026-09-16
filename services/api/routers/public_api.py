@@ -25,8 +25,6 @@ Design notes
   consolidated here to avoid duplicating the access layer.
 """
 
-from __future__ import annotations
-
 import os
 from typing import Dict, List
 from urllib.parse import urlencode
@@ -35,7 +33,7 @@ from fastapi import APIRouter, Depends, Request
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from sqlalchemy import text
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from services.api.dependencies import get_db
@@ -49,6 +47,20 @@ STORE_NAMES: Dict[str, str] = {
     "noon_eg": "Noon EG",
     "jumia_eg": "Jumia EG",
     "istyle_eg": "iStyle EG",
+    "tie_house_eg": "Tie House",
+    "town_team_eg": "Town Team",
+    "elbadr_eg": "El Badr Group",
+    "compumarts_eg": "CompuMarts",
+    "geeks_store_eg": "Geeks Store",
+    "ravin_eg": "Ravin",
+    "alfrensia_eg": "Alfrensia",
+}
+
+PRODUCT_TITLES: Dict[str, str] = {
+    "rtx-5060-el-badr": "Gigabyte RTX 5060 WINDFORCE MAX OC 8GB",
+    "rtx-5060-compumarts": "ZOTAC RTX 5060 Twin Edge 8GB",
+    "asus-rog-hatsune-miku-xg27acmeg-g": "ASUS ROG Strix Hatsune Miku 27 XG27ACMEG-G",
+    "ravin-white-fruit-print-tee-r219636": "White Oversized Fresh and Tasty Graphic Tee",
 }
 
 
@@ -80,19 +92,24 @@ def _price_history_rows(session: Session, sku: str | None = None) -> List[dict]:
     if sku is None:
         sql = (
             "SELECT time, sku, store_id, price_usd, price_local, currency, "
-            "in_stock, source_url FROM price_history"
+            "in_stock, source_url, image_url FROM price_history"
         )
         params: dict = {}
     else:
         sql = (
             "SELECT time, sku, store_id, price_usd, price_local, currency, "
-            "in_stock, source_url FROM price_history WHERE sku = :sku"
+            "in_stock, source_url, image_url FROM price_history WHERE sku = :sku"
         )
         params = {"sku": sku}
     try:
         result = session.execute(text(sql), params)
-    except OperationalError:
-        return []
+    except SQLAlchemyError:
+        session.rollback()
+        legacy_sql = sql.replace(", image_url", "")
+        try:
+            result = session.execute(text(legacy_sql), params)
+        except SQLAlchemyError:
+            return []
     return [dict(row._mapping) for row in result]
 
 
@@ -114,6 +131,7 @@ def _first_last_per_sku(rows: List[dict]) -> Dict[str, dict]:
                 "price_local": price,
                 "store_id": r["store_id"],
                 "source_url": r.get("source_url"),
+                "image_url": r.get("image_url"),
             }
         elif t == e["first"]["_t"] and price < e["first"]["price_local"]:
             e["first"] = {
@@ -121,6 +139,7 @@ def _first_last_per_sku(rows: List[dict]) -> Dict[str, dict]:
                 "price_local": price,
                 "store_id": r["store_id"],
                 "source_url": r.get("source_url"),
+                "image_url": r.get("image_url"),
             }
         if e["last"] is None or t > e["last"]["_t"]:
             e["last"] = {
@@ -128,6 +147,7 @@ def _first_last_per_sku(rows: List[dict]) -> Dict[str, dict]:
                 "price_local": price,
                 "store_id": r["store_id"],
                 "source_url": r.get("source_url"),
+                "image_url": r.get("image_url"),
             }
         elif t == e["last"]["_t"] and price < e["last"]["price_local"]:
             e["last"] = {
@@ -135,6 +155,7 @@ def _first_last_per_sku(rows: List[dict]) -> Dict[str, dict]:
                 "price_local": price,
                 "store_id": r["store_id"],
                 "source_url": r.get("source_url"),
+                "image_url": r.get("image_url"),
             }
     return per_sku
 
@@ -198,13 +219,14 @@ def get_live_deals(request: Request, db: Session = Depends(get_db)) -> List[dict
         deals.append(
             {
                 "id": sku,
-                "title": _humanize_sku(sku),
+                "title": PRODUCT_TITLES.get(sku, _humanize_sku(sku)),
                 "store_name": STORE_NAMES.get(e["last"]["store_id"], e["last"]["store_id"]),
-                "image_url": "",
+                "image_url": e["last"].get("image_url") or "",
                 "price": round(current, 2),
                 "original_price": round(original, 2),
                 "discount_percentage": round(discount, 1),
                 "url": redirect_url,
+                "source_url": source_url,
             }
         )
 

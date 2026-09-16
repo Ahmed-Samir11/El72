@@ -7,14 +7,17 @@ from typing import List, Optional
 from datetime import datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from pydantic import BaseModel, validator
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from services.api.credits import deduct
-from services.api.dependencies import get_db, get_current_user
+from services.api.dependencies import get_db, get_current_user, SessionLocal
 from services.api.models import User
 from services.api.tracked_items_models import TrackedItem, TrackedItemStore, CurrentPrice, LowestPrice
+from services.api.price_fetcher import fetch_price_sync, _to_usd
 
 
 # Pydantic request/response models
@@ -95,6 +98,23 @@ class TrackedItemResponse(BaseModel):
 
 # Router
 router = APIRouter(prefix="/tracked-items", tags=["tracked-items"])
+
+
+def _image_url_for_item(db: Session, sku: str, store_id: str) -> str:
+    """Read the latest scraper image without breaking older databases."""
+    try:
+        image_url = db.execute(
+            text(
+                "SELECT image_url FROM price_history "
+                "WHERE sku = :sku AND store_id = :store_id "
+                "ORDER BY time DESC LIMIT 1"
+            ),
+            {"sku": sku, "store_id": store_id},
+        ).scalar()
+        return image_url if isinstance(image_url, str) else ""
+    except SQLAlchemyError:
+        db.rollback()
+        return ""
 
 
 @router.post("/", status_code=status.HTTP_201_CREATED)
@@ -202,7 +222,10 @@ async def list_tracked_items(
                 "store_id": lowest.store_id,
                 "price_local": float(lowest.price_local),
                 "currency": lowest.currency,
-                "url": lowest.url
+                "url": lowest.url,
+                "image_url": _image_url_for_item(
+                    db, item.canonical_product_id, lowest.store_id
+                ),
             } if lowest else None,
             "created_at": item.created_at,
             "updated_at": item.updated_at
@@ -256,6 +279,9 @@ async def get_tracked_item(
             "price_local": float(lowest.price_local),
             "currency": lowest.currency,
             "url": lowest.url,
+            "image_url": _image_url_for_item(
+                db, item.canonical_product_id, lowest.store_id
+            ),
             "last_updated": lowest.last_updated
         } if lowest else None,
         "all_prices": [
@@ -411,6 +437,195 @@ async def add_store_mapping(
     return {
         "message": "Store mapping added successfully",
         "store_id": store.store_id
+    }
+
+
+class TrackedItemByUrl(BaseModel):
+    """Create a tracked item from a single product URL (any supported store)."""
+    url: str
+    target_price: Optional[float] = None
+
+    @validator("url")
+    def validate_url(cls, v):
+        if not v or not v.startswith(("http://", "https://")):
+            raise ValueError("url must be a valid HTTP/HTTPS URL")
+        return v
+
+
+def _persist_fetched_price(tracked_item_id, store_id: str, url: str, canonical_id: str):
+    """Visit ``url``, extract the price, and write it to the price tables.
+
+    Runs as a FastAPI background task so the create request returns quickly.
+    Uses its own DB session (the request session is closed by then).
+    """
+    fetched = fetch_price_sync(url)
+    if fetched is None:
+        return
+
+    db = SessionLocal()
+    try:
+        price_usd = _to_usd(fetched.price_local, fetched.currency)
+        now = datetime.utcnow()
+
+        # Upsert current_prices (PK: tracked_item_id, store_id).
+        existing = db.query(CurrentPrice).filter(
+            CurrentPrice.tracked_item_id == tracked_item_id,
+            CurrentPrice.store_id == store_id,
+        ).first()
+        if existing:
+            existing.price_usd = price_usd
+            existing.price_local = fetched.price_local
+            existing.currency = fetched.currency
+            existing.in_stock = fetched.in_stock
+            existing.last_updated = now
+        else:
+            db.add(CurrentPrice(
+                tracked_item_id=tracked_item_id,
+                store_id=store_id,
+                price_usd=price_usd,
+                price_local=fetched.price_local,
+                currency=fetched.currency,
+                in_stock=fetched.in_stock,
+                last_updated=now,
+            ))
+
+        # Upsert lowest_prices (PK: tracked_item_id) — single-store for now.
+        low = db.query(LowestPrice).filter(
+            LowestPrice.tracked_item_id == tracked_item_id
+        ).first()
+        if low:
+            low.store_id = store_id
+            low.price_usd = price_usd
+            low.price_local = fetched.price_local
+            low.currency = fetched.currency
+            low.url = url
+            low.last_updated = now
+        else:
+            db.add(LowestPrice(
+                tracked_item_id=tracked_item_id,
+                store_id=store_id,
+                price_usd=price_usd,
+                price_local=fetched.price_local,
+                currency=fetched.currency,
+                url=url,
+                last_updated=now,
+            ))
+
+        # Append to price_history (best-effort; ignore conflicts).
+        try:
+            db.execute(
+                text(
+                    "INSERT INTO price_history "
+                    "(time, sku, store_id, price_usd, price_local, currency, in_stock, source_url, image_url) "
+                    "VALUES (:t, :sku, :store, :usd, :local, :cur, :stock, :url, :img)"
+                ),
+                {
+                    "t": now, "sku": canonical_id, "store": store_id,
+                    "usd": price_usd, "local": fetched.price_local,
+                    "cur": fetched.currency, "stock": 1 if fetched.in_stock else 0,
+                    "url": url, "img": fetched.image_url,
+                },
+            )
+        except SQLAlchemyError:
+            db.rollback()
+
+        db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+    finally:
+        db.close()
+
+
+@router.post("/from-url", status_code=status.HTTP_201_CREATED)
+async def create_tracked_item_from_url(
+    payload: TrackedItemByUrl,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Create a tracked item from a single product URL.
+
+    Derives a canonical product id and store mapping from the URL so the
+    frontend can create trackers with just a link (and optional target price).
+    """
+    from urllib.parse import urlparse
+
+    parsed = urlparse(payload.url)
+    host = (parsed.netloc or "").lower()
+    path = parsed.path or "/"
+
+    # Detect store from host.
+    store_id = "unknown"
+    for key, domain in (
+        ("amazon_eg", "amazon.eg"),
+        ("jumia_eg", "jumia.eg"),
+        ("noon_eg", "noon.com"),
+        ("elbadr_eg", "elbadrgroup.com"),
+        ("compumarts_eg", "compumarts.com"),
+        ("sigma_eg", "sigma-eg.com"),
+        ("geeks_store_eg", "geeks-store.com"),
+        ("ravin_eg", "ravin.com"),
+        ("tie_house_eg", "tiehouse.com"),
+        ("town_team_eg", "town-team.com"),
+        ("alfrensia_eg", "alfrensia.com"),
+    ):
+        if domain in host:
+            store_id = key
+            break
+
+    # Last non-empty path segment = SKU / slug.
+    segments = [s for s in path.split("/") if s]
+    sku = segments[-1] if segments else path.strip("/")
+    if len(sku) < 3:
+        sku = path.strip("/").replace("/", "-") or "item"
+
+    canonical_id = f"{store_id}:{sku}"
+
+    # Avoid duplicate trackers for the same URL.
+    existing = db.query(TrackedItemStore).filter(
+        TrackedItemStore.store_url == payload.url
+    ).first()
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This product is already being tracked",
+        )
+
+    db_item = TrackedItem(
+        user_id=current_user.id,
+        canonical_product_id=canonical_id,
+        specs={"source_url": payload.url},
+        target_price=payload.target_price,
+        is_active=True,
+    )
+    db.add(db_item)
+    db.flush()
+
+    deduct(db, current_user, amount=1, reason="tracker_created")
+
+    db_store = TrackedItemStore(
+        tracked_item_id=db_item.id,
+        store_id=store_id,
+        store_sku=sku,
+        store_url=payload.url,
+        is_active=True,
+    )
+    db.add(db_store)
+
+    db.commit()
+    db.refresh(db_item)
+
+    # Visit the URL now to fetch the live price (background, non-blocking).
+    item_id = db_item.id
+    background_tasks.add_task(
+        _persist_fetched_price, item_id, store_id, payload.url, canonical_id
+    )
+
+    return {
+        "id": db_item.id,
+        "message": "Tracked item created successfully. Monitoring will begin on next scrape cycle.",
+        "canonical_product_id": db_item.canonical_product_id,
+        "store_count": 1,
     }
 
 

@@ -27,4 +27,23 @@ class TrackedItemsRepository {
     if (AppConfig.demoMode) return DemoData.trackedItems;
     return const [];
   }
+
+  /// Create a tracker from a single product URL (any supported store).
+  Future<void> createFromUrl(String url, {double? targetPrice}) async {
+    final response = await _apiClient.dio.post(
+      '/tracked-items/from-url',
+      data: {
+        'url': url,
+        if (targetPrice != null && targetPrice > 0)
+          'target_price': targetPrice,
+      },
+    );
+    if (response.statusCode != null &&
+        (response.statusCode! < 200 || response.statusCode! >= 300)) {
+      final detail = response.data is Map
+          ? (response.data as Map)['detail']
+          : null;
+      throw Exception(detail ?? 'Failed to create tracker');
+    }
+  }
 }
