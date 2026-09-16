@@ -5,9 +5,12 @@ const REDIS_URL = process.env.REDIS_URL || 'redis://127.0.0.1:6379'
 const STREAM = 'stream:confirmed_deals'
 const GROUP = 'cg_notifier'
 const CONSUMER = process.env.NOTIFIER_CONSUMER || 'notifier-1'
-const MOCK_WHATSAPP = process.env.MOCK_WHATSAPP === 'true'
 const WHATSAPP_API_URL = process.env.WHATSAPP_API_URL || 'https://api.whatsapp.com/send'
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN || 'your-token'
+
+function isMockWhatsApp() {
+  return process.env.MOCK_WHATSAPP === 'true'
+}
 
 let redis: Redis | null = null
 
@@ -30,7 +33,7 @@ async function ensureGroup() {
 }
 
 export async function sendWhatsApp(phone: string, message: string) {
-  if (MOCK_WHATSAPP) {
+  if (isMockWhatsApp()) {
     console.log(`MOCK WhatsApp to ${phone}: ${message}`)
     return
   }
@@ -77,13 +80,13 @@ async function processMessage(id: string, fields: Record<string, any>) {
 
   if (!sku) {
     console.warn(`Skipping message ${id}: missing sku`)
-    await redis.xack(STREAM, GROUP, id)
+    await client.xack(STREAM, GROUP, id)
     return
   }
 
   if (!user_phone) {
     console.warn(`Skipping message ${id}: missing user_phone`)
-    await redis.xack(STREAM, GROUP, id)
+    await client.xack(STREAM, GROUP, id)
     return
   }
 

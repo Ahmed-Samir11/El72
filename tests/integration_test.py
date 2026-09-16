@@ -33,7 +33,7 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 API_BASE = os.getenv("API_BASE", "http://localhost:8000")
 
 # Test configuration
-TEST_PHONE = "+201091095176"  # Must include + prefix for API validation
+TEST_PHONE = os.getenv("TEST_PHONE", "+201000000001")  # Must include + prefix for API validation
 TEST_PASSWORD = "testpass123"
 TEST_SKU = "TEST-LAPTOP-INTEGRATION"
 TEST_URL = f"https://example.com/product/{TEST_SKU}"  # URL must contain the SKU

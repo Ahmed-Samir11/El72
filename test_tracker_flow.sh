@@ -3,7 +3,7 @@
 # Test the complete tracker flow: Register → Login → Create Alert → Scraper → WhatsApp
 
 API_BASE="http://localhost:8000"
-PHONE="+201091095176"
+PHONE="${TEST_PHONE:?Set TEST_PHONE to a non-production test number}"
 PASSWORD="testpass123"
 AMAZON_URL="https://www.amazon.eg/-/en/SteelSeries-Aerox-Ultra-Lightweight-Wireless/dp/B0BQYDYL74"
 # Set target price ABOVE actual price (50,000) to trigger notification

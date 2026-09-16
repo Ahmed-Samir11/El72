@@ -31,7 +31,7 @@ Then in your Flutter app:
 [API] ✅ Pushed alert 83 to scraper_tasks
 [SCRAPER] INFO:scraper:Pushed B0BQYDYL74 from amazon_eg (price=50000.0)
 [SCRAPER] INFO:scraper:🔔 Found 1 alerts triggered for SKU B0BQYDYL74
-[SCRAPER] INFO:scraper:🔔 Pushed alert to WhatsApp for user +201091095176
+[SCRAPER] INFO:scraper:🔔 Pushed alert to WhatsApp for user [masked]
 [WHATSAPP] 2025-12-20 | INFO | Sent alert to user (...)
 ```
 

@@ -23,8 +23,8 @@ def reset_globals():
 def test_format_price_alert_minimal():
     msg = sender.format_price_alert({"sku": "SKU1", "price": 100})
     assert "El72 Price Alert" in msg
-    assert "Product: SKU1" in msg
-    assert "100 EGP" in msg
+    assert "SKU1" in msg
+    assert "100.00 جنيه" in msg
 
 
 def test_format_price_alert_full():
@@ -40,9 +40,9 @@ def test_format_price_alert_full():
         }
     )
     assert "Laptop Pro" in msg
-    assert "Amazon Egypt" in msg
+    assert "Previous price: 1,000.00 جنيه" in msg
+    assert "Current price: 800.00 جنيه" in msg
     assert "Discount: 20%" in msg
-    assert "You save: 200 EGP" in msg
     assert "https://example.com/p" in msg
 
 
@@ -68,8 +68,9 @@ def test_get_db_connection_creates_when_missing():
 def test_get_subscribers_for_sku_success():
     cursor = MagicMock()
     cursor.fetchall.return_value = [
-        {"id": 1, "phone": "+201111"},
-        {"id": 2, "phone": "+201222"},
+        {"id": 16, "phone": "+201111", "preferred_language": "ar"},
+        {"id": 17, "phone": "+201222", "preferred_language": "ar"},
+        {"id": 18, "phone": "+201333", "preferred_language": "ar"},
     ]
     cursor_cm = MagicMock()
     cursor_cm.__enter__.return_value = cursor
@@ -82,8 +83,42 @@ def test_get_subscribers_for_sku_success():
     with patch("services.whatsapp.sender.get_db_connection", return_value=conn):
         result = sender.get_subscribers_for_sku("B0ABC")
 
-    assert result == [(1, "+201111"), (2, "+201222")]
+    assert result == [
+        (16, "+201111", "ar", "Customer"),
+        (17, "+201222", "ar", "Customer"),
+        (18, "+201333", "ar", "Customer"),
+    ]
     cursor.execute.assert_called_once()
+
+
+def test_format_price_alert_localized_arabic():
+    msg = sender.format_price_alert({"name": "محمد", "sku": "SKU1", "product_title": "Laptop", "price": 1000, "original_price": 1200, "discount_percent": 20, "url": "https://example.com/p"}, language="ar")
+    assert "مرحباً محمد" in msg
+    assert "وجدنا عرضاً جيداً على Laptop" in msg
+    assert "السعر السابق: 1,200.00 جنيه" in msg
+    assert "السعر الحالي" in msg
+    assert "خصم" in msg
+    assert "https://example.com/p" in msg
+
+
+def test_format_price_alert_arabic_maps_dynamic_values():
+    msg = sender.format_price_alert(
+        {
+            "name": "أحمد",
+            "product_title": "Lenovo Legion 5",
+            "price": 36210.39,
+            "original_price": 47115.75,
+            "discount_percent": 23.15,
+            "url": "https://example.com/deal",
+        },
+        language="ar",
+    )
+    assert "أحمد" in msg
+    assert "Lenovo Legion 5" in msg
+    assert "47,115.75 جنيه" in msg
+    assert "36,210.39 جنيه" in msg
+    assert "23.15%" in msg
+    assert "https://example.com/deal" in msg
 
 
 def test_get_subscribers_reconnects_on_dead_connection():
@@ -107,7 +142,7 @@ def test_get_subscribers_reconnects_on_dead_connection():
     ):
         result = sender.get_subscribers_for_sku("SKU")
 
-    assert result == [(9, "+20999")]
+    assert result == [(9, "+20999", "en", "Customer")]
 
 
 def test_get_subscribers_returns_empty_on_error():
@@ -232,7 +267,7 @@ async def test_process_message_user_phone_success():
     sender.redis_client = AsyncMock()
     sender.redis_client.exists.return_value = False
 
-    payload = {"sku": "SKU1", "price": 50, "user_phone": "+201234"}
+    payload = {"sku": "SKU1", "price": 50, "user_id": 16, "user_phone": "+201234"}
     with patch(
         "services.whatsapp.sender.send_whatsapp_price_alert",
         new=AsyncMock(return_value=True),
@@ -241,6 +276,7 @@ async def test_process_message_user_phone_success():
 
     send_mock.assert_awaited()
     sender.redis_client.setex.assert_awaited()
+    assert sender.redis_client.setex.await_args.args[0] == "alert_sent:16:SKU1"
     sender.redis_client.xack.assert_awaited_once()
 
 
@@ -249,7 +285,7 @@ async def test_process_message_dedup_skips():
     sender.redis_client = AsyncMock()
     sender.redis_client.exists.return_value = True
 
-    payload = {"sku": "SKU1", "price": 50, "user_phone": "+201234"}
+    payload = {"sku": "SKU1", "price": 50, "user_id": 16, "user_phone": "+201234"}
     with patch(
         "services.whatsapp.sender.send_whatsapp_price_alert",
         new=AsyncMock(return_value=True),
@@ -265,7 +301,7 @@ async def test_process_message_send_failure():
     sender.redis_client = AsyncMock()
     sender.redis_client.exists.return_value = False
 
-    payload = {"sku": "SKU1", "price": 50, "user_phone": "+201234"}
+    payload = {"sku": "SKU1", "price": 50, "user_id": 16, "user_phone": "+201234"}
     with patch(
         "services.whatsapp.sender.send_whatsapp_price_alert",
         new=AsyncMock(return_value=False),
@@ -276,26 +312,116 @@ async def test_process_message_send_failure():
     sender.redis_client.xack.assert_awaited_once()
 
 
+@pytest.mark.asyncio
+async def test_process_message_ignores_non_egyptian_direct_user():
+    sender.redis_client = AsyncMock()
+    payload = {
+        "sku": "SKU1",
+        "price": 50,
+        "user_id": 19,
+        "user_phone": "+37000000000",
+        "preferred_language": "lt",
+    }
+    with patch(
+        "services.whatsapp.sender.send_whatsapp_price_alert",
+        new=AsyncMock(return_value=True),
+    ) as send_mock:
+        await sender.process_message("1-0", {"payload": json.dumps(payload)})
+
+    send_mock.assert_not_awaited()
+    sender.redis_client.xack.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_process_message_sends_each_subscriber_language_independently():
+    sender.redis_client = AsyncMock()
+    sender.redis_client.exists.return_value = False
+    subscribers = [
+        (16, "+201", "ar"),
+        (17, "+202", "ar"),
+        (18, "+203", "ar"),
+    ]
+    payload = {"sku": "SKU1", "price": 50}
+
+    async def send(_phone, _payload, language):
+        if _phone == "+202":
+            return False
+        return True
+
+    with patch(
+        "services.whatsapp.sender.get_subscribers_for_sku",
+        return_value=subscribers,
+    ), patch(
+        "services.whatsapp.sender.send_whatsapp_price_alert",
+        new=AsyncMock(side_effect=send),
+    ) as send_mock:
+        await sender.process_message("1-0", {"payload": json.dumps(payload)})
+
+    assert [call.args[2] for call in send_mock.await_args_list] == ["ar", "ar", "ar"]
+    assert send_mock.await_count == 3
+    assert sender.redis_client.xack.await_count == 1
+
+
 def test_normalize_phone_adds_plus():
-    assert sender.normalize_phone("201091095176") == "+201091095176"
-    assert sender.normalize_phone("+201091095176") == "+201091095176"
+    assert sender.normalize_phone("201000000001") == "+201000000001"
+    assert sender.normalize_phone("+201000000001") == "+201000000001"
 
 
-def test_build_price_alert_template_params():
-    params = sender.build_price_alert_template_params(
+def test_plain_text_message_contains_all_deal_values():
+    message = sender.format_price_alert(
         {
-            "product_title": "Laptop",
-            "store": "amazon_eg",
-            "price": 1000,
-            "original_price": 1200,
-            "discount_percent": 16,
-            "url": "https://example.com/p",
-        }
+            "name": "محمد",
+            "product_title": "Lenovo Legion 5",
+            "price": 36210.39,
+            "original_price": 47115.75,
+            "discount_percent": 23.15,
+            "url": "https://example.com/deal/lenovo-legion-5",
+        },
+        language="ar",
     )
-    assert params[0] == "Laptop"
-    assert "1000 EGP on amazon_eg" == params[1]
-    assert "was 1200 EGP" in params[2]
-    assert "16% off" in params[2]
+    assert message.index("محمد") < message.index("Lenovo Legion 5")
+    assert message.index("47,115.75 جنيه") < message.index("36,210.39 جنيه")
+    assert message.index("36,210.39 جنيه") < message.index("23.15%")
+    assert message.index("23.15%") < message.index("https://example.com/deal/lenovo-legion-5")
+
+
+@pytest.mark.asyncio
+async def test_process_message_uses_name_language_per_subscriber():
+    sender.redis_client = AsyncMock()
+    sender.redis_client.exists.return_value = False
+    subscribers = [
+        (16, "+201111111111", "ar", "محمد"),
+        (17, "+201222222222", "ar", "لؤي"),
+        (18, "+201333333333", "ar", "أحمد"),
+    ]
+    payload = {
+        "sku": "SKU1",
+        "price": 36210.39,
+        "original_price": 47115.75,
+        "discount_percent": 23.15,
+        "product_title": "Lenovo Legion 5",
+        "url": "https://example.com/deal/lenovo-legion-5",
+    }
+
+    with patch(
+        "services.whatsapp.sender.get_subscribers_for_sku",
+        return_value=subscribers,
+    ), patch(
+        "services.whatsapp.sender.send_whatsapp_price_alert",
+        new=AsyncMock(return_value=True),
+    ) as send_mock:
+        await sender.process_message("1-0", {"payload": json.dumps(payload)})
+
+    assert send_mock.await_count == 3
+    first_payload = send_mock.await_args_list[0].args[1]
+    second_payload = send_mock.await_args_list[1].args[1]
+    third_payload = send_mock.await_args_list[2].args[1]
+    assert first_payload["name"] == "محمد"
+    assert first_payload["preferred_language"] == "ar"
+    assert second_payload["name"] == "لؤي"
+    assert second_payload["preferred_language"] == "ar"
+    assert third_payload["name"] == "أحمد"
+    assert third_payload["preferred_language"] == "ar"
 
 
 @pytest.mark.asyncio
@@ -311,20 +437,21 @@ async def test_send_whatsapp_price_alert_success():
 
     with patch.object(sender, "MOCK_MODE", False), patch.object(
         sender, "ACCESS_TOKEN", "token"
-    ), patch.object(sender, "PHONE_NUMBER_ID", "123"), patch.object(
-        sender, "WHATSAPP_TEMPLATE_NAME", "el72_price_alert"
-    ), patch(
+    ), patch.object(sender, "PHONE_NUMBER_ID", "123"), patch(
         "services.whatsapp.sender.httpx.AsyncClient", return_value=mock_client
     ):
         ok = await sender.send_whatsapp_price_alert(
-            "201091095176",
-            {"sku": "S1", "price": 10, "store": "x", "url": "https://x"},
+            "201000000001",
+            {"name": "محمد", "sku": "S1", "price": 10, "original_price": 20, "discount_percent": 50, "url": "https://x"},
+            language="ar",
         )
     assert ok is True
     sent_json = mock_client.post.await_args.kwargs["json"]
-    assert sent_json["type"] == "template"
-    assert sent_json["to"] == "+201091095176"
-    assert sent_json["template"]["name"] == "el72_price_alert"
+    assert sent_json["type"] == "text"
+    assert sent_json["to"] == "+201000000001"
+    assert sent_json["text"]["preview_url"] is True
+    assert "مرحباً محمد" in sent_json["text"]["body"]
+    assert "type" not in sent_json.get("template", {})
 
 
 @pytest.mark.asyncio
@@ -333,6 +460,32 @@ async def test_process_message_exception_no_ack():
     # Invalid JSON triggers processing error path
     await sender.process_message("1-0", {b"payload": b"{not-json"})
     sender.redis_client.xack.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_process_message_counts_subscriber_exception_as_failure(caplog):
+    sender.redis_client = AsyncMock()
+    sender.redis_client.exists.return_value = False
+    subscribers = [(16, "+201111111111", "ar", "محمد")]
+    payload = {
+        "sku": "SKU1",
+        "product_title": "El72 Test Product",
+        "original_price": 1000,
+        "price": 750,
+        "discount_percent": 25,
+        "url": "https://example.com/deal",
+    }
+
+    with patch(
+        "services.whatsapp.sender.get_subscribers_for_sku",
+        return_value=subscribers,
+    ), patch(
+        "services.whatsapp.sender.send_whatsapp_price_alert",
+        new=AsyncMock(side_effect=RuntimeError("Meta request failed")),
+    ):
+        await sender.process_message("1-0", {"payload": json.dumps(payload)})
+
+    sender.redis_client.xack.assert_awaited_once()
 
 
 @pytest.mark.asyncio

@@ -15,6 +15,7 @@ import asyncio
 import json
 import sys
 import re
+import os
 
 import psycopg2
 import redis.asyncio as aioredis
@@ -29,7 +30,7 @@ DATABASE_URL = "postgresql://elhaq:elhaq_pass@localhost:5432/elhaq"
 
 # Test data
 TEST_USERS = [
-    {"phone": "+201091095176", "password": "testpass123"},
+    {"phone": os.getenv("TEST_PHONE", "+201000000001"), "password": "testpass123"},
 ]
 
 TEST_SKU = "B0CX23V2ZK"  # Example Amazon product ASIN

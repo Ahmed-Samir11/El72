@@ -11,7 +11,7 @@ import asyncio
 import json
 import os
 import sys
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Tuple, Union
 
 import redis.asyncio as aioredis
 import httpx
@@ -30,14 +30,11 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://elhaq:elhaq_pass@postgres
 
 # WhatsApp Business API Configuration
 ACCESS_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN", "")
-PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "966490223206963")
+PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "")
 WHATSAPP_API_VERSION = os.getenv("WHATSAPP_API_VERSION", "v18.0")
-# Free-form text is not reliably delivered from the Meta test number; use an approved template.
-# Custom el72_* templates may stay PENDING; jaspers_market_order_confirmation_v1 is pre-approved.
-WHATSAPP_TEMPLATE_NAME = os.getenv(
-    "WHATSAPP_TEMPLATE_NAME", "jaspers_market_order_confirmation_v1"
-)
-WHATSAPP_TEMPLATE_LANG = os.getenv("WHATSAPP_TEMPLATE_LANG", "en_US")
+# El72 deal alerts should use an El72-specific approved template. The old order/shipping
+# template is semantically incorrect for investor deal notifications.
+EGYPTIAN_WHATSAPP_USER_IDS = {16, 17, 18}
 
 # Feature Flags
 MOCK_MODE = os.getenv("MOCK_WHATSAPP", "false").lower() == "true"
@@ -55,42 +52,74 @@ def get_db_connection():
     return db_conn
 
 
-def get_subscribers_for_sku(sku: str) -> List[Tuple[int, str]]:
+Subscriber = Union[
+    Tuple[int, str],
+    Tuple[int, str, str],
+    Tuple[int, str, str, str],
+]
+
+
+def get_subscribers_for_sku(sku: str) -> List[Subscriber]:
     """Query database for all users who have active alerts for this SKU.
-    
-    Returns:
-        List of tuples (user_id, phone_number) for all subscribers
+
+    Returns tuples with the subscriber's id, phone, preferred language, and name
+    when available. Older rows without a name column remain compatible.
     """
     try:
         conn = get_db_connection()
-        
-        # Check if connection is still alive, reconnect if needed
+
         try:
             conn.cursor().execute("SELECT 1")
-        except:
+        except Exception:
             logger.info("Database connection lost, reconnecting...")
             global db_conn
             db_conn = None
             conn = get_db_connection()
-        
+
         with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-            # Join alerts with users to get phone numbers
-            # Assumes alerts table has 'target_url' containing SKU and users table has 'phone'
-            query = """
-                SELECT DISTINCT u.id, u.phone
+            query_with_name = """
+                SELECT DISTINCT
+                    u.id,
+                    u.phone,
+                    COALESCE(u.preferred_language, 'en') AS preferred_language,
+                    COALESCE(u.name, 'Customer') AS name
                 FROM alerts a
                 JOIN users u ON a.user_id = u.id
                 WHERE a.active_status = TRUE
+                                    AND u.id IN (16, 17, 18)
                   AND a.target_url LIKE %s
             """
-            cursor.execute(query, (f'%{sku}%',))
-            results = cursor.fetchall()
-            
-            # Convert to list of tuples
-            subscribers = [(row['id'], row['phone']) for row in results]
+            try:
+                cursor.execute(query_with_name, (f'%{sku}%',))
+                results = cursor.fetchall()
+                subscribers = [
+                    (
+                        row["id"],
+                        row["phone"],
+                        row.get("preferred_language", "en"),
+                        row.get("name", "Customer"),
+                    )
+                    for row in results
+                ]
+            except Exception:
+                query_without_name = """
+                    SELECT DISTINCT u.id, u.phone, COALESCE(u.preferred_language, 'en') AS preferred_language
+                    FROM alerts a
+                    JOIN users u ON a.user_id = u.id
+                    WHERE a.active_status = TRUE
+                                            AND u.id IN (16, 17, 18)
+                      AND a.target_url LIKE %s
+                """
+                cursor.execute(query_without_name, (f'%{sku}%',))
+                results = cursor.fetchall()
+                subscribers = [
+                    (row["id"], row["phone"], row.get("preferred_language", "en"))
+                    for row in results
+                ]
+
             logger.info(f"Found {len(subscribers)} subscribers for SKU: {sku}")
             return subscribers
-            
+
     except Exception as e:
         logger.error(f"Failed to query subscribers for SKU {sku}: {e}")
         return []
@@ -120,34 +149,12 @@ def normalize_phone(phone: str) -> str:
     return phone
 
 
-def build_price_alert_template_params(payload: Dict[str, Any]) -> List[str]:
-    """Build positional template body params for the approved alert template.
-
-    Maps tracker fields onto jaspers_market_order_confirmation_v1:
-      Hi {{1}}, ... order number is {{2}}. ... Estimated delivery: {{3}}.
-    """
-    product = payload.get("product_title") or payload.get("sku") or "Product"
-    store = payload.get("store") or "store"
-    price = payload.get("price", "0")
-    original = payload.get("original_price")
-    discount = payload.get("discount_percent")
-    url = payload.get("url") or ""
-
-    line2 = f"{price} EGP on {store}"
-    details = []
-    if original is not None:
-        details.append(f"was {original} EGP")
-    if discount is not None:
-        details.append(f"{discount}% off")
-    if url:
-        details.append(str(url)[:80])
-    line3 = ", ".join(str(x) for x in details) if details else "price alert triggered"
-
-    return [
-        str(product)[:60] or "there",
-        str(line2)[:60] or "deal",
-        str(line3)[:80] or "see app for details",
-    ]
+def mask_phone(phone: str) -> str:
+    """Keep logs useful without exposing a subscriber's full number."""
+    normalized = normalize_phone(phone)
+    if len(normalized) <= 4:
+        return "****"
+    return f"{normalized[:3]}{'*' * max(0, len(normalized) - 7)}{normalized[-4:]}"
 
 
 async def send_whatsapp_message(phone: str, message_body: str) -> bool:
@@ -156,7 +163,7 @@ async def send_whatsapp_message(phone: str, message_body: str) -> bool:
     Prefer send_whatsapp_price_alert for real delivery on the Cloud API test number.
     """
     if MOCK_MODE:
-        logger.info(f"[MOCK] WhatsApp to {phone}: {message_body}")
+        logger.info(f"[MOCK] WhatsApp to {mask_phone(phone)}: {message_body}")
         return True
 
     if not ACCESS_TOKEN or not PHONE_NUMBER_ID:
@@ -187,7 +194,7 @@ async def send_whatsapp_message(phone: str, message_body: str) -> bool:
             response = await client.post(url, headers=headers, json=payload)
             
             if response.status_code == 200:
-                logger.info(f"WhatsApp message sent to {phone}: {response.json()}")
+                logger.info(f"WhatsApp message sent to {mask_phone(phone)}: {response.json()}")
                 return True
             else:
                 logger.error(f"WhatsApp API error [{response.status_code}]: {response.text}")
@@ -198,16 +205,14 @@ async def send_whatsapp_message(phone: str, message_body: str) -> bool:
         return False
 
 
-async def send_whatsapp_price_alert(phone: str, payload: Dict[str, Any]) -> bool:
-    """Send price alert using an approved WhatsApp message template.
-
-    Free-form text is accepted by Graph API but often never delivered from the
-    Meta sandbox test number. Templates (like hello_world) do deliver.
-    """
-    message_preview = format_price_alert(payload)
+async def send_whatsapp_price_alert(
+    phone: str, payload: Dict[str, Any], language: str = "en"
+) -> bool:
+    """Send an El72 price alert as plain text when Meta permits free-form messaging."""
+    message_preview = format_price_alert(payload, language=language)
 
     if MOCK_MODE:
-        logger.info(f"[MOCK] WhatsApp template to {phone}: {message_preview}")
+        logger.info(f"[MOCK] WhatsApp text to {mask_phone(phone)}: {message_preview}")
         return True
 
     if not ACCESS_TOKEN or not PHONE_NUMBER_ID:
@@ -215,7 +220,6 @@ async def send_whatsapp_price_alert(phone: str, payload: Dict[str, Any]) -> bool
         return False
 
     phone = normalize_phone(phone)
-    params = build_price_alert_template_params(payload)
     url = f"https://graph.facebook.com/{WHATSAPP_API_VERSION}/{PHONE_NUMBER_ID}/messages"
     headers = {
         "Authorization": f"Bearer {ACCESS_TOKEN}",
@@ -225,18 +229,10 @@ async def send_whatsapp_price_alert(phone: str, payload: Dict[str, Any]) -> bool
         "messaging_product": "whatsapp",
         "recipient_type": "individual",
         "to": phone,
-        "type": "template",
-        "template": {
-            "name": WHATSAPP_TEMPLATE_NAME,
-            "language": {"code": WHATSAPP_TEMPLATE_LANG},
-            "components": [
-                {
-                    "type": "body",
-                    "parameters": [
-                        {"type": "text", "text": value} for value in params
-                    ],
-                }
-            ],
+        "type": "text",
+        "text": {
+            "preview_url": True,
+            "body": message_preview,
         },
     }
 
@@ -246,20 +242,20 @@ async def send_whatsapp_price_alert(phone: str, payload: Dict[str, Any]) -> bool
 
             if response.status_code == 200:
                 logger.info(
-                    f"WhatsApp template '{WHATSAPP_TEMPLATE_NAME}' sent to {phone}: {response.json()}"
+                    f"WhatsApp text sent to {mask_phone(phone)}: {response.json()}"
                 )
                 return True
 
             logger.error(
-                f"WhatsApp template API error [{response.status_code}]: {response.text}"
+                f"WhatsApp text API error [{response.status_code}]: {response.text}"
             )
             return False
     except Exception as e:
-        logger.error(f"Failed to send WhatsApp template message: {e}", exc_info=True)
+        logger.error(f"Failed to send WhatsApp text message: {e}", exc_info=True)
         return False
 
 
-def format_price_alert(payload: Dict[str, Any]) -> str:
+def format_price_alert(payload: Dict[str, Any], language: str = "en") -> str:
     """Format price alert message.
     
     Expected payload fields:
@@ -279,30 +275,35 @@ def format_price_alert(payload: Dict[str, Any]) -> str:
     url = payload.get("url")
     store = payload.get("store", "")
     
-    message = f"🎯 *El72 Price Alert*\n\n"
-    
-    # Use product title if available, otherwise use SKU
-    if product_title:
-        message += f"📦 *{product_title}*\n\n"
-    else:
-        message += f"Product: {sku}\n"
-    
-    if store:
-        message += f"🏪 Store: {store}\n"
-    
-    message += f"💰 Current Price: *{price} EGP*\n"
-    
-    if original_price and discount:
-        message += f"~~{original_price} EGP~~\n"
-        message += f"🎉 Discount: {discount}%\n"
-        message += f"💵 You save: {original_price - price} EGP!\n"
-    
-    message += f"\n✅ Your alert has been triggered!\n"
-    
-    if url:
-        message += f"\n🔗 View Product: {url}"
-    
-    return message
+    product_label = product_title or sku
+    def format_price(value: Any) -> str:
+        try:
+            return f"{float(value):,.2f} جنيه"
+        except (TypeError, ValueError):
+            return "غير متاح"
+
+    previous_text = format_price(original_price)
+    current_text = format_price(price)
+    discount_text = f"{discount}%" if discount is not None else "غير متاح"
+
+    if language == "ar":
+        name = payload.get("name") or payload.get("subscriber_name") or "عميل"
+        return (
+            f"مرحباً {name} 👋\n\n"
+            f"وجدنا عرضاً جيداً على {product_label}.\n\n"
+            f"السعر السابق: {previous_text}\n"
+            f"السعر الحالي: {current_text}\n"
+            f"الخصم: {discount_text}\n\n"
+            f"🔗 {url or 'رابط غير متاح'}"
+        )
+
+    return (
+        f"El72 Price Alert\n\n{product_label}\n\n"
+        f"Previous price: {previous_text}\n"
+        f"Current price: {current_text}\n"
+        f"Discount: {discount_text}\n\n"
+        f"🔗 {url or 'URL unavailable'}"
+    )
 
 
 async def process_message(message_id: str, fields: Dict[bytes, bytes]):
@@ -317,7 +318,9 @@ async def process_message(message_id: str, fields: Dict[bytes, bytes]):
         if payload_bytes:
             # Wrapped format: {"payload": json_string}
             payload = json.loads(payload_bytes)
-            logger.debug(f"Processing wrapped message {message_id}: {payload}")
+            logger.debug(
+                f"Processing wrapped message {message_id} for SKU {payload.get('sku')}"
+            )
         else:
             # Unwrapped format: fields are direct keys (sku, store, price, etc.)
             logger.info(f"Processing unwrapped message {message_id}")
@@ -326,7 +329,9 @@ async def process_message(message_id: str, fields: Dict[bytes, bytes]):
                 key_str = key.decode('utf-8') if isinstance(key, bytes) else key
                 value_str = value.decode('utf-8') if isinstance(value, bytes) else value
                 payload[key_str] = value_str
-            logger.debug(f"Unwrapped payload: {payload}")
+            logger.debug(
+                f"Unwrapped message {message_id} fields: {sorted(payload.keys())}"
+            )
         
         # Extract SKU from payload
         sku = payload.get("sku")
@@ -340,11 +345,21 @@ async def process_message(message_id: str, fields: Dict[bytes, bytes]):
         user_phone = payload.get("user_phone")
         
         if user_phone:
-            # Use phone from payload (scraper already identified the user)
-            logger.info(f"Using user_phone from payload: {user_phone}")
-            subscribers = [(0, user_phone)]  # user_id=0 as placeholder
+            logger.info(f"Using user_phone from payload: {mask_phone(user_phone)}")
+            user_id = payload.get("user_id", 0)
+            try:
+                user_id = int(user_id)
+            except (TypeError, ValueError):
+                user_id = 0
+            subscribers = [
+                (
+                    user_id,
+                    user_phone,
+                    payload.get("preferred_language", "en"),
+                    payload.get("name") or "Customer",
+                )
+            ] if user_id in EGYPTIAN_WHATSAPP_USER_IDS else []
         else:
-            # Fallback: Query database for all subscribers
             subscribers = get_subscribers_for_sku(sku)
         
         if not subscribers:
@@ -353,36 +368,46 @@ async def process_message(message_id: str, fields: Dict[bytes, bytes]):
             return
         
         # Prepare tasks for concurrent sending
-        async def send_to_subscriber(user_id: int, phone: str):
-            """Send message to a single subscriber with deduplication check"""
-            # Check deduplication key (prevent duplicate alerts within 24h)
+        async def send_to_subscriber(subscriber: Subscriber):
+            """Send message to a single subscriber with deduplication check."""
+            user_id, phone, *rest = subscriber
+            language = rest[0] if len(rest) >= 1 else "en"
+            subscriber_name = rest[1] if len(rest) >= 2 else payload.get("name") or "Customer"
             dedup_key = f"alert_sent:{user_id}:{sku}"
-            
+
             if await redis_client.exists(dedup_key):
                 logger.info(f"Duplicate alert suppressed for user {user_id}:{sku}")
                 return None
-            
+
             phone_clean = normalize_phone(phone)
-            
-            # Send via approved template (free-form text is not delivered reliably)
-            success = await send_whatsapp_price_alert(phone_clean, payload)
-            
+            recipient_payload = dict(payload)
+            recipient_payload["name"] = subscriber_name
+            recipient_payload["preferred_language"] = language
+
+            success = await send_whatsapp_price_alert(phone_clean, recipient_payload, language)
+
             if success:
-                # Set deduplication key (expires in 24 hours)
                 await redis_client.setex(dedup_key, 86400, "1")
-                logger.info(f"Sent alert to user {user_id} ({phone_clean})")
+                logger.info(f"Sent alert to user {user_id} ({mask_phone(phone_clean)})")
                 return True
-            else:
-                logger.error(f"Failed to send alert to user {user_id} ({phone_clean})")
-                return False
+            logger.error(f"Failed to send alert to user {user_id} ({mask_phone(phone_clean)})")
+            return False
         
         # Send to all subscribers concurrently
-        tasks = [send_to_subscriber(user_id, phone) for user_id, phone in subscribers]
+        tasks = [send_to_subscriber(subscriber) for subscriber in subscribers]
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        
+
+        for subscriber, result in zip(subscribers, results):
+            if isinstance(result, Exception):
+                user_id = subscriber[0]
+                logger.opt(exception=(type(result), result, result.__traceback__)).error(
+                    f"Subscriber send task raised exception for user {user_id}: {result}"
+                )
         # Count results
         success_count = sum(1 for r in results if r is True)
-        failed_count = sum(1 for r in results if r is False)
+        failed_count = sum(
+            1 for r in results if r is False or isinstance(r, Exception)
+        )
         skipped_count = sum(1 for r in results if r is None)
         
         # Log summary

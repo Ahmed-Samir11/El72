@@ -14,6 +14,7 @@ import json
 import requests
 import psycopg2
 import redis.asyncio as aioredis
+import os
 from psycopg2.extras import RealDictCursor
 
 # Configuration
@@ -22,7 +23,7 @@ REDIS_URL = "redis://localhost:6379"
 DATABASE_URL = "postgresql://elhaq:elhaq_pass@localhost:5432/elhaq"
 
 TEST_USERS = [
-    {"phone": "+201091095176", "password": "testpass123"},
+    {"phone": os.getenv("TEST_PHONE", "+201000000001"), "password": "testpass123"},
 ]
 
 TEST_PRODUCT_URL = "https://example.com/product/SKU-TEST-123"

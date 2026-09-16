@@ -14,6 +14,8 @@ class User(Base):
 
     id = Column(postgres_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     phone = Column(String(20), unique=True, nullable=False)
+    name = Column(String(100), nullable=False, default="Customer")
+    preferred_language = Column(String(10), nullable=False, default="en")
     password_hash = Column(String(128), nullable=False)
     salt = Column(String(32), nullable=False)
     tier = Column(String(20), nullable=False, default="free")

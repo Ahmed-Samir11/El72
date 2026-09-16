@@ -10,6 +10,8 @@ CREATE EXTENSION IF NOT EXISTS timescaledb;
 CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     phone VARCHAR(20) UNIQUE NOT NULL,
+    name VARCHAR(100) NOT NULL DEFAULT 'Customer',
+    preferred_language VARCHAR(10) NOT NULL DEFAULT 'en',
     password_hash VARCHAR(128) NOT NULL,
     salt VARCHAR(32) NOT NULL,
     tier VARCHAR(20) NOT NULL DEFAULT 'free',
