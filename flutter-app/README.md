@@ -1,4 +1,4 @@
-# Elhaq Tracker
+# El72 Deals
 
 **Real-Time Price Tracking & Deal Detection App**
 
@@ -149,7 +149,7 @@ flutter test integration_test/
 ## 🔄 Recent Updates (v2.0 MVP)
 
 ### Phase 1: Complete Rebranding ✅
-- Renamed from "N3N3 Seha" (medical clinic) to "Elhaq" (price tracking)
+- Renamed from the previous clinic app to El72 (price intelligence)
 - Removed all medical-themed assets and terminology
 - Updated package names and configuration files
 
@@ -200,7 +200,7 @@ flutter test integration_test/
 
 ## 📄 License
 
-This project is part of the Elhaq ecosystem. See individual service licenses for details.
+This project is part of the El72 ecosystem. See individual service licenses for details.
 
 ## 🆘 Support
 

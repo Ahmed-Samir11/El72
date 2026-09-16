@@ -98,7 +98,7 @@ abstract class AppLocalizations {
   /// No description provided for @appTitle.
   ///
   /// In en, this message translates to:
-  /// **'N3N3 Seha'**
+  /// **'El72 Deals'**
   String get appTitle;
 
   /// No description provided for @helloDoctor.
