@@ -296,7 +296,6 @@ proxies.json
 *.sqlite3
 
 # ML models
-models/
 *.pkl
 *.joblib
 
