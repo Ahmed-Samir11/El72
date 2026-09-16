@@ -8,6 +8,7 @@ pipeline.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from dataclasses import dataclass
@@ -32,25 +33,73 @@ def _to_usd(price: float, currency: str) -> float:
     return round(price * EGP_TO_USD, 4) if currency.upper() == "EGP" else round(price, 4)
 
 
+def _parse_jsonld(html: str) -> list:
+    """Return the parsed JSON-LD objects embedded in the page."""
+    blocks = re.findall(
+        r'<script[^>]*application/ld\+json[^>]*>(.*?)</script>',
+        html,
+        re.DOTALL,
+    )
+    objs: list = []
+    for block in blocks:
+        block = block.strip()
+        if not block:
+            continue
+        try:
+            data = json.loads(block)
+        except ValueError:
+            continue
+        if isinstance(data, list):
+            objs.extend(d for d in data if isinstance(d, dict))
+        elif isinstance(data, dict):
+            objs.append(data)
+    return objs
+
+
+def _jsonld_product(html: str) -> Optional[dict]:
+    """Return the schema.org ``Product`` JSON-LD object, if present."""
+    for obj in _parse_jsonld(html):
+        t = obj.get("@type")
+        types = t if isinstance(t, list) else [t]
+        if any(str(x).lower() == "product" for x in types if x):
+            return obj
+    return None
+
+
 def _extract_price_from_html(html: str) -> Optional[tuple[float, str]]:
     """Best-effort price extraction from raw HTML.
 
     Tries, in order:
-    1. JSON-LD ``"price": <number>`` blocks.
+    1. The schema.org ``Product``/``Offer`` JSON-LD price (authoritative).
     2. OpenGraph / product meta tags.
     3. A regex over visible text for an EGP/USD amount.
 
     Returns ``(price, currency)`` or ``None``.
     """
-    # 1. JSON-LD structured data.
-    for m in re.finditer(r'"price"\s*:\s*"?([\d,]+(?:\.\d+)?)"?', html):
-        raw = m.group(1).replace(",", "")
-        try:
-            val = float(raw)
-        except ValueError:
-            continue
-        if val > 0:
-            return val, "EGP"
+    # 1. schema.org Product/Offer JSON-LD.
+    prod = _jsonld_product(html)
+    if prod is not None:
+        price = prod.get("price")
+        currency = prod.get("priceCurrency")
+        offers = prod.get("offers")
+        if isinstance(offers, dict):
+            offers = [offers]
+        elif not isinstance(offers, list):
+            offers = []
+        for offer in offers:
+            if not isinstance(offer, dict):
+                continue
+            if price is None and offer.get("price") is not None:
+                price = offer.get("price")
+            if currency is None and offer.get("priceCurrency"):
+                currency = offer.get("priceCurrency")
+        if price is not None:
+            try:
+                val = float(str(price).replace(",", ""))
+            except ValueError:
+                val = None
+            if val is not None and val > 0:
+                return val, (currency or "EGP")
 
     # 2. Meta tags.
     meta = re.search(
@@ -73,6 +122,31 @@ def _extract_price_from_html(html: str) -> Optional[tuple[float, str]]:
         except ValueError:
             pass
 
+    return None
+
+
+def _jsonld_title(html: str) -> Optional[str]:
+    prod = _jsonld_product(html)
+    if prod and isinstance(prod.get("name"), str):
+        return prod["name"]
+    return None
+
+
+def _jsonld_image(html: str) -> Optional[str]:
+    prod = _jsonld_product(html)
+    if not prod:
+        return None
+    image = prod.get("image")
+    if isinstance(image, str):
+        return image
+    if isinstance(image, list) and image:
+        first = image[0]
+        if isinstance(first, str):
+            return first
+        if isinstance(first, dict) and isinstance(first.get("url"), str):
+            return first["url"]
+    if isinstance(image, dict) and isinstance(image.get("url"), str):
+        return image["url"]
     return None
 
 
@@ -160,8 +234,8 @@ def fetch_price(url: str) -> Optional[FetchedPrice]:
     return FetchedPrice(
         price_local=price,
         currency=currency,
-        title=_extract_meta(html, "og:title"),
-        image_url=_extract_meta(html, "og:image"),
+        title=_jsonld_title(html) or _extract_meta(html, "og:title"),
+        image_url=_jsonld_image(html) or _extract_meta(html, "og:image"),
     )
 
 
