@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/styles/app_colors.dart';
+import '../../core/styles/app_theme.dart';
 import '../../data/models/price_point_model.dart';
 import '../../data/providers.dart';
 
@@ -168,21 +169,21 @@ class _SummaryRow extends StatelessWidget {
           child: _Stat(
             label: 'Current',
             value: 'EGP ${current.toStringAsFixed(0)}',
-            color: AppColors.textPrimary,
+            color: context.appTokens.onSurface,
           ),
         ),
         Expanded(
           child: _Stat(
             label: '90d Low',
             value: 'EGP ${lowest.toStringAsFixed(0)}',
-            color: AppColors.priceDown,
+            color: context.appTokens.priceDown,
           ),
         ),
         Expanded(
           child: _Stat(
             label: '90d High',
             value: 'EGP ${highest.toStringAsFixed(0)}',
-            color: AppColors.priceUp,
+            color: context.appTokens.priceUp,
           ),
         ),
         Expanded(
@@ -190,7 +191,9 @@ class _SummaryRow extends StatelessWidget {
             label: 'Change',
             value:
                 '${change >= 0 ? '+' : ''}${changePct.toStringAsFixed(1)}%',
-            color: change >= 0 ? AppColors.priceUp : AppColors.priceDown,
+            color: change >= 0
+                ? context.appTokens.priceUp
+                : context.appTokens.priceDown,
           ),
         ),
       ],

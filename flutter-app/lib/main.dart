@@ -1,45 +1,45 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'src/routing/app_router.dart';
 import 'src/ui/common/splash_page.dart';
-import 'src/core/styles/app_colors.dart';
+import 'src/core/styles/app_theme.dart';
 import 'src/data/config.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await AppConfig.initialize();
-  runApp(const ProviderScope(child: ElhaqApp()));
+  // Theme preference is best-effort: if SharedPreferences fails (e.g. missing
+  // storage permission on some Android configurations), fall back to the
+  // system theme instead of crashing at startup.
+  ThemePreferenceStore? themePreference;
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    themePreference = ThemePreferenceStore(prefs);
+  } catch (e) {
+    debugPrint('Theme preference unavailable, using system mode: $e');
+  }
+  runApp(ProviderScope(child: ElhaqApp(themePreference: themePreference)));
 }
 
 class ElhaqApp extends StatelessWidget {
-  const ElhaqApp({super.key});
+  const ElhaqApp({super.key, this.themePreference});
+
+  /// Nullable for backward compatibility with tests/embeds that construct
+  /// [ElhaqApp] directly; defaults to the system theme mode.
+  final ThemePreferenceStore? themePreference;
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'إلحق',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: AppColors.primary,
-          secondary: AppColors.secondary,
-          brightness: Brightness.light,
-        ),
-        scaffoldBackgroundColor: AppColors.backgroundLight,
-        fontFamily: 'IBM Plex Sans',
-      ),
-      darkTheme: ThemeData(
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: AppColors.primary,
-          secondary: AppColors.secondary,
-          brightness: Brightness.dark,
-        ),
-        scaffoldBackgroundColor: AppColors.backgroundDark,
-        fontFamily: 'IBM Plex Sans',
-      ),
+      theme: AppTheme.light(),
+      darkTheme: AppTheme.dark(),
+      // The persisted mode is honored at launch. Runtime theme switching
+      // (a settings toggle) arrives in MS2 with the screens work.
+      themeMode: themePreference?.mode.toThemeMode ?? ThemeMode.system,
       initialRoute: AppRoutes.splash,
       routes: AppRouter.routes,
     );

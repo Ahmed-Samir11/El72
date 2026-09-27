@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 
+/// Brand colors only. All surface, text, outline, and semantic status
+/// tokens live in [AppThemeData] (app_theme.dart) and are per-theme —
+/// prefer `context.appTokens` over the legacy fields below, which remain
+/// for backward compatibility until MS2 migrates remaining call sites.
 class AppColors {
   // Primary Colors - El72 Falcon Theme (framed logo palette)
   static const Color primary = Color(0xFFF2841A); // Falcon Orange
@@ -17,7 +20,7 @@ class AppColors {
 
   // Text Colors
   static const Color textPrimary = Color(0xFF3D2B0F); // Dark Brown
-  static const Color textSecondary = Color(0xFF8A6D3B); // Muted Brown
+  static const Color textSecondary = Color(0xFF6B5327); // Muted Brown (4.5:1+ on cream)
   static const Color textOnPrimary = Colors.white;
 
   // Status Colors
@@ -35,16 +38,19 @@ class AppColors {
   static const Color buttonSecondary = Color(0xFFF6E832); // Falcon Yellow
   static const Color buttonDisabled = Color(0xFFD9C9A0); // Muted Tan
 
-  // Text Styles
-  static TextStyle priceTextStyle = GoogleFonts.jetBrainsMono(
-    fontSize: 16,
-    fontWeight: FontWeight.w600,
-    color: textPrimary,
-  );
+  /// Price text style (bundled monospace — zero network font calls). The
+  /// color must come from the active theme's onSurface; pass it in.
+  static TextStyle priceTextStyle(Color onSurface) => TextStyle(
+        fontFamily: 'JetBrains Mono',
+        fontSize: 16,
+        fontWeight: FontWeight.w600,
+        color: onSurface,
+      );
 
-  static TextStyle priceTextStyleLarge = GoogleFonts.jetBrainsMono(
-    fontSize: 24,
-    fontWeight: FontWeight.bold,
-    color: textPrimary,
-  );
+  static TextStyle priceTextStyleLarge(Color onSurface) => TextStyle(
+        fontFamily: 'JetBrains Mono',
+        fontSize: 24,
+        fontWeight: FontWeight.bold,
+        color: onSurface,
+      );
 }

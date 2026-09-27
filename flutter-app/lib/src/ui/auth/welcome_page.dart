@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
+
 import '../../core/styles/app_colors.dart';
 
 class WelcomePage extends StatelessWidget {
@@ -35,10 +35,11 @@ class WelcomePage extends StatelessWidget {
                   },
                   child: Text(
                     "Register",
-                    style: GoogleFonts.roboto(
+                    style: TextStyle(
+                      fontFamily: 'IBM Plex Sans',
                       fontSize: 18,
                       fontWeight: FontWeight.w600,
-                      color: Colors.white,
+                      color: Theme.of(context).colorScheme.onPrimary,
                     ),
                   ),
                 ),
@@ -61,10 +62,11 @@ class WelcomePage extends StatelessWidget {
                   },
                   child: Text(
                     "Login",
-                    style: GoogleFonts.roboto(
+                    style: TextStyle(
+                      fontFamily: 'IBM Plex Sans',
                       fontSize: 18,
                       fontWeight: FontWeight.w600,
-                      color: Colors.white,
+                      color: Theme.of(context).colorScheme.onPrimary,
                     ),
                   ),
                 ),
