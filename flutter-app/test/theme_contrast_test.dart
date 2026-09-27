@@ -63,6 +63,20 @@ void main() {
         }
       }
     });
+
+    test('onError meets AA against error in both themes', () {
+      for (final t in [AppTheme.lightData, AppTheme.darkData]) {
+        expect(_contrast(t.onError, t.error), greaterThan(aa),
+            reason: 'onError on error (${t.brightness})');
+      }
+    });
+
+    test('primaryText meets AA as text on both surfaces', () {
+      for (final t in [AppTheme.lightData, AppTheme.darkData]) {
+        expect(_contrast(t.primaryText, t.surface), greaterThan(aa),
+            reason: 'primaryText on ${t.surface}');
+      }
+    });
   });
 
   group('ThemeData construction', () {
@@ -82,19 +96,20 @@ void main() {
       expect(t.scaffoldBackgroundColor, AppTheme.darkData.surface);
     });
 
-    test('component themes present', () {
+    test('component themes present and use tokens', () {
       final t = AppTheme.light();
-      expect(t.cardTheme, isNotNull);
-      expect(t.inputDecorationTheme, isNotNull);
-      expect(t.elevatedButtonTheme, isNotNull);
-      expect(t.bottomSheetTheme, isNotNull);
-      expect(t.navigationBarTheme, isNotNull);
+      expect(t.cardTheme.color, AppTheme.lightData.surfaceContainerLow);
+      expect(t.scaffoldBackgroundColor, AppTheme.lightData.surface);
+      expect(t.elevatedButtonTheme.style?.backgroundColor, isNotNull);
+      expect(t.bottomSheetTheme.backgroundColor, AppTheme.lightData.surfaceContainerLow);
       expect(t.textTheme.headlineMedium, isNotNull);
     });
 
-    test('price text styles use bundled monospace', () {
-      expect(AppColors.priceTextStyle.fontFamily, 'JetBrains Mono');
-      expect(AppColors.priceTextStyleLarge.fontFamily, 'JetBrains Mono');
+    test('price text styles use bundled monospace and theme color', () {
+      final onSurface = AppTheme.lightData.onSurface;
+      expect(AppColors.priceTextStyle(onSurface).fontFamily, 'JetBrains Mono');
+      expect(AppColors.priceTextStyle(onSurface).color, onSurface);
+      expect(AppColors.priceTextStyleLarge(onSurface).color, onSurface);
     });
   });
 
@@ -102,6 +117,12 @@ void main() {
     setUp(() => SharedPreferences.setMockInitialValues({}));
 
     test('defaults to system', () async {
+      final store = ThemePreferenceStore(await SharedPreferences.getInstance());
+      expect(store.mode, AppThemeMode.system);
+    });
+
+    test('corrupt/unrecognized stored value falls back to system', () async {
+      SharedPreferences.setMockInitialValues({'theme_mode': 'garbage-value'});
       final store = ThemePreferenceStore(await SharedPreferences.getInstance());
       expect(store.mode, AppThemeMode.system);
     });

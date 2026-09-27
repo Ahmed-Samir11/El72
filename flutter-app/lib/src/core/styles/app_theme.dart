@@ -26,8 +26,10 @@ class AppThemeData {
     required this.onTertiary,
     required this.success,
     required this.error,
+    required this.onError,
     required this.warning,
     required this.info,
+    required this.primaryText,
     required this.priceUp,
     required this.priceDown,
   });
@@ -52,15 +54,20 @@ class AppThemeData {
   /// cream light surface and the deep-brown dark surface.
   final Color success;
   final Color error;
+  final Color onError;
   final Color warning;
   final Color info;
+
+  /// Brand primary is too low-contrast to use as *text* on the light cream
+  /// surface (2.7:1); this token is the per-theme tone that passes AA.
+  final Color primaryText;
   final Color priceUp;
   final Color priceDown;
 
   ColorScheme toColorScheme() => ColorScheme(
         brightness: brightness,
         error: error,
-        onError: Colors.white,
+        onError: onError,
         primary: primary,
         onPrimary: onPrimary,
         secondary: secondary,
@@ -96,8 +103,10 @@ abstract final class AppTheme {
     onTertiary: Color(0xFF3D2B0F),
     success: Color(0xFF047857),
     error: Color(0xFFDC2626),
+    onError: Colors.white,
     warning: Color(0xFFB45309),
     info: Color(0xFF2563EB),
+    primaryText: Color(0xFFC2410C), // Darkened orange, 5.1:1 on cream
     priceUp: Color(0xFFDC2626),
     priceDown: Color(0xFF047857),
   );
@@ -119,8 +128,10 @@ abstract final class AppTheme {
     onTertiary: Color(0xFF3D2B0F),
     success: Color(0xFF10B981),
     error: Color(0xFFEF4444),
+    onError: Colors.black,
     warning: Color(0xFFF59E0B),
     info: Color(0xFF3B82F6),
+    primaryText: Color(0xFFF97314), // Primary itself passes on dark brown
     priceUp: Color(0xFFEF4444),
     priceDown: Color(0xFF10B981),
   );
@@ -180,7 +191,7 @@ abstract final class AppTheme {
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
-          foregroundColor: scheme.primary,
+          foregroundColor: t.primaryText,
           side: BorderSide(color: t.outline),
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -198,7 +209,7 @@ abstract final class AppTheme {
         labelTextStyle: WidgetStateProperty.resolveWith(
           (states) => TextStyle(
             color: states.contains(WidgetState.selected)
-                ? scheme.primary
+                ? t.primaryText
                 : t.onSurfaceVariant,
             fontSize: 12,
           ),
@@ -241,6 +252,15 @@ abstract final class AppTheme {
         height: height / size,
         color: t.onSurface,
       );
+}
+
+extension BuildContextTokens on BuildContext {
+  /// The [AppThemeData] tokens for the active theme. Use these for any
+  /// semantic color (status, price, brand-as-text) — never a raw hex.
+  AppThemeData get appTokens =>
+      Theme.of(this).brightness == Brightness.dark
+          ? AppTheme.darkData
+          : AppTheme.lightData;
 }
 
 /// User-selectable theme mode, persisted across launches.

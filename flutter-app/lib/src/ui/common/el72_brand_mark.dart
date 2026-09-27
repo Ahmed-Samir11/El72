@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/styles/app_colors.dart';
+import '../../core/styles/app_theme.dart';
 
 class El72BrandMark extends StatelessWidget {
   const El72BrandMark({
@@ -86,12 +87,12 @@ class El72BrandMark extends StatelessWidget {
         ),
         if (showTagline) ...[
           const SizedBox(height: 12),
-          const Text(
+          Text(
             'El72',
             style: TextStyle(
               fontSize: 20,
               fontWeight: FontWeight.w800,
-              color: AppColors.textPrimary,
+              color: context.appTokens.onSurface,
             ),
           ),
           const SizedBox(height: 4),

@@ -35,11 +35,11 @@ class WelcomePage extends StatelessWidget {
                   },
                   child: Text(
                     "Register",
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontFamily: 'IBM Plex Sans',
                       fontSize: 18,
                       fontWeight: FontWeight.w600,
-                      color: Colors.white,
+                      color: Theme.of(context).colorScheme.onPrimary,
                     ),
                   ),
                 ),
@@ -62,11 +62,11 @@ class WelcomePage extends StatelessWidget {
                   },
                   child: Text(
                     "Login",
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontFamily: 'IBM Plex Sans',
                       fontSize: 18,
                       fontWeight: FontWeight.w600,
-                      color: Colors.white,
+                      color: Theme.of(context).colorScheme.onPrimary,
                     ),
                   ),
                 ),

@@ -86,7 +86,9 @@ class DealCard extends StatelessWidget {
                   // Price
                   Text(
                     'ج.م ${deal.price.toStringAsFixed(2)}',
-                    style: AppColors.priceTextStyle.copyWith(
+                    style: AppColors.priceTextStyle(
+                      Theme.of(context).colorScheme.onSurface,
+                    ).copyWith(
                       fontSize: 18,
                       fontWeight: FontWeight.bold,
                     ),

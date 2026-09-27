@@ -10,14 +10,25 @@ import 'src/data/config.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await AppConfig.initialize();
-  final prefs = await SharedPreferences.getInstance();
-  runApp(ProviderScope(child: ElhaqApp(themePreference: ThemePreferenceStore(prefs))));
+  // Theme preference is best-effort: if SharedPreferences fails (e.g. missing
+  // storage permission on some Android configurations), fall back to the
+  // system theme instead of crashing at startup.
+  ThemePreferenceStore? themePreference;
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    themePreference = ThemePreferenceStore(prefs);
+  } catch (e) {
+    debugPrint('Theme preference unavailable, using system mode: $e');
+  }
+  runApp(ProviderScope(child: ElhaqApp(themePreference: themePreference)));
 }
 
 class ElhaqApp extends StatelessWidget {
-  const ElhaqApp({super.key, required this.themePreference});
+  const ElhaqApp({super.key, this.themePreference});
 
-  final ThemePreferenceStore themePreference;
+  /// Nullable for backward compatibility with tests/embeds that construct
+  /// [ElhaqApp] directly; defaults to the system theme mode.
+  final ThemePreferenceStore? themePreference;
 
   @override
   Widget build(BuildContext context) {
@@ -26,7 +37,9 @@ class ElhaqApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light(),
       darkTheme: AppTheme.dark(),
-      themeMode: themePreference.mode.toThemeMode,
+      // The persisted mode is honored at launch. Runtime theme switching
+      // (a settings toggle) arrives in MS2 with the screens work.
+      themeMode: themePreference?.mode.toThemeMode ?? ThemeMode.system,
       initialRoute: AppRoutes.splash,
       routes: AppRouter.routes,
     );
