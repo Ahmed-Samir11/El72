@@ -275,19 +275,31 @@ extension AppThemeModeX on AppThemeMode {
 }
 
 /// Persists the user's [AppThemeMode] in SharedPreferences.
+///
+/// Public API:
+/// - [mode] reads the stored preference; unknown/corrupt values fall back to
+///   [AppThemeMode.system], so a bad stored value can never crash the app.
+/// - [setMode] writes the preference. Callers should only invoke this from a
+///   user action (the MS2 settings toggle), not on every build.
+///
+/// Construction requires an already-initialized [SharedPreferences] instance;
+/// `main()` guards initialization failure and falls back to system mode.
 class ThemePreferenceStore {
   static const _key = 'theme_mode';
 
+  /// Creates a store backed by [prefs].
   ThemePreferenceStore(this._prefs);
 
   final SharedPreferences _prefs;
 
+  /// The currently persisted [AppThemeMode] (default: system).
   AppThemeMode get mode => switch (_prefs.getString(_key)) {
         'light' => AppThemeMode.light,
         'dark' => AppThemeMode.dark,
         _ => AppThemeMode.system,
       };
 
+  /// Persists [m] as the active theme mode.
   Future<void> setMode(AppThemeMode m) => _prefs.setString(
         _key,
         switch (m) {
