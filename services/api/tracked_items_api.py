@@ -25,6 +25,13 @@ logger = logging.getLogger(__name__)
 
 _FETCH_MAX_RETRIES = 3
 
+# Process-local refresh throttle. MVP runs a single API instance, so an
+# in-memory map bounds the spawn rate of background fetch tasks per item
+# (one attempt per minute) even when every fetch fails and no price row is
+# ever written. A multi-worker deployment would need this moved to Redis.
+_REFRESH_THROTTLE_SECONDS = 60
+_refresh_attempts: dict[str, datetime] = {}
+
 
 def _validate_item_id(db: Session, item_id: str) -> None:
     """Routes accept ``str`` ids so both dev (SQLite integer PKs) and prod
@@ -725,19 +732,15 @@ async def refresh_tracked_item_price(
             detail="Tracked item not found",
         )
 
-    # Throttle: one refresh per minute so the endpoint cannot be spammed into
-    # spawning unbounded background fetch tasks.
-    lowest = db.query(LowestPrice).filter(
-        LowestPrice.tracked_item_id == item.id
-    ).first()
-    if (
-        lowest is not None
-        and lowest.last_updated is not None
-        and (datetime.utcnow() - lowest.last_updated).total_seconds() < 60
-    ):
+    # Throttle: one refresh attempt per minute per item, tracked in-memory so
+    # the limit holds even when every fetch fails and no price is persisted.
+    now = datetime.utcnow()
+    key = str(item.id)
+    last_attempt = _refresh_attempts.get(key)
+    if last_attempt is not None and (now - last_attempt).total_seconds() < _REFRESH_THROTTLE_SECONDS:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Price was refreshed less than a minute ago; try again later",
+            detail="Price refresh was attempted less than a minute ago; try again later",
         )
 
     stores = db.query(TrackedItemStore).filter(
@@ -751,6 +754,7 @@ async def refresh_tracked_item_price(
             detail="No active store mappings for this item",
         )
 
+    _refresh_attempts[key] = now
     for store in stores:
         background_tasks.add_task(
             _persist_fetched_price,
@@ -760,6 +764,9 @@ async def refresh_tracked_item_price(
             item.canonical_product_id,
         )
 
+    lowest = db.query(LowestPrice).filter(
+        LowestPrice.tracked_item_id == item.id
+    ).first()
     return {
         "message": f"Price refresh triggered for {len(stores)} store(s)",
         "store_count": len(stores),

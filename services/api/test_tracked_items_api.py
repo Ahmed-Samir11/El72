@@ -436,9 +436,11 @@ def test_invalid_item_id_returns_422_on_all_routes(client):
 
 
 def test_refresh_tracked_item_price(client, db_session, monkeypatch):
-    """Refresh triggers a background fetch and throttles rapid re-runs."""
+    """Refresh triggers a background fetch and throttles rapid re-runs even
+    when no price has ever been persisted (the fetch-failure spam path)."""
     # TestClient executes background tasks inline; keep them off the network.
     monkeypatch.setattr("services.api.tracked_items_api.fetch_price_sync", lambda url: None)
+    monkeypatch.setattr("services.api.tracked_items_api._refresh_attempts", {})
     api, session, user = client
     item = TrackedItem(user_id=user.id, canonical_product_id="refresh-item", is_active=True)
     session.add(item)
@@ -449,18 +451,12 @@ def test_refresh_tracked_item_price(client, db_session, monkeypatch):
     session.add(store)
     session.commit()
 
-    # No lowest price yet -> refresh is accepted.
+    # No price rows at all -> first refresh is accepted.
     resp = api.post(f"/tracked-items/{item.id}/refresh")
     assert resp.status_code == 200
     assert resp.json()["price_status"] == "fetching"
 
-    # A fresh lowest price throttles the next refresh for a minute.
-    lowest = LowestPrice(tracked_item_id=item.id, store_id="amazon_eg",
-                         price_usd=10.0, price_local=900.0, currency="EGP",
-                         url="https://amazon.eg/p/1", last_updated=datetime.utcnow())
-    session.add(lowest)
-    session.commit()
-
+    # Second attempt within a minute is throttled (no price was written).
     resp = api.post(f"/tracked-items/{item.id}/refresh")
     assert resp.status_code == 429
 
