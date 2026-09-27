@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
+
 
 import '../../core/styles/app_colors.dart';
 import '../../data/repositories/auth_repository.dart';
@@ -76,7 +76,8 @@ class _SplashPageState extends State<SplashPage> {
             const SizedBox(height: 16),
             Text(
               statuses[_statusIndex],
-              style: GoogleFonts.ubuntu( 
+              style: const TextStyle(
+                fontFamily: 'IBM Plex Sans',
                 fontSize: 20,
                 color: Colors.black87,
                 fontWeight: FontWeight.w500,

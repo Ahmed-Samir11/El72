@@ -1,45 +1,32 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'src/routing/app_router.dart';
 import 'src/ui/common/splash_page.dart';
-import 'src/core/styles/app_colors.dart';
+import 'src/core/styles/app_theme.dart';
 import 'src/data/config.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await AppConfig.initialize();
-  runApp(const ProviderScope(child: ElhaqApp()));
+  final prefs = await SharedPreferences.getInstance();
+  runApp(ProviderScope(child: ElhaqApp(themePreference: ThemePreferenceStore(prefs))));
 }
 
 class ElhaqApp extends StatelessWidget {
-  const ElhaqApp({super.key});
+  const ElhaqApp({super.key, required this.themePreference});
+
+  final ThemePreferenceStore themePreference;
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'إلحق',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: AppColors.primary,
-          secondary: AppColors.secondary,
-          brightness: Brightness.light,
-        ),
-        scaffoldBackgroundColor: AppColors.backgroundLight,
-        fontFamily: 'IBM Plex Sans',
-      ),
-      darkTheme: ThemeData(
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: AppColors.primary,
-          secondary: AppColors.secondary,
-          brightness: Brightness.dark,
-        ),
-        scaffoldBackgroundColor: AppColors.backgroundDark,
-        fontFamily: 'IBM Plex Sans',
-      ),
+      theme: AppTheme.light(),
+      darkTheme: AppTheme.dark(),
+      themeMode: themePreference.mode.toThemeMode,
       initialRoute: AppRoutes.splash,
       routes: AppRouter.routes,
     );

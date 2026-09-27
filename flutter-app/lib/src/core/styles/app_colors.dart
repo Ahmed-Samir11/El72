@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 
+/// Brand + semantic status colors. Surface/on-surface/outline tokens live
+/// in [AppThemeData] (app_theme.dart) — do not add surface colors here.
 class AppColors {
   // Primary Colors - El72 Falcon Theme (framed logo palette)
   static const Color primary = Color(0xFFF2841A); // Falcon Orange
@@ -17,7 +18,7 @@ class AppColors {
 
   // Text Colors
   static const Color textPrimary = Color(0xFF3D2B0F); // Dark Brown
-  static const Color textSecondary = Color(0xFF8A6D3B); // Muted Brown
+  static const Color textSecondary = Color(0xFF6B5327); // Muted Brown (4.5:1+ on cream)
   static const Color textOnPrimary = Colors.white;
 
   // Status Colors
@@ -35,14 +36,16 @@ class AppColors {
   static const Color buttonSecondary = Color(0xFFF6E832); // Falcon Yellow
   static const Color buttonDisabled = Color(0xFFD9C9A0); // Muted Tan
 
-  // Text Styles
-  static TextStyle priceTextStyle = GoogleFonts.jetBrainsMono(
+  // Text Styles (bundled monospace — zero network font calls)
+  static TextStyle priceTextStyle = const TextStyle(
+    fontFamily: 'JetBrains Mono',
     fontSize: 16,
     fontWeight: FontWeight.w600,
     color: textPrimary,
   );
 
-  static TextStyle priceTextStyleLarge = GoogleFonts.jetBrainsMono(
+  static TextStyle priceTextStyleLarge = const TextStyle(
+    fontFamily: 'JetBrains Mono',
     fontSize: 24,
     fontWeight: FontWeight.bold,
     color: textPrimary,
