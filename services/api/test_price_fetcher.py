@@ -197,6 +197,33 @@ class TestExtractFromHtml:
         html = "<html><body>no prices here</body></html>"
         assert _extract_from_html(html) is None
 
+    def test_zero_top_level_price_does_not_shadow_offer(self):
+        html = _page_with_jsonld(
+            '{"@type": "Product", "price": 0, '
+            '"offers": {"price": "899", "priceCurrency": "USD"}}'
+        )
+        price, currency, _, _ = _extract_from_html(html)
+        assert (price, currency) == (899.0, "USD")
+
+    def test_negative_top_level_price_does_not_shadow_offer(self):
+        html = _page_with_jsonld(
+            '{"@type": "Product", "price": -5, "offers": {"price": 12}}'
+        )
+        price, currency, _, _ = _extract_from_html(html)
+        assert (price, currency) == (12.0, "EGP")
+
+    def test_non_string_price_currency_ignored(self):
+        html = _page_with_jsonld(
+            '{"@type": "Product", "priceCurrency": 42, "offers": {"price": 10}}'
+        )
+        _, currency, _, _ = _extract_from_html(html)
+        assert currency == "EGP"
+
+    def test_visible_text_small_decimal(self):
+        html = "<html><body><span>Price: 0.99 EGP</span></body></html>"
+        price, currency, _, _ = _extract_from_html(html)
+        assert (price, currency) == (0.99, "EGP")
+
     def test_graph_product_beats_meta(self):
         html = (
             "<html><head>"

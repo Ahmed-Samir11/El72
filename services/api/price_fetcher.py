@@ -34,6 +34,7 @@ def _to_usd(price: float, currency: str) -> float:
 
 
 def _parse_jsonld(html: str) -> list:
+    """Extract all parseable JSON-LD objects (dicts or lists of dicts) from the page."""
     """Return the parsed JSON-LD objects embedded in the page."""
     blocks = re.findall(
         r'<script[^>]*application/ld\+json[^>]*>(.*?)</script>',
@@ -152,8 +153,9 @@ def _extract_from_html(html: str) -> Optional[tuple[float, str, Optional[str], O
 
     # 1. schema.org Product/Offer JSON-LD.
     if prod is not None:
-        raw_price = prod.get("price")
-        currency = prod.get("priceCurrency")
+        raw_price: object = prod.get("price")
+        if isinstance(prod.get("priceCurrency"), str):
+            currency = prod["priceCurrency"]
         if isinstance(prod.get("name"), str):
             title = prod["name"]
         image_url = _first_image_url(prod.get("image"))
@@ -163,15 +165,21 @@ def _extract_from_html(html: str) -> Optional[tuple[float, str, Optional[str], O
             offers = [offers]
         elif not isinstance(offers, list):
             offers = []
+        price_candidates: list = [raw_price]
         for offer in offers:
             if not isinstance(offer, dict):
                 continue
-            if raw_price is None and offer.get("price") is not None:
-                raw_price = offer.get("price")
-            if currency is None and offer.get("priceCurrency"):
-                currency = offer.get("priceCurrency")
+            if offer.get("price") is not None:
+                price_candidates.append(offer["price"])
+            if currency is None and isinstance(offer.get("priceCurrency"), str):
+                currency = offer["priceCurrency"]
 
-        price = _parse_amount(raw_price)
+        # First parseable candidate wins; a missing/zero/negative top-level
+        # price must not shadow a valid offer price.
+        price = next(
+            (v for v in map(_parse_amount, price_candidates) if v is not None),
+            None,
+        )
 
     if price is None:
         # 2. Meta tags.
@@ -186,7 +194,7 @@ def _extract_from_html(html: str) -> Optional[tuple[float, str, Optional[str], O
     if price is None:
         # 3. Visible-text fallback: a number followed by an EGP marker.
         text = re.sub(r"<[^>]+>", " ", html)
-        m = re.search(r"([\d][\d,]{2,}(?:\.\d{1,2})?)\s*(?:EGP|ج\.م|جنيه|£|pound)", text, re.IGNORECASE)
+        m = re.search(r"(\d+(?:,\d{3})*(?:\.\d{1,2})?)\s*(?:EGP|ج\.م|جنيه|£|pound)", text, re.IGNORECASE)
         if m:
             price = _parse_amount(m.group(1))
 
@@ -205,6 +213,7 @@ def _extract_from_html(html: str) -> Optional[tuple[float, str, Optional[str], O
 
 
 def _extract_meta(html: str, prop: str) -> Optional[str]:
+    """Extract a meta tag's content value by property/name (og:title etc.)."""
     m = re.search(
         r'<meta[^>]+(?:property|name)=["\']' + re.escape(prop) + r'["\'][^>]+content=["\']([^"\']*)',
         html,
@@ -224,6 +233,7 @@ _HEADERS = {
 
 
 def _fetch_html_requests(url: str, timeout: int = 30) -> Optional[str]:
+    """Fetch page HTML with a standard browser User-Agent. ``None`` on any failure."""
     """Fetch page HTML with ``requests`` (no browser required)."""
     try:
         import requests
@@ -240,6 +250,7 @@ def _fetch_html_requests(url: str, timeout: int = 30) -> Optional[str]:
 
 
 def _fetch_html_playwright(url: str, timeout_ms: int = 25000) -> Optional[str]:
+    """Fetch page HTML via headless Chromium (JS-rendered pages). ``None`` on failure."""
     """Fetch page HTML with headless Chromium (JS-rendered fallback)."""
     try:
         from playwright.sync_api import sync_playwright
