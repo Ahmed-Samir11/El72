@@ -288,3 +288,58 @@ def test_add_store_mapping_success_and_duplicate(client):
     assert dup.status_code == 400
 
     assert api.post("/tracked-items/999/stores", json=payload).status_code == 404
+
+
+def test_create_tracked_item_from_url(client, monkeypatch):
+    api, session, user = client
+    # Mock fetch_price_sync to simulate a successful price fetch
+    from services.api.price_fetcher import FetchedPrice
+    monkeypatch.setattr(
+        "services.api.tracked_items_api.fetch_price_sync",
+        lambda url: FetchedPrice(price_local=1500.0, currency="EGP", title="Sample Item", image_url="http://img.com/a.jpg"),
+    )
+
+    resp = api.post(
+        "/tracked-items/from-url",
+        json={"url": "https://www.amazon.eg/dp/B0C9L8XYZ", "target_price": 1400.0},
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["price_status"] == "fetching"
+    assert "id" in data
+
+
+def test_persist_fetched_price_retry_logic(db_session, monkeypatch):
+    session, user = db_session
+    item = TrackedItem(user_id=user.id, canonical_product_id="retry-test-item", is_active=True)
+    session.add(item)
+    session.commit()
+
+    attempts = 0
+    from services.api.price_fetcher import FetchedPrice
+
+    def mock_fetch(url):
+        nonlocal attempts
+        attempts += 1
+        if attempts < 2:
+            return None  # Fail first attempt
+        return FetchedPrice(price_local=250.0, currency="EGP", title="Test Item", image_url="https://img.com/b.jpg")
+
+    monkeypatch.setattr("services.api.tracked_items_api.fetch_price_sync", mock_fetch)
+    monkeypatch.setattr("services.api.tracked_items_api._FETCH_MAX_RETRIES", 3)
+    monkeypatch.setattr("time.sleep", lambda secs: None)  # Skip sleep delay in test
+
+    from services.api.tracked_items_api import _persist_fetched_price
+    _persist_fetched_price(item.id, "amazon_eg", "https://amazon.eg/dp/123", "retry-test-item")
+
+    assert attempts == 2
+
+
+
+
+
+def test_invalid_item_id_returns_422(client):
+    """Route accepts str ids (SQLite int / Postgres UUID); garbage is 422."""
+    api, _, _ = client
+    assert api.get("/tracked-items/not-a-valid-id").status_code == 422
+    assert api.patch("/tracked-items/not-a-valid-id/toggle").status_code == 422

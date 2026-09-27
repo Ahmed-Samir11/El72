@@ -3,11 +3,13 @@
 Add these endpoints to services/api/main.py to enable frontend integration.
 """
 
+import logging
+import time
 from typing import List, Optional
 from datetime import datetime
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from pydantic import BaseModel, validator
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
@@ -19,6 +21,24 @@ from services.api.models import User
 from services.api.tracked_items_models import TrackedItem, TrackedItemStore, CurrentPrice, LowestPrice
 from services.api.price_fetcher import fetch_price_sync, _to_usd
 
+logger = logging.getLogger(__name__)
+
+_FETCH_MAX_RETRIES = 3
+
+
+def _validate_item_id(item_id: str) -> None:
+    """Routes accept ``str`` ids so both dev (SQLite integer PKs) and prod
+    (Postgres UUID PKs) work. Reject values that are neither a plain integer
+    nor a valid UUID with 422, before any dialect-dependent DB comparison."""
+    if item_id.isdigit():
+        return
+    try:
+        UUID(item_id)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="item_id must be an integer id or a valid UUID",
+        )
 
 # Pydantic request/response models
 
@@ -236,11 +256,12 @@ async def list_tracked_items(
 
 @router.get("/{item_id}", response_model=dict)
 async def get_tracked_item(
-    item_id: UUID,
+    item_id: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ) -> dict:
     """Get detailed information about a tracked item including all prices."""
+    _validate_item_id(item_id)
     # Verify ownership
     item = db.query(TrackedItem).filter(
         TrackedItem.id == item_id,
@@ -301,12 +322,13 @@ async def get_tracked_item(
 
 @router.patch("/{item_id}/target-price")
 async def update_target_price(
-    item_id: UUID,
+    item_id: str,
     target_price: float,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ) -> dict:
     """Update the target price for a tracked item."""
+    _validate_item_id(item_id)
     item = db.query(TrackedItem).filter(
         TrackedItem.id == item_id,
         TrackedItem.user_id == current_user.id
@@ -336,11 +358,12 @@ async def update_target_price(
 
 @router.patch("/{item_id}/toggle")
 async def toggle_tracked_item(
-    item_id: UUID,
+    item_id: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ) -> dict:
     """Enable or disable tracking for an item."""
+    _validate_item_id(item_id)
     item = db.query(TrackedItem).filter(
         TrackedItem.id == item_id,
         TrackedItem.user_id == current_user.id
@@ -364,11 +387,12 @@ async def toggle_tracked_item(
 
 @router.delete("/{item_id}")
 async def delete_tracked_item(
-    item_id: UUID,
+    item_id: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ) -> dict:
     """Delete a tracked item (cascades to stores, prices)."""
+    _validate_item_id(item_id)
     item = db.query(TrackedItem).filter(
         TrackedItem.id == item_id,
         TrackedItem.user_id == current_user.id
@@ -392,12 +416,13 @@ async def delete_tracked_item(
 
 @router.post("/{item_id}/stores")
 async def add_store_mapping(
-    item_id: UUID,
+    item_id: str,
     store: StoreMapping,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ) -> dict:
     """Add a new store mapping to an existing tracked item."""
+    _validate_item_id(item_id)
     # Verify ownership
     item = db.query(TrackedItem).filter(
         TrackedItem.id == item_id,
@@ -457,9 +482,35 @@ def _persist_fetched_price(tracked_item_id, store_id: str, url: str, canonical_i
 
     Runs as a FastAPI background task so the create request returns quickly.
     Uses its own DB session (the request session is closed by then).
+    Retries up to ``_FETCH_MAX_RETRIES`` times with exponential backoff.
     """
-    fetched = fetch_price_sync(url)
+    fetched = None
+    for attempt in range(1, _FETCH_MAX_RETRIES + 1):
+        logger.info(
+            "Fetching price for %s (attempt %d/%d, item=%s)",
+            url, attempt, _FETCH_MAX_RETRIES, tracked_item_id,
+        )
+        fetched = fetch_price_sync(url)
+        if fetched is not None:
+            logger.info(
+                "Price fetched for %s: %s %s (image=%s)",
+                url, fetched.price_local, fetched.currency,
+                bool(fetched.image_url),
+            )
+            break
+        if attempt < _FETCH_MAX_RETRIES:
+            wait = 2 ** attempt
+            logger.warning(
+                "Fetch attempt %d failed for %s, retrying in %ds",
+                attempt, url, wait,
+            )
+            time.sleep(wait)
+
     if fetched is None:
+        logger.warning(
+            "All %d fetch attempts failed for %s (item=%s, store=%s)",
+            _FETCH_MAX_RETRIES, url, tracked_item_id, store_id,
+        )
         return
 
     db = SessionLocal()
@@ -530,7 +581,14 @@ def _persist_fetched_price(tracked_item_id, store_id: str, url: str, canonical_i
             db.rollback()
 
         db.commit()
-    except SQLAlchemyError:
+        logger.info(
+            "Price persisted for item=%s store=%s price=%s %s",
+            tracked_item_id, store_id, fetched.price_local, fetched.currency,
+        )
+    except SQLAlchemyError as exc:
+        logger.exception(
+            "DB error persisting price for item=%s: %s", tracked_item_id, exc,
+        )
         db.rollback()
     finally:
         db.close()
@@ -626,6 +684,56 @@ async def create_tracked_item_from_url(
         "message": "Tracked item created successfully. Monitoring will begin on next scrape cycle.",
         "canonical_product_id": db_item.canonical_product_id,
         "store_count": 1,
+        "price_status": "fetching",
+    }
+
+
+@router.post("/{item_id}/refresh")
+async def refresh_tracked_item_price(
+    item_id: str,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Re-trigger the background price fetch for a tracked item.
+
+    Useful when the initial fetch failed or the user wants fresher data.
+    """
+    _validate_item_id(item_id)
+    item = db.query(TrackedItem).filter(
+        TrackedItem.id == item_id,
+        TrackedItem.user_id == current_user.id,
+    ).first()
+
+    if not item:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Tracked item not found",
+        )
+
+    stores = db.query(TrackedItemStore).filter(
+        TrackedItemStore.tracked_item_id == item_id,
+        TrackedItemStore.is_active == True,
+    ).all()
+
+    if not stores:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No active store mappings for this item",
+        )
+
+    for store in stores:
+        background_tasks.add_task(
+            _persist_fetched_price,
+            item.id,
+            store.store_id,
+            store.store_url,
+            item.canonical_product_id,
+        )
+
+    return {
+        "message": f"Price refresh triggered for {len(stores)} store(s)",
+        "store_count": len(stores),
     }
 
 
