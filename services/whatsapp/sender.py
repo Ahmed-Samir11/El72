@@ -80,8 +80,11 @@ def get_subscribers_for_sku(sku: str) -> List[Subscriber]:
             db_conn = None
             conn = get_db_connection()
 
+        # Build the subscriber id list from the single source of truth so the
+        # set is never duplicated inline in SQL.
+        subscriber_ids = ", ".join(str(uid) for uid in sorted(EGYPTIAN_WHATSAPP_USER_IDS))
         with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-            query_with_name = """
+            query_with_name = f"""
                 SELECT DISTINCT
                     u.id,
                     u.phone,
@@ -90,7 +93,7 @@ def get_subscribers_for_sku(sku: str) -> List[Subscriber]:
                 FROM alerts a
                 JOIN users u ON a.user_id = u.id
                 WHERE a.active_status = TRUE
-                                    AND u.id IN (4, 16, 17, 18)
+                                    AND u.id IN ({subscriber_ids})
                   AND a.target_url LIKE %s
             """
             try:
@@ -106,12 +109,12 @@ def get_subscribers_for_sku(sku: str) -> List[Subscriber]:
                     for row in results
                 ]
             except Exception:
-                query_without_name = """
+                query_without_name = f"""
                     SELECT DISTINCT u.id, u.phone, COALESCE(u.preferred_language, 'en') AS preferred_language
                     FROM alerts a
                     JOIN users u ON a.user_id = u.id
                     WHERE a.active_status = TRUE
-                                            AND u.id IN (4, 16, 17, 18)
+                                            AND u.id IN ({subscriber_ids})
                       AND a.target_url LIKE %s
                 """
                 cursor.execute(query_without_name, (f'%{sku}%',))

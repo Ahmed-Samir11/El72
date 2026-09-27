@@ -9,7 +9,7 @@ from typing import List, Optional
 from datetime import datetime
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from pydantic import BaseModel, validator
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
@@ -26,19 +26,24 @@ logger = logging.getLogger(__name__)
 _FETCH_MAX_RETRIES = 3
 
 
-def _validate_item_id(item_id: str) -> None:
+def _validate_item_id(db: Session, item_id: str) -> None:
     """Routes accept ``str`` ids so both dev (SQLite integer PKs) and prod
-    (Postgres UUID PKs) work. Reject values that are neither a plain integer
-    nor a valid UUID with 422, before any dialect-dependent DB comparison."""
-    if item_id.isdigit():
+    (Postgres UUID PKs) work. Validation is dialect-aware so a foreign-format
+    id (e.g. a UUID string on SQLite, an integer on Postgres) is rejected
+    with 422 instead of causing a DB cast error."""
+    dialect = db.bind.dialect.name if db.bind else "sqlite"
+    if dialect == "postgresql":
+        try:
+            UUID(item_id)
+            return
+        except (ValueError, TypeError):
+            pass
+    elif item_id.isascii() and item_id.isdigit():
         return
-    try:
-        UUID(item_id)
-    except (ValueError, TypeError):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="item_id must be an integer id or a valid UUID",
-        )
+    raise HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail="item_id is not a valid identifier for this environment",
+    )
 
 # Pydantic request/response models
 
@@ -261,7 +266,7 @@ async def get_tracked_item(
     db: Session = Depends(get_db)
 ) -> dict:
     """Get detailed information about a tracked item including all prices."""
-    _validate_item_id(item_id)
+    _validate_item_id(db, item_id)
     # Verify ownership
     item = db.query(TrackedItem).filter(
         TrackedItem.id == item_id,
@@ -328,7 +333,7 @@ async def update_target_price(
     db: Session = Depends(get_db)
 ) -> dict:
     """Update the target price for a tracked item."""
-    _validate_item_id(item_id)
+    _validate_item_id(db, item_id)
     item = db.query(TrackedItem).filter(
         TrackedItem.id == item_id,
         TrackedItem.user_id == current_user.id
@@ -363,7 +368,7 @@ async def toggle_tracked_item(
     db: Session = Depends(get_db)
 ) -> dict:
     """Enable or disable tracking for an item."""
-    _validate_item_id(item_id)
+    _validate_item_id(db, item_id)
     item = db.query(TrackedItem).filter(
         TrackedItem.id == item_id,
         TrackedItem.user_id == current_user.id
@@ -392,7 +397,7 @@ async def delete_tracked_item(
     db: Session = Depends(get_db)
 ) -> dict:
     """Delete a tracked item (cascades to stores, prices)."""
-    _validate_item_id(item_id)
+    _validate_item_id(db, item_id)
     item = db.query(TrackedItem).filter(
         TrackedItem.id == item_id,
         TrackedItem.user_id == current_user.id
@@ -422,7 +427,7 @@ async def add_store_mapping(
     db: Session = Depends(get_db)
 ) -> dict:
     """Add a new store mapping to an existing tracked item."""
-    _validate_item_id(item_id)
+    _validate_item_id(db, item_id)
     # Verify ownership
     item = db.query(TrackedItem).filter(
         TrackedItem.id == item_id,
@@ -490,7 +495,13 @@ def _persist_fetched_price(tracked_item_id, store_id: str, url: str, canonical_i
             "Fetching price for %s (attempt %d/%d, item=%s)",
             url, attempt, _FETCH_MAX_RETRIES, tracked_item_id,
         )
-        fetched = fetch_price_sync(url)
+        try:
+            fetched = fetch_price_sync(url)
+        except Exception as exc:
+            logger.warning(
+                "Fetch attempt %d raised for %s: %s", attempt, url, exc,
+            )
+            fetched = None
         if fetched is not None:
             logger.info(
                 "Price fetched for %s: %s %s (image=%s)",
@@ -562,6 +573,10 @@ def _persist_fetched_price(tracked_item_id, store_id: str, url: str, canonical_i
                 last_updated=now,
             ))
 
+        # Commit the price upserts first: a best-effort history append must
+        # never roll back (and lose) the current/lowest price rows.
+        db.commit()
+
         # Append to price_history (best-effort; ignore conflicts).
         try:
             db.execute(
@@ -577,10 +592,9 @@ def _persist_fetched_price(tracked_item_id, store_id: str, url: str, canonical_i
                     "url": url, "img": fetched.image_url,
                 },
             )
+            db.commit()
         except SQLAlchemyError:
             db.rollback()
-
-        db.commit()
         logger.info(
             "Price persisted for item=%s store=%s price=%s %s",
             tracked_item_id, store_id, fetched.price_local, fetched.currency,
@@ -699,7 +713,7 @@ async def refresh_tracked_item_price(
 
     Useful when the initial fetch failed or the user wants fresher data.
     """
-    _validate_item_id(item_id)
+    _validate_item_id(db, item_id)
     item = db.query(TrackedItem).filter(
         TrackedItem.id == item_id,
         TrackedItem.user_id == current_user.id,
@@ -711,8 +725,23 @@ async def refresh_tracked_item_price(
             detail="Tracked item not found",
         )
 
+    # Throttle: one refresh per minute so the endpoint cannot be spammed into
+    # spawning unbounded background fetch tasks.
+    lowest = db.query(LowestPrice).filter(
+        LowestPrice.tracked_item_id == item.id
+    ).first()
+    if (
+        lowest is not None
+        and lowest.last_updated is not None
+        and (datetime.utcnow() - lowest.last_updated).total_seconds() < 60
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Price was refreshed less than a minute ago; try again later",
+        )
+
     stores = db.query(TrackedItemStore).filter(
-        TrackedItemStore.tracked_item_id == item_id,
+        TrackedItemStore.tracked_item_id == item.id,
         TrackedItemStore.is_active == True,
     ).all()
 
@@ -734,6 +763,8 @@ async def refresh_tracked_item_price(
     return {
         "message": f"Price refresh triggered for {len(stores)} store(s)",
         "store_count": len(stores),
+        "price_status": "fetching",
+        "last_updated": lowest.last_updated.isoformat() if lowest and lowest.last_updated else None,
     }
 
 
