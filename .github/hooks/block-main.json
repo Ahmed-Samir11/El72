@@ -1,0 +1,7 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      { "type": "command", "command": "./scripts/check-branch.sh", "timeout": 10 }
+    ]
+  }
+}

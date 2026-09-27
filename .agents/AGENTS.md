@@ -15,6 +15,26 @@ El72 (Elhaq) is a **real-time price tracking & deal detection platform** for the
 | **Service isolation** | Services communicate **exclusively** through Redis Streams or REST APIs. Never import code directly between services — only `services/common/` is a shared library. |
 | **Database ownership** | `services/api` owns `users`, `alerts`. `services/scraper` owns `tracked_items`, `current_prices`, `lowest_prices`. `services/analyzer` owns `price_history` (TimescaleDB). `services/billing` owns `payment_logs`. |
 
+# Workflow Policy (strict)
+
+## Feature development
+1. **Plan first.** Before writing any code, write a plan to `plans/<feature>.md`
+   (goal, approach, files touched, test strategy). No implementation without an approved plan.
+2. **Branch.** Work on `feat/<name>` off `main`. Never commit directly to `main`.
+3. **PR.** Commit + push, then open a PR (`gh pr create` or GitHub API).
+4. **No self-merge.** A PR is not merged until it has been reviewed.
+
+## Review
+- PRs are reviewed by the Copilot agent in VS Code via `/review-pr <owner/repo#N>`.
+- The automated HGM review agent runs via `scripts/review-pr.sh <owner/repo#N>`
+  against the local llama-server (qwen-27b). Its LLM config is independent of
+  the coding agent's model — no tunnel, local endpoint only.
+- Address all review findings, push, then merge.
+
+## Constraints
+- All edits stay inside this repo.
+- Tests must pass before opening a PR.
+
 ### Services Map
 
 ```
