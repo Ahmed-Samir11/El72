@@ -56,87 +56,68 @@ def _parse_jsonld(html: str) -> list:
     return objs
 
 
-def _jsonld_product(html: str) -> Optional[dict]:
-    """Return the schema.org ``Product`` JSON-LD object, if present."""
-    for obj in _parse_jsonld(html):
+def _type_is_product(types) -> bool:
+    """True if any ``@type`` entry denotes a schema.org Product.
+
+    Accepts plain names ("Product") and full URIs
+    ("https://schema.org/Product"), case-insensitively.
+    """
+    for t in types:
+        if not isinstance(t, str):
+            continue
+        tail = t.rsplit("/", 1)[-1].lower()
+        if tail == "product":
+            return True
+    return False
+
+
+def _jsonld_product(html: str, objs: Optional[list] = None) -> Optional[dict]:
+    """Return the schema.org ``Product`` JSON-LD object, if present.
+
+    Looks at top-level objects **and** entries nested in ``@graph`` (a
+    common layout), matching ``@type`` as a plain name or URI. Pass
+    pre-parsed ``objs`` to avoid re-parsing the page.
+    """
+    if objs is None:
+        objs = _parse_jsonld(html)
+    candidates: list = []
+    for obj in objs:
+        candidates.append(obj)
+        graph = obj.get("@graph")
+        if isinstance(graph, list):
+            candidates.extend(g for g in graph if isinstance(g, dict))
+    for obj in candidates:
         t = obj.get("@type")
         types = t if isinstance(t, list) else [t]
-        if any(str(x).lower() == "product" for x in types if x):
+        if _type_is_product(types):
             return obj
     return None
 
 
-def _extract_price_from_html(html: str) -> Optional[tuple[float, str]]:
-    """Best-effort price extraction from raw HTML.
+def _parse_amount(raw) -> Optional[float]:
+    """Parse a price value that may be numeric or a messy string.
 
-    Tries, in order:
-    1. The schema.org ``Product``/``Offer`` JSON-LD price (authoritative).
-    2. OpenGraph / product meta tags.
-    3. A regex over visible text for an EGP/USD amount.
-
-    Returns ``(price, currency)`` or ``None``.
+    Handles ints/floats and strings containing currency symbols,
+    prefixes, or comma grouping (e.g. ``"129,999 EGP"``,
+    ``"EGP 1,299.50"``). Returns ``None`` for missing/non-positive values.
     """
-    # 1. schema.org Product/Offer JSON-LD.
-    prod = _jsonld_product(html)
-    if prod is not None:
-        price = prod.get("price")
-        currency = prod.get("priceCurrency")
-        offers = prod.get("offers")
-        if isinstance(offers, dict):
-            offers = [offers]
-        elif not isinstance(offers, list):
-            offers = []
-        for offer in offers:
-            if not isinstance(offer, dict):
-                continue
-            if price is None and offer.get("price") is not None:
-                price = offer.get("price")
-            if currency is None and offer.get("priceCurrency"):
-                currency = offer.get("priceCurrency")
-        if price is not None:
-            try:
-                val = float(str(price).replace(",", ""))
-            except ValueError:
-                val = None
-            if val is not None and val > 0:
-                return val, (currency or "EGP")
-
-    # 2. Meta tags.
-    meta = re.search(
-        r'<meta[^>]+(?:property|name)=["\'](?:og:price:amount|product:price:amount|price)["\'][^>]+content=["\']([\d,]+(?:\.\d+)?)',
-        html,
-        re.IGNORECASE,
-    )
-    if meta:
-        try:
-            return float(meta.group(1).replace(",", "")), "EGP"
-        except ValueError:
-            pass
-
-    # 3. Visible-text fallback: a number followed by an EGP marker.
-    text = re.sub(r"<[^>]+>", " ", html)
-    m = re.search(r"([\d][\d,]{2,}(?:\.\d{1,2})?)\s*(?:EGP|ج\.م|جنيه|£|pound)", text, re.IGNORECASE)
-    if m:
-        try:
-            return float(m.group(1).replace(",", "")), "EGP"
-        except ValueError:
-            pass
-
-    return None
-
-
-def _jsonld_title(html: str) -> Optional[str]:
-    prod = _jsonld_product(html)
-    if prod and isinstance(prod.get("name"), str):
-        return prod["name"]
-    return None
-
-
-def _jsonld_image(html: str) -> Optional[str]:
-    prod = _jsonld_product(html)
-    if not prod:
+    if raw is None:
         return None
-    image = prod.get("image")
+    if isinstance(raw, (int, float)):
+        value = float(raw)
+    else:
+        m = re.search(r"(\d[\d,]*(?:\.\d+)?)", str(raw))
+        if not m:
+            return None
+        try:
+            value = float(m.group(1).replace(",", ""))
+        except ValueError:
+            return None
+    return value if value > 0 else None
+
+
+def _first_image_url(image) -> Optional[str]:
+    """First usable URL from a JSON-LD ``image`` value (str, list, or dict)."""
     if isinstance(image, str):
         return image
     if isinstance(image, list) and image:
@@ -148,6 +129,79 @@ def _jsonld_image(html: str) -> Optional[str]:
     if isinstance(image, dict) and isinstance(image.get("url"), str):
         return image["url"]
     return None
+
+
+def _extract_from_html(html: str) -> Optional[tuple[float, str, Optional[str], Optional[str]]]:
+    """Best-effort extraction of ``(price, currency, title, image_url)``.
+
+    Parses the embedded JSON-LD **once** per page and tries, in order:
+    1. The schema.org ``Product``/``Offer`` JSON-LD values (authoritative).
+    2. OpenGraph / product meta tags.
+    3. A regex over visible text for an EGP amount.
+
+    Returns ``(price, currency, title, image_url)`` or ``None`` if no price
+    could be determined.
+    """
+    objs = _parse_jsonld(html)
+    prod = _jsonld_product(html, objs)
+
+    price: Optional[float] = None
+    currency: Optional[str] = None
+    title: Optional[str] = None
+    image_url: Optional[str] = None
+
+    # 1. schema.org Product/Offer JSON-LD.
+    if prod is not None:
+        raw_price = prod.get("price")
+        currency = prod.get("priceCurrency")
+        if isinstance(prod.get("name"), str):
+            title = prod["name"]
+        image_url = _first_image_url(prod.get("image"))
+
+        offers = prod.get("offers")
+        if isinstance(offers, dict):
+            offers = [offers]
+        elif not isinstance(offers, list):
+            offers = []
+        for offer in offers:
+            if not isinstance(offer, dict):
+                continue
+            if raw_price is None and offer.get("price") is not None:
+                raw_price = offer.get("price")
+            if currency is None and offer.get("priceCurrency"):
+                currency = offer.get("priceCurrency")
+
+        price = _parse_amount(raw_price)
+
+    if price is None:
+        # 2. Meta tags.
+        meta = re.search(
+            r'<meta[^>]+(?:property|name)=["\'](?:og:price:amount|product:price:amount|price)["\'][^>]+content=["\']([\d,]+(?:\.\d+)?)',
+            html,
+            re.IGNORECASE,
+        )
+        if meta:
+            price = _parse_amount(meta.group(1))
+
+    if price is None:
+        # 3. Visible-text fallback: a number followed by an EGP marker.
+        text = re.sub(r"<[^>]+>", " ", html)
+        m = re.search(r"([\d][\d,]{2,}(?:\.\d{1,2})?)\s*(?:EGP|ج\.م|جنيه|£|pound)", text, re.IGNORECASE)
+        if m:
+            price = _parse_amount(m.group(1))
+
+    if price is None:
+        return None
+
+    # Title/image meta fallbacks (JSON-LD takes precedence).
+    if title is None:
+        title = _extract_meta(html, "og:title")
+    if image_url is None:
+        image_url = _extract_meta(html, "og:image")
+
+    # The app targets the Egyptian market; pages that omit priceCurrency
+    # are assumed to quote EGP.
+    return price, (currency or "EGP"), title, image_url
 
 
 def _extract_meta(html: str, prop: str) -> Optional[str]:
@@ -190,8 +244,10 @@ def _fetch_html_playwright(url: str, timeout_ms: int = 25000) -> Optional[str]:
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
+        logger.warning("Playwright not installed; skipping browser fallback")
         return None
     try:
+        logger.info("Launching Playwright browser for %s", url)
         with sync_playwright() as pw:
             browser = pw.chromium.launch(headless=True)
             try:
@@ -199,7 +255,7 @@ def _fetch_html_playwright(url: str, timeout_ms: int = 25000) -> Optional[str]:
                 page = context.new_page()
                 page.goto(url, timeout=timeout_ms, wait_until="domcontentloaded")
                 try:
-                    page.wait_for_timeout(1500)
+                    page.wait_for_timeout(3000)
                 except Exception:
                     pass
                 html = page.content()
@@ -218,24 +274,33 @@ def fetch_price(url: str) -> Optional[FetchedPrice]:
     Tries a plain HTTP fetch first (fast, no browser); falls back to
     headless Chromium for JS-rendered pages.
     """
+    logger.info("Starting price fetch for %s", url)
     html = _fetch_html_requests(url)
-    if html is None:
-        html = _fetch_html_playwright(url)
+    found = _extract_from_html(html) if html else None
+
+    if found is None:
+        logger.info("Requests fetch yielded no price for %s; trying Playwright browser fallback", url)
+        html_pw = _fetch_html_playwright(url)
+        if html_pw:
+            html = html_pw
+            found = _extract_from_html(html)
+
     if not html:
-        logger.warning("Could not fetch HTML for %s", url)
+        logger.warning("Could not fetch HTML for %s via requests or Playwright", url)
         return None
 
-    found = _extract_price_from_html(html)
     if not found:
-        logger.warning("No price found for %s", url)
+        logger.warning("No price found in HTML content for %s", url)
         return None
 
-    price, currency = found
+    price, currency, title, image_url = found
+
+    logger.info("Price fetch succeeded for %s: price=%s %s, title=%s, image_url=%s", url, price, currency, title, image_url)
     return FetchedPrice(
         price_local=price,
         currency=currency,
-        title=_jsonld_title(html) or _extract_meta(html, "og:title"),
-        image_url=_jsonld_image(html) or _extract_meta(html, "og:image"),
+        title=title,
+        image_url=image_url,
     )
 
 
