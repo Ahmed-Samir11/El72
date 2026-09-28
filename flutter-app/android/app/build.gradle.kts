@@ -9,8 +9,9 @@ android {
     // Play Store package identity. If `com.elhaq.tracker` turns out to be
     // taken, switch to the fallback `com.el72.elhaq` (owner verification).
     namespace = "com.elhaq.tracker"
-    compileSdk = flutter.compileSdkVersion
-    ndkVersion = flutter.ndkVersion
+    // Pinned explicitly (WS3): compileSdk == targetSdk so the SDK levels are
+    // deterministic and never depend on the Flutter template defaults.
+    compileSdk = 35
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

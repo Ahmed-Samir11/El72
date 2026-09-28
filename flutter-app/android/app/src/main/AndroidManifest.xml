@@ -8,6 +8,8 @@
     <application
         android:label="إلحق"
         android:name="${applicationName}"
+        <!-- No local data worth auto-backing up (prefs are re-created on
+             first launch); keeps device-transfer surface minimal (WS3). -->
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher">
         <activity
