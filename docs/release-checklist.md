@@ -12,6 +12,8 @@ submitting to Play.
   - `flutter test` — all tests passing
 - [ ] Signed App Bundle artifact uploaded for the PR/tag.
 - [ ] GitHub Release published from the `v*` tag with the `.aab` attached.
+- [ ] CI skipped the signed build cleanly (no artifact) when secrets were
+  absent — a debug-signed AAB must never ship as a release artifact.
 
 ## 2. Build & signing
 
@@ -19,8 +21,12 @@ submitting to Play.
   (`KEY_STORE`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_ALIAS_PASSWORD`).
   Create once via `scripts/make-release-keystore.sh` — **the owner keeps the
   original key file; it never lives in the repo**.
+- [ ] `RELEASE_VERSION_CODE` secret is set to a positive integer strictly
+  greater than the last published versionCode (required for v* tags).
 - [ ] `PROD_API_BASE_URL` secret is set to the production HTTPS endpoint and
   verified reachable (curl returns 200 on `/health` or equivalent).
+- [ ] CI `apksigner verify` step confirms the AAB carries the release
+  certificate.
 - [ ] Built AAB opens on a physical device: splash → login → dashboard.
 - [ ] Startup guard (WS5) confirmed: a release build with the emulator
   default `API_BASE_URL` fails fast with a clear log.

@@ -102,16 +102,27 @@ jobs:
   flutter-ci:
     name: Flutter - analyze, test, signed bundle
     runs-on: ubuntu-latest
+    permissions:
+      # contents:write is required by softprops/action-gh-release for v* tag
+      # releases; everything else stays read-only.
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
-      # Pinned Flutter channel for deterministic analyze/test behavior.
+      # Pinned to the exact Flutter version verified by this repo's tests.
       # Bump deliberately (see docs/release-checklist.md).
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          channel: stable
+          flutter-version: 3.38.5
           cache: true
+
+      - name: Verify Android platform 35 is available
+        run: |
+          if ! ls "$ANDROID_HOME/platforms"/android-35 >/dev/null 2>&1; then
+            echo "Android platform 35 missing from the runner image." >&2
+            exit 1
+          fi
 
       - name: Flutter setup
         run: |
@@ -123,55 +134,86 @@ jobs:
         run: cd flutter-app && flutter analyze
 
       - name: Format check
-        run: cd flutter-app && dart format --set-exit-if-changed lib test
+        run: cd flutter-app && dart format --set-exit-if-changed .
 
       - name: Test
         run: cd flutter-app && flutter test
 
       # --- Signed App Bundle: PRs to main + v* tags only ---
-      - name: Restore release keystore from CI secret
-        if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/tags/v')
+      - name: Prepare release signing
+        id: signing
+        if: (github.event_name == 'pull_request' && github.base_ref == 'main') || startsWith(github.ref, 'refs/tags/v')
         env:
           KEY_STORE: ${{ secrets.KEY_STORE }}
-        run: |
-          if [ -z "$KEY_STORE" ]; then
-            echo "Skipping signed build: KEY_STORE secret is not set."
-            exit 0
-          fi
-          mkdir -p "$RUNNER_TEMP/keystore"
-          echo "$KEY_STORE" | base64 -d > "$RUNNER_TEMP/keystore/release.keystore"
-          cat > flutter-app/android/key.properties <<EOF
-          storeFile=$RUNNER_TEMP/keystore/release.keystore
-          storePassword=${KEYSTORE_PASSWORD}
-          keyAlias=${KEY_ALIAS}
-          keyPassword=${KEY_ALIAS_PASSWORD}
-          EOF
-        id: keystore
-
-      - name: Build signed App Bundle
-        if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/tags/v')
-        env:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_ALIAS_PASSWORD: ${{ secrets.KEY_ALIAS_PASSWORD }}
+        run: |
+          # Fail fast if any signing secret is missing: a debug-signed AAB
+          # must never be uploaded or published as a release artifact.
+          for v in KEY_STORE KEYSTORE_PASSWORD KEY_ALIAS KEY_ALIAS_PASSWORD; do
+            if [ -z "${!v}" ]; then
+              echo "Signing secret $v is not set - skipping signed build."
+              echo "signed=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+          mkdir -p "$RUNNER_TEMP/keystore"
+          echo "$KEY_STORE" | base64 -d > "$RUNNER_TEMP/keystore/release.keystore"
+          # Values come from the step environment (not argv); file is deleted
+          # with the runner.
+          {
+            echo "storeFile=$RUNNER_TEMP/keystore/release.keystore"
+            echo "storePassword=$KEYSTORE_PASSWORD"
+            echo "keyAlias=$KEY_ALIAS"
+            echo "keyPassword=$KEY_ALIAS_PASSWORD"
+          } > flutter-app/android/key.properties
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Build signed App Bundle
+        if: steps.signing.outputs.signed == 'true'
+        env:
           PROD_API_BASE_URL: ${{ secrets.PROD_API_BASE_URL }}
         run: |
           cd flutter-app
-          # Auto-incrementing versionCode: one per commit on the branch.
-          export VERSION_CODE=$(git rev-list --count HEAD)
+          # versionCode policy (MS4):
+          # - v* tag releases: owner-controlled RELEASE_VERSION_CODE secret,
+          #   strictly increasing across releases (Play requirement).
+          # - PR builds: commit count, informational only - PR artifacts are
+          #   never submitted to Play.
+          if [ -n "$GITHUB_REF_NAME" ] && [[ "$GITHUB_REF_NAME" == v* ]]; then
+            if [ -z "$RELEASE_VERSION_CODE" ]; then
+              echo "v* tag releases require the RELEASE_VERSION_CODE secret." >&2
+              exit 1
+            fi
+            case "$RELEASE_VERSION_CODE" in
+              ''|*[!0-9]*) echo "RELEASE_VERSION_CODE must be a positive integer." >&2; exit 1 ;;
+            esac
+            if [ "$RELEASE_VERSION_CODE" -lt 1 ]; then
+              echo "RELEASE_VERSION_CODE must be >= 1." >&2
+              exit 1
+            fi
+            export VERSION_CODE="$RELEASE_VERSION_CODE"
+          else
+            export VERSION_CODE=$(git rev-list --count HEAD)
+          fi
           echo "Building release AAB (versionCode=$VERSION_CODE)"
           flutter build appbundle --release             --dart-define=API_BASE_URL="$PROD_API_BASE_URL"
 
+      - name: Verify the AAB is release-signed
+        if: steps.signing.outputs.signed == 'true'
+        run: |
+          apksigner verify --print-certs             flutter-app/build/app/outputs/flutter-release/app-release.aab
+
       - name: Upload App Bundle artifact
-        if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/tags/v')
+        if: steps.signing.outputs.signed == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: elhaq-appbundle-${{ github.sha }}
           path: flutter-app/build/app/outputs/flutter-release/app-release.aab
-          if-no-files-found: warn
 
       - name: Publish GitHub Release (v* tags)
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') && steps.signing.outputs.signed == 'true'
         uses: softprops/action-gh-release@v2
         with:
           files: flutter-app/build/app/outputs/flutter-release/app-release.aab

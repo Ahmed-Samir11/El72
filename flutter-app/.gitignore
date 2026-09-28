@@ -27,8 +27,9 @@ Thumbs.db
 .env.local
 .env.*.local
 
-# MS4 release signing — real credentials never committed
+# MS4 release signing — real credentials and keys never committed
 android/key.properties
+android/release.keystore
 
 
 

@@ -6,11 +6,11 @@
 #   bash scripts/make-release-keystore.sh
 #
 # What it does:
-#   1. Generates flutter-app/android/release.keystore (keytool, alias "elhaq")
-#   2. Writes flutter-app/android/key.properties from key.properties.example
-#   3. Prints the base64 of the keystore — paste it into the GitHub secret
-#      KEY_STORE on the repo settings screen, and set the three password
-#      secrets (KEYSTORE_PASSWORD, KEY_ALIAS_PASSWORD) to the values you chose.
+#   1. Generates flutter-app/android/release.keystore (keytool, PKCS12)
+#   2. Writes flutter-app/android/key.properties (gitignored)
+#   3. Prints the base64 of the keystore for the KEY_STORE GitHub secret and
+#      lists the other secrets to set. Passwords are read with hidden input
+#      and are NEVER printed or placed on a command line.
 #
 # The keystore + key.properties are gitignored; only this script and the
 # .example file are committed.
@@ -25,15 +25,17 @@ if [ -f "$KEYSTORE" ]; then
   exit 1
 fi
 
-read -r -p "Keystore password: " STORE_PW
-read -r -p "Confirm password: " STORE_PW_CONFIRM
+read -r -p "Keystore password (hidden): " STORE_PW
+read -r -s -p "Confirm password (hidden): " STORE_PW_CONFIRM
+echo ""
 if [ "$STORE_PW" != "$STORE_PW_CONFIRM" ]; then
   echo "Error: passwords did not match." >&2
   exit 1
 fi
 read -r -p "Key alias [elhaq]: " ALIAS
 ALIAS="${ALIAS:-elhaq}"
-read -r -p "Key password: " KEY_PW
+read -r -s -p "Key password (hidden): " KEY_PW
+echo ""
 
 keytool -genkeypair \
   -keystore "$KEYSTORE" \
@@ -46,19 +48,27 @@ keytool -genkeypair \
   -dname "CN=Elhaq Release, OU=El72, O=Elhaq, L=Cairo, ST=Cairo, C=EG" \
   -ext "SAN=dns:elhaq.app"
 
-sed "s|^storeFile=.*|storeFile=$KEYSTORE|; s|^storePassword=.*|storePassword=$STORE_PW|; s|^keyAlias=.*|keyAlias=$ALIAS|; s|^keyPassword=.*|keyPassword=$KEY_PW|" \
-  "$ANDROID_DIR/key.properties.example" > "$ANDROID_DIR/key.properties"
+# key.properties is written from the environment (never argv).
+{
+  echo "storeFile=$KEYSTORE"
+  echo "storePassword=$STORE_PW"
+  echo "keyAlias=$ALIAS"
+  echo "keyPassword=$KEY_PW"
+} > "$ANDROID_DIR/key.properties"
 
 echo ""
 echo "Keystore created: $KEYSTORE"
 echo "key.properties written (gitignored)."
 echo ""
 echo "=== Set these GitHub secrets on the repo ==="
-echo "  KEY_STORE          <- base64 below"
-echo "  KEYSTORE_PASSWORD  = $STORE_PW"
-echo "  KEY_ALIAS           = $ALIAS"
-echo "  KEY_ALIAS_PASSWORD  = $KEY_PW"
+echo "  KEY_STORE            <- base64 printed below"
+echo "  KEYSTORE_PASSWORD    <- the keystore password you chose"
+echo "  KEY_ALIAS             <- $ALIAS"
+echo "  KEY_ALIAS_PASSWORD   <- the key password you chose"
+echo "  RELEASE_VERSION_CODE <- positive integer, bumped per release (v* tags)"
+echo "  PROD_API_BASE_URL    <- production HTTPS API base"
 echo ""
 echo "=== KEY_STORE value (base64) ==="
-base64 -w 0 "$KEYSTORE"
+# Portable one-line base64 (GNU and BSD).
+base64 "$KEYSTORE" | tr -d '\n'
 echo ""

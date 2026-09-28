@@ -53,10 +53,21 @@ android {
     signingConfigs {
         create("release") {
             keystoreProperties?.let { kp ->
-                keyAlias = kp["keyAlias"] as String
-                keyPassword = kp["keyPassword"] as String
-                storeFile = kp["storeFile"]?.let { f -> rootProject.file(f) }
-                storePassword = kp["storePassword"] as String
+                // Fail with a clear message if the file exists but is
+                // incomplete (MS4): a half-filled key.properties must never
+                // silently produce a debug-signed bundle.
+                val alias = kp.getProperty("keyAlias")
+                    ?: error("android/key.properties exists but is missing 'keyAlias'")
+                val keyPassword = kp.getProperty("keyPassword")
+                    ?: error("android/key.properties exists but is missing 'keyPassword'")
+                val storeFile = kp.getProperty("storeFile")
+                    ?: error("android/key.properties exists but is missing 'storeFile'")
+                val storePassword = kp.getProperty("storePassword")
+                    ?: error("android/key.properties exists but is missing 'storePassword'")
+                keyAlias = alias
+                this.keyPassword = keyPassword
+                this.storeFile = rootProject.file(storeFile)
+                storePassword = storePassword
             }
         }
     }
