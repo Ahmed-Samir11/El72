@@ -57,8 +57,13 @@ class _CreateTrackerSheetState extends ConsumerState<CreateTrackerSheet> {
                     .read(trackedItemsRepositoryProvider)
                     .createFromUrl(url, targetPrice: price > 0 ? price : null);
 
-                // Refresh the Trackers list so the new item appears.
+                // Refresh the Trackers list so the new item appears immediately.
                 ref.invalidate(trackedItemsProvider);
+
+                // Schedule a second refresh after background price fetch completes (~3.5s).
+                Future.delayed(const Duration(milliseconds: 3500), () {
+                  ref.invalidate(trackedItemsProvider);
+                });
 
                 Navigator.pop(context); // Close the sheet
 

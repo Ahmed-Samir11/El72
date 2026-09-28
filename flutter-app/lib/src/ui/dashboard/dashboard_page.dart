@@ -67,38 +67,50 @@ class _TrackersTab extends ConsumerWidget {
         ),
       ),
       data: (items) {
-        if (items.isEmpty) {
-          return const Center(
-            child: Text(
-              'No active trackers yet.\nTap + to start tracking a product.',
-              textAlign: TextAlign.center,
-            ),
-          );
-        }
-        return ListView.builder(
-          itemCount: items.length,
-          itemBuilder: (context, i) {
-            final item = items[i];
-            final lowest = item.lowestPrice;
-            return TrackerCard(
-              imageUrl: lowest?.imageUrl ?? '',
-              title: item.displayName,
-              currentPrice: lowest?.priceLocal ?? 0.0,
-              targetPrice: item.targetPrice ?? 0.0,
-              isActive: item.isActive,
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => PriceHistoryPage(
-                      sku: item.canonicalProductId,
-                      title: item.displayName,
-                    ),
-                  ),
-                );
-              },
-            );
+        return RefreshIndicator(
+          onRefresh: () async {
+            ref.invalidate(trackedItemsProvider);
+            await ref.read(trackedItemsProvider.future);
           },
+          child: items.isEmpty
+              ? ListView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  children: const [
+                    SizedBox(height: 200),
+                    Center(
+                      child: Text(
+                        'No active trackers yet.\nTap + to start tracking a product.',
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ],
+                )
+              : ListView.builder(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  itemCount: items.length,
+                  itemBuilder: (context, i) {
+                    final item = items[i];
+                    final lowest = item.lowestPrice;
+                    return TrackerCard(
+                      imageUrl: lowest?.imageUrl ?? '',
+                      title: item.displayName,
+                      currentPrice: lowest?.priceLocal ?? 0.0,
+                      targetPrice: item.targetPrice ?? 0.0,
+                      isActive: item.isActive,
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => PriceHistoryPage(
+                              sku: item.canonicalProductId,
+                              title: item.displayName,
+                            ),
+                          ),
+                        );
+                      },
+                    );
+                  },
+                ),
         );
       },
     );
