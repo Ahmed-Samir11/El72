@@ -17,8 +17,18 @@ submitting to Play.
 
 ## 2. Build & signing
 
-- [ ] Release keystore exists and matches the CI secrets
-  (`KEY_STORE`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_ALIAS_PASSWORD`).
+Required GitHub secrets (all six):
+
+| Secret | Purpose |
+|---|---|
+| `KEY_STORE` | base64 of the release keystore (from `scripts/make-release-keystore.sh`) |
+| `KEYSTORE_PASSWORD` | keystore password |
+| `KEY_ALIAS` | key alias (`elhaq` by default) |
+| `KEY_ALIAS_PASSWORD` | private-key password |
+| `RELEASE_VERSION_CODE` | positive integer, bumped per v* release |
+| `PROD_API_BASE_URL` | production HTTPS API base |
+
+- [ ] Release keystore exists and matches the CI secrets.
   Create once via `scripts/make-release-keystore.sh` — **the owner keeps the
   original key file; it never lives in the repo**.
 - [ ] `RELEASE_VERSION_CODE` secret is set to a positive integer strictly
