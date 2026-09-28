@@ -1,4 +1,4 @@
-package com.example.n3n3_seha
+package com.elhaq.tracker
 
 import io.flutter.embedding.android.FlutterActivity
 
