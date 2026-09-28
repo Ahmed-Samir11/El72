@@ -1,16 +1,16 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.example.n3n3_seha">
+    package="com.elhaq.tracker">
+    <!-- Permission minimalism (WS3): the app only needs network access.
+         CAMERA / storage / biometric are unused; POST_NOTIFICATIONS is
+         deferred to v1.1 with the notifications workstream. -->
     <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.CAMERA" />
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
-    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
-    <uses-permission android:name="android.permission.USE_FINGERPRINT" />
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:label="إلحق"
         android:name="${applicationName}"
+        <!-- No local data worth auto-backing up (prefs are re-created on
+             first launch); keeps device-transfer surface minimal (WS3). -->
+        android:allowBackup="false"
         android:icon="@mipmap/ic_launcher">
         <activity
             android:name=".MainActivity"
@@ -34,10 +34,12 @@
             android:name="flutterEmbedding"
             android:value="2" />
     </application>
+    <!-- Package visibility for url_launcher: the app only opens Comsumart
+         product URLs. Keep this list minimal (WS3 manifest hygiene). -->
     <queries>
         <intent>
-            <action android:name="android.intent.action.PROCESS_TEXT"/>
-            <data android:mimeType="text/plain"/>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="https" android:host="www.comsumart.com"/>
         </intent>
     </queries>
 </manifest>

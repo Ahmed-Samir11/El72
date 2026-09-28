@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -36,6 +37,24 @@ class ElhaqApp extends StatelessWidget {
     return MaterialApp(
       title: 'إلحق',
       debugShowCheckedModeBanner: false,
+      // Edge-to-edge / system UI (WS3): the status and navigation bars
+      // follow the active theme — surface color with light icons on dark
+      // and dark icons on light. On API 35+ apps draw edge-to-edge by
+      // default; Flutter's SafeArea/AppBar/NavigationBar handle insets.
+      builder: (context, child) {
+        final theme = Theme.of(context);
+        final isDark = theme.brightness == Brightness.dark;
+        return AnnotatedRegion<SystemUiOverlayStyle>(
+          value: SystemUiOverlayStyle(
+            statusBarColor: theme.colorScheme.surface,
+            systemNavigationBarColor: theme.colorScheme.surface,
+            statusBarIconBrightness: isDark ? Brightness.light : Brightness.dark,
+            systemNavigationBarIconBrightness:
+                isDark ? Brightness.light : Brightness.dark,
+          ),
+          child: child!,
+        );
+      },
       theme: AppTheme.light(),
       darkTheme: AppTheme.dark(),
       // The persisted mode is honored at launch. Runtime theme switching

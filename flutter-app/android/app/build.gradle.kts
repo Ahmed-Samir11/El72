@@ -6,9 +6,12 @@ plugins {
 }
 
 android {
-    namespace = "com.example.n3n3_seha"
-    compileSdk = flutter.compileSdkVersion
-    ndkVersion = flutter.ndkVersion
+    // Play Store package identity. If `com.elhaq.tracker` turns out to be
+    // taken, switch to the fallback `com.el72.elhaq` (owner verification).
+    namespace = "com.elhaq.tracker"
+    // Pinned explicitly (WS3): compileSdk == targetSdk so the SDK levels are
+    // deterministic and never depend on the Flutter template defaults.
+    compileSdk = 35
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -20,13 +23,11 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.example.n3n3_seha"
-        // You can update the following values to match your application needs.
-        // For more information, see: https://flutter.dev/to/review-gradle-config.
-        // Require API 23+ for biometrics and modern camera APIs
-        minSdk = flutter.minSdkVersion
-        targetSdk = flutter.targetSdkVersion
+        applicationId = "com.elhaq.tracker"
+        // Pinned explicitly (WS3): minSdk 24 drops legacy API 21-23 devices;
+        // targetSdk 35 is the current Play requirement.
+        minSdk = 24
+        targetSdk = 35
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }
