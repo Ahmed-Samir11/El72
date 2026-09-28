@@ -77,7 +77,10 @@ class _TrackersTab extends ConsumerWidget {
                   physics: const AlwaysScrollableScrollPhysics(),
                   children: const [
                     SizedBox(height: 200),
-                    Center(
+                    // No Center here: a Center inside a ListView gets
+                    // unbounded height and trips a layout assert.
+                    Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 32),
                       child: Text(
                         'No active trackers yet.\nTap + to start tracking a product.',
                         textAlign: TextAlign.center,
@@ -96,6 +99,7 @@ class _TrackersTab extends ConsumerWidget {
                       title: item.displayName,
                       currentPrice: lowest?.priceLocal ?? 0.0,
                       targetPrice: item.targetPrice ?? 0.0,
+                      hasPrice: lowest != null && lowest.priceLocal > 0,
                       isActive: item.isActive,
                       onTap: () {
                         Navigator.push(

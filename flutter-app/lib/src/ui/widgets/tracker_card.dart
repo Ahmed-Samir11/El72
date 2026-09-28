@@ -1,10 +1,17 @@
 import 'package:flutter/material.dart';
 
+/// Product tracker row.
+///
+/// [hasPrice] drives the pending-price state: when false the card shows a
+/// hourglass placeholder and an orange tint, signalling that the background
+/// price fetch has not produced a price yet. Callers must pass it explicitly
+/// rather than relying on a magic `currentPrice <= 0` check.
 class TrackerCard extends StatelessWidget {
   final String imageUrl;
   final String title;
   final double currentPrice;
   final double targetPrice;
+  final bool hasPrice;
   final bool isActive;
   final VoidCallback? onTap;
 
@@ -14,6 +21,7 @@ class TrackerCard extends StatelessWidget {
     required this.title,
     required this.currentPrice,
     required this.targetPrice,
+    required this.hasPrice,
     required this.isActive,
     this.onTap,
   });
@@ -47,11 +55,11 @@ class TrackerCard extends StatelessWidget {
                                 ),
                               )
                             : Icon(
-                                currentPrice <= 0
-                                    ? Icons.hourglass_top_rounded
-                                    : Icons.shopping_bag_outlined,
+                                hasPrice
+                                    ? Icons.shopping_bag_outlined
+                                    : Icons.hourglass_top_rounded,
                                 size: 30,
-                                color: currentPrice <= 0 ? Colors.orange : Colors.grey,
+                                color: hasPrice ? Colors.grey : Colors.orange,
                               ),
                       ),
                       const SizedBox(width: 16),
