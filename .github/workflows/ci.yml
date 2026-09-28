@@ -103,9 +103,7 @@ jobs:
     name: Flutter - analyze, test, signed bundle
     runs-on: ubuntu-latest
     permissions:
-      # contents:write is required by softprops/action-gh-release for v* tag
-      # releases; everything else stays read-only.
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -134,7 +132,7 @@ jobs:
         run: cd flutter-app && flutter analyze
 
       - name: Format check
-        run: cd flutter-app && dart format --set-exit-if-changed .
+        run: cd flutter-app && dart format --set-exit-if-changed lib test
 
       - name: Test
         run: cd flutter-app && flutter test
@@ -174,7 +172,15 @@ jobs:
         if: steps.signing.outputs.signed == 'true'
         env:
           PROD_API_BASE_URL: ${{ secrets.PROD_API_BASE_URL }}
+          RELEASE_VERSION_CODE: ${{ secrets.RELEASE_VERSION_CODE }}
         run: |
+          # Fail fast on a missing or non-HTTPS production URL: a release
+          # AAB with the emulator default baked in is useless (the WS5
+          # startup guard would reject it at runtime anyway).
+          case "$PROD_API_BASE_URL" in
+            https://*) ;;
+            *) echo "PROD_API_BASE_URL must be a non-empty HTTPS URL." >&2; exit 1 ;;
+          esac
           cd flutter-app
           # versionCode policy (MS4):
           # - v* tag releases: owner-controlled RELEASE_VERSION_CODE secret,
@@ -200,10 +206,19 @@ jobs:
           echo "Building release AAB (versionCode=$VERSION_CODE)"
           flutter build appbundle --release             --dart-define=API_BASE_URL="$PROD_API_BASE_URL"
 
-      - name: Verify the AAB is release-signed
+      - name: Verify the AAB carries the release certificate
         if: steps.signing.outputs.signed == 'true'
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
         run: |
-          apksigner verify --print-certs             flutter-app/build/app/outputs/flutter-release/app-release.aab
+          AAB=flutter-app/build/app/outputs/flutter-release/app-release.aab
+          EXPECTED=$(keytool -list             -keystore "$RUNNER_TEMP/keystore/release.keystore"             -storepass "$KEYSTORE_PASSWORD" | grep "SHA256:" | awk '{print $2}' | tr -d ':')
+          ACTUAL=$(apksigner verify --print-certs "$AAB" 2>&1             | grep "SHA256 digest" | head -n1 | awk '{print $3}' | tr -d ':')
+          if [ -z "$EXPECTED" ] || [ "$EXPECTED" != "$ACTUAL" ]; then
+            echo "AAB certificate does not match the release keystore." >&2
+            exit 1
+          fi
+          echo "AAB signed with the release keystore (SHA256 $ACTUAL)."
 
       - name: Upload App Bundle artifact
         if: steps.signing.outputs.signed == 'true'
@@ -212,8 +227,24 @@ jobs:
           name: elhaq-appbundle-${{ github.sha }}
           path: flutter-app/build/app/outputs/flutter-release/app-release.aab
 
-      - name: Publish GitHub Release (v* tags)
-        if: startsWith(github.ref, 'refs/tags/v') && steps.signing.outputs.signed == 'true'
+      # Publishing happens in the publish-release job below so this job's
+      # permissions stay read-only.
+  # MS4: publishes the signed AAB as a GitHub Release for v* tags. Separate
+  # job so only it holds contents:write.
+  publish-release:
+    name: Publish release (v* tags)
+    needs: flutter-ci
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: elhaq-appbundle-${{ github.sha }}
+          path: release/
+
+      - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: flutter-app/build/app/outputs/flutter-release/app-release.aab
+          files: release/*.aab

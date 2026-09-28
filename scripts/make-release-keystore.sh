@@ -25,7 +25,7 @@ if [ -f "$KEYSTORE" ]; then
   exit 1
 fi
 
-read -r -p "Keystore password (hidden): " STORE_PW
+read -r -s -p "Keystore password (hidden): " STORE_PW
 read -r -s -p "Confirm password (hidden): " STORE_PW_CONFIRM
 echo ""
 if [ "$STORE_PW" != "$STORE_PW_CONFIRM" ]; then

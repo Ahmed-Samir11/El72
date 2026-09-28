@@ -11,7 +11,9 @@ plugins {
 // locally via scripts/make-release-keystore.sh, or injected by CI from the
 // KEY_STORE secret). Absent file => debug signing, so local
 // `flutter run --release` keeps working out of the box.
-val keystorePropertiesFile = rootProject.file("android/key.properties")
+// The Gradle root project is flutter-app/android/, so the file is relative
+// to that directory.
+val keystorePropertiesFile = rootProject.file("key.properties")
 val keystoreProperties: Properties? =
     if (keystorePropertiesFile.exists()) {
         Properties().also { p -> keystorePropertiesFile.inputStream().use { p.load(it) } }
@@ -19,9 +21,16 @@ val keystoreProperties: Properties? =
         null
     }
 
-// MS4 versioning: CI may override versionCode via the VERSION_CODE env var
-// (auto-incremented in the flutter-ci job); defaults to the pubspec value.
-val ciVersionCode: Int? = System.getenv("VERSION_CODE")?.toIntOrNull()
+// MS4 versioning: CI may override versionCode via the VERSION_CODE env var.
+// A set-but-invalid value fails the build instead of silently falling back,
+// so a mistyped version can never ship.
+val ciVersionCode: Int? = System.getenv("VERSION_CODE")?.let { raw ->
+    val v = raw.toIntOrNull()
+    if (v == null || v < 1) {
+        error("VERSION_CODE env var '$raw' is not a positive integer")
+    }
+    v
+}
 
 android {
     // Play Store package identity. If `com.elhaq.tracker` turns out to be
@@ -50,6 +59,10 @@ android {
         versionName = flutter.versionName
     }
 
+    // The release signing config is only created when key.properties is
+    // present, so a missing file can never leave a half-configured release
+    // signing block behind.
+    if (keystoreProperties != null) {
     signingConfigs {
         create("release") {
             keystoreProperties?.let { kp ->
@@ -70,6 +83,7 @@ android {
                 storePassword = storePassword
             }
         }
+    }
     }
 
     buildTypes {
