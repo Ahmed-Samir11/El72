@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../l10n/app_localizations.dart';
+import '../core/styles/app_theme.dart';
 import '../data/providers.dart';
 
 class CreateTrackerSheet extends ConsumerStatefulWidget {
@@ -25,15 +28,15 @@ class _CreateTrackerSheetState extends ConsumerState<CreateTrackerSheet> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Text(
-            'Create Price Tracker',
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+          Text(
+            AppLocalizations.of(context).createPriceTracker,
+            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 16),
           TextField(
             controller: _urlController,
-            decoration: const InputDecoration(
-              labelText: 'Product URL (any supported store)',
+            decoration: InputDecoration(
+              labelText: AppLocalizations.of(context).productUrlHint,
               border: OutlineInputBorder(),
             ),
           ),
@@ -41,8 +44,8 @@ class _CreateTrackerSheetState extends ConsumerState<CreateTrackerSheet> {
           TextField(
             controller: _targetController,
             keyboardType: TextInputType.number,
-            decoration: const InputDecoration(
-              labelText: 'Target Price (Optional)',
+            decoration: InputDecoration(
+              labelText: AppLocalizations.of(context).targetPriceHint,
               border: OutlineInputBorder(),
             ),
           ),
@@ -69,16 +72,13 @@ class _CreateTrackerSheetState extends ConsumerState<CreateTrackerSheet> {
                   ref.invalidate(trackedItemsProvider);
                 });
 
-                Navigator.pop(context); // Close the sheet
-
                 if (context.mounted) {
+                  Navigator.pop(context); // Close the sheet
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text(
-                        '✅ Tracker created! You\'ll get a WhatsApp notification when we find a deal.',
-                      ),
-                      backgroundColor: Colors.green,
-                      duration: Duration(seconds: 3),
+                    SnackBar(
+                      content: Text(AppLocalizations.of(context).trackerCreated),
+                      backgroundColor: context.appTokens.success,
+                      duration: const Duration(seconds: 3),
                     ),
                   );
                 }
@@ -86,14 +86,14 @@ class _CreateTrackerSheetState extends ConsumerState<CreateTrackerSheet> {
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                      content: Text('Error: $e'),
-                      backgroundColor: Colors.red,
+                      content: Text(AppLocalizations.of(context).errorPrefix(e.toString())),
+                      backgroundColor: context.appTokens.error,
                     ),
                   );
                 }
               }
             },
-            child: const Text('Start Tracking'),
+            child: Text(AppLocalizations.of(context).startTracking),
           ),
           const SizedBox(height: 16),
         ],

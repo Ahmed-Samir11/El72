@@ -1,40 +1,42 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../l10n/app_localizations.dart';
+
 class SubscriptionScreen extends StatelessWidget {
   const SubscriptionScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Subscription Plans')),
+      appBar: AppBar(title: Text(AppLocalizations.of(context).subscriptionPlans)),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
             _buildPlanCard(
-              'Free',
-              'Basic tracking for 3 products',
-              'EGP 0/month',
-              Colors.grey,
+              AppLocalizations.of(context).freePlanShort,
+              AppLocalizations.of(context).basicTracking,
+              AppLocalizations.of(context).egpPerMonth('0'),
+              Theme.of(context).colorScheme.outline,
               () {
                 // Handle free plan
               },
             ),
             const SizedBox(height: 16),
             _buildPlanCard(
-              'Pro',
-              'Unlimited tracking + notifications',
-              'EGP 50/month',
-              Colors.blue,
+              AppLocalizations.of(context).proPlan,
+              AppLocalizations.of(context).unlimitedTracking,
+              AppLocalizations.of(context).egpPerMonth('50'),
+              Theme.of(context).colorScheme.primary,
               () => _launchPayment('pro'),
             ),
             const SizedBox(height: 16),
             _buildPlanCard(
-              'Business',
-              'Advanced analytics + API access',
-              'EGP 200/month',
-              Colors.purple,
+              AppLocalizations.of(context).businessPlan,
+              AppLocalizations.of(context).advancedAnalytics,
+              AppLocalizations.of(context).egpPerMonth('200'),
+              Theme.of(context).colorScheme.secondary,
               () => _launchPayment('business'),
             ),
           ],
@@ -45,7 +47,7 @@ class SubscriptionScreen extends StatelessWidget {
 
   Widget _buildPlanCard(String title, String description, String price, Color color, VoidCallback onTap) {
     return Card(
-      color: color.withOpacity(0.1),
+      color: color.withValues(alpha: 0.1),
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(12),

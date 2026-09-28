@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../../l10n/app_localizations.dart';
+import '../../core/format/price_format.dart';
 import '../../data/providers/tracking_status_provider.dart';
 
 class TrackingStatusBox extends ConsumerWidget {
@@ -25,7 +28,7 @@ class TrackingStatusBox extends ConsumerWidget {
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: _getGradientColors(trackingState.status)[0].withOpacity(0.3),
+            color: _getGradientColors(trackingState.status)[0].withValues(alpha: 0.3),
             blurRadius: 12,
             offset: const Offset(0, 6),
           ),
@@ -67,7 +70,7 @@ class TrackingStatusBox extends ConsumerWidget {
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.2),
+                color: Colors.white.withValues(alpha: 0.2),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Column(
@@ -79,7 +82,10 @@ class TrackingStatusBox extends ConsumerWidget {
                         const Icon(Icons.flag_outlined, color: Colors.white70, size: 16),
                         const SizedBox(width: 8),
                         Text(
-                          'Target: ${trackingState.targetPrice!.toStringAsFixed(0)} EGP',
+                          AppLocalizations.of(context).targetLabel(
+                              formatPrice(
+                                  trackingState.targetPrice!,
+                                  locale: Localizations.localeOf(context))),
                           style: const TextStyle(
                             color: Colors.white70,
                             fontSize: 14,
@@ -96,7 +102,10 @@ class TrackingStatusBox extends ConsumerWidget {
                         const Icon(Icons.price_check, color: Colors.white, size: 16),
                         const SizedBox(width: 8),
                         Text(
-                          'Current: ${trackingState.currentPrice!.toStringAsFixed(0)} EGP',
+                          AppLocalizations.of(context).currentLabel(
+                              formatPrice(
+                                  trackingState.currentPrice!,
+                                  locale: Localizations.localeOf(context))),
                           style: const TextStyle(
                             color: Colors.white,
                             fontSize: 14,
@@ -120,11 +129,11 @@ class TrackingStatusBox extends ConsumerWidget {
                 ref.read(trackingStatusProvider.notifier).reset();
               },
               style: TextButton.styleFrom(
-                backgroundColor: Colors.white.withOpacity(0.2),
+                backgroundColor: Colors.white.withValues(alpha: 0.2),
                 padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
               ),
-              child: const Text(
-                'Close',
+              child: Text(
+                AppLocalizations.of(context).close,
                 style: TextStyle(
                   color: Colors.white,
                   fontWeight: FontWeight.bold,

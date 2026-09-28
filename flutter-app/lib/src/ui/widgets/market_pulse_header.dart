@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+
+import '../../../l10n/app_localizations.dart';
+import '../../core/format/price_format.dart';
 import '../../core/styles/app_colors.dart';
 
 class MarketPulseHeader extends StatelessWidget {
@@ -15,6 +18,7 @@ class MarketPulseHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final locale = Localizations.localeOf(context);
     return Container(
       margin: const EdgeInsets.all(16),
       padding: const EdgeInsets.all(16),
@@ -26,7 +30,7 @@ class MarketPulseHeader extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [
           _StatItem(
-            label: 'Active Alerts',
+            label: AppLocalizations.of(context).activeAlerts,
             value: activeAlerts.toString(),
             icon: Icons.notifications_active,
           ),
@@ -36,7 +40,7 @@ class MarketPulseHeader extends StatelessWidget {
             color: Colors.white.withValues(alpha: 0.3),
           ),
           _StatItem(
-            label: 'Deals Today',
+            label: AppLocalizations.of(context).dealsToday,
             value: dealsToday.toString(),
             icon: Icons.local_offer,
           ),
@@ -46,8 +50,8 @@ class MarketPulseHeader extends StatelessWidget {
             color: Colors.white.withValues(alpha: 0.3),
           ),
           _StatItem(
-            label: 'Savings',
-            value: 'ج.م ${savings.toStringAsFixed(0)}',
+            label: AppLocalizations.of(context).savings,
+            value: formatPrice(savings, locale: locale),
             icon: Icons.savings,
           ),
         ],
@@ -69,15 +73,18 @@ class _StatItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Text on the brand-orange card uses the theme's onPrimary token so it
+    // stays legible in both light and dark themes.
+    final onPrimary = Theme.of(context).colorScheme.onPrimary;
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(icon, color: Colors.white, size: 20),
+        Icon(icon, color: onPrimary, size: 20),
         const SizedBox(height: 4),
         Text(
           value,
-          style: const TextStyle(
-            color: Colors.white,
+          style: TextStyle(
+            color: onPrimary,
             fontSize: 18,
             fontWeight: FontWeight.bold,
           ),
@@ -85,7 +92,7 @@ class _StatItem extends StatelessWidget {
         Text(
           label,
           style: TextStyle(
-            color: Colors.white.withValues(alpha: 0.8),
+            color: onPrimary.withValues(alpha: 0.8),
             fontSize: 12,
           ),
         ),

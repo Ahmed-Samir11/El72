@@ -1,16 +1,143 @@
 {
   "@@locale": "ar",
-  "appTitle": "El72 Deals",
-  "helloDoctor": "مرحباً د. {firstName}",
-  "logout": "تسجيل الخروج",
-  "patients": "المرضى",
-  "ai": "الذكاء الاصطناعي",
-  "alerts": "التنبيهات",
-  "reports": "التقارير",
-  "settings": "الإعدادات",
-  "language": "اللغة",
-  "darkTheme": "الوضع الداكن",
-  "notifications": "تفعيل الإشعارات",
-  "changePassword": "تغيير كلمة المرور",
-  "logoutAction": "تسجيل الخروج"
+  "appTitle": "إلحق",
+  "@appTitle": {
+    "description": "App name shown in the dashboard app bar."
+  },
+
+  "login": "تسجيل الدخول",
+  "register": "التسجيل",
+  "phoneNumber": "رقم الهاتف",
+  "password": "كلمة المرور",
+  "fillAllFields": "يرجى ملء جميع الحقول",
+  "invalidCredentials": "بيانات اعتماد غير صالحة. يرجى المحاولة مرة أخرى.",
+  "loginFailed": "فشل تسجيل الدخول: {error}",
+  "@loginFailed": {
+    "placeholders": {
+      "error": { "type": "String" }
+    }
+  },
+  "cancel": "إلغاء",
+  "registrationFailed": "فشل التسجيل. يرجى المحاولة مرة أخرى.",
+  "haveAccountLogin": "لديك حساب بالفعل؟ سجّل الدخول",
+  "otpVerification": "تحقق رمز OTP",
+  "deliveryMethod": "طريقة الإرسال",
+  "sms": "رسالة نصية",
+  "email": "البريد الإلكتروني",
+  "enterOtp": "أدخل رمز التحقق",
+  "verify": "تحقق",
+
+  "splashStatusOpening": "جارٍ فتح التطبيق...",
+  "splashStatusConnecting": "جارٍ الاتصال بالسحابة...",
+  "splashStatusLoading": "جارٍ تحميل بيانات المستخدم...",
+  "splashStatusReady": "على وشك الجاهزية...",
+
+  "failedToLoadTrackers": "فشل في تحميل متتبعاتك.\n{error}",
+  "@failedToLoadTrackers": {
+    "placeholders": {
+      "error": { "type": "String" }
+    }
+  },
+  "noTrackersEmpty": "لا توجد متتبعات نشطة بعد.\nاضغط + لبدء تتبع منتج.",
+  "liveMarketFeed": "بث السوق المباشر",
+  "failedToLoadDeals": "فشل في تحميل الصفقات.\n{error}",
+  "@failedToLoadDeals": {
+    "placeholders": {
+      "error": { "type": "String" }
+    }
+  },
+  "noLiveDeals": "لا توجد صفقات حية الآن.",
+  "myAccount": "حسابي",
+  "demoAccount": "حساب تجريبي",
+  "fullAccount": "حساب كامل",
+  "currentPlan": "الخطة الحالية",
+  "freePlan": "الخطة المجانية",
+  "manage": "إدارة",
+  "demoMode": "الوضع التجريبي",
+  "usingSampleData": "استخدام بيانات تجريبية دون اتصال",
+  "usingLiveData": "استخدام حساب مباشر وبيانات الـ API",
+  "logOut": "تسجيل الخروج",
+
+  "activeAlerts": "تنبيهات نشطة",
+  "dealsToday": "صفقات اليوم",
+  "savings": "التوفير",
+
+  "createPriceTracker": "إنشاء متتبع أسعار",
+  "productUrlHint": "رابط المنتج (أي متجر مدعوم)",
+  "targetPriceHint": "السعر المستهدف (اختياري)",
+  "trackerCreated": "✅ تم إنشاء المتتبع! ستصلك رسالة واتساب عند العثور على صفقة.",
+  "startTracking": "ابدأ التتبع",
+  "errorPrefix": "خطأ: {error}",
+  "@errorPrefix": {
+    "placeholders": {
+      "error": { "type": "String" }
+    }
+  },
+
+  "unableToOpen": "تعذر فتح {title}",
+  "@unableToOpen": {
+    "placeholders": {
+      "title": { "type": "String" }
+    }
+  },
+
+  "priceHistory": "سجل الأسعار",
+  "noPriceHistory": "لا يوجد سجل أسعار لهذا المنتج بعد.",
+  "failedToLoadPriceHistory": "فشل في تحميل سجل الأسعار.\n{message}",
+  "@failedToLoadPriceHistory": {
+    "placeholders": {
+      "message": { "type": "String" }
+    }
+  },
+
+  "subscriptionPlans": "خطط الاشتراك",
+  "freePlanShort": "مجاني",
+  "proPlan": "احترافي",
+  "businessPlan": "أعمال",
+  "basicTracking": "تتبع أساسي لـ 3 منتجات",
+  "unlimitedTracking": "تتبع غير محدود + إشعارات",
+  "advancedAnalytics": "تحليلات متقدمة + وصول API",
+  "egpPerMonth": "{amount} ج.م/شهر",
+  "@egpPerMonth": {
+    "placeholders": {
+      "amount": { "type": "String" }
+    }
+  },
+
+  "statCurrent": "الحالي",
+  "statLow90d": "أدنى 90 يوم",
+  "statHigh90d": "أعلى 90 يوم",
+  "statChange": "التغير",
+
+  "close": "إغلاق",
+  "targetLabel": "المستهدف: {price}",
+  "@targetLabel": {
+    "placeholders": {
+      "price": { "type": "String" }
+    }
+  },
+  "currentLabel": "الحالي: {price}",
+  "@currentLabel": {
+    "placeholders": {
+      "price": { "type": "String" }
+    }
+  },
+
+  "fetchingPrice": "جارٍ جلب السعر المباشر...",
+  "targetPriceLabel": "السعر المستهدف: {price}",
+  "@targetPriceLabel": {
+    "placeholders": {
+      "price": { "type": "String" }
+    }
+  },
+
+  "genericLoadError": "فشل في التحميل.\n{error}",
+  "@genericLoadError": {
+    "placeholders": {
+      "error": { "type": "String" }
+    }
+  },
+
+  "liveDeals": "الصفقات الحية",
+  "noLiveDealsSoon": "لا توجد صفقات حية الآن. عد لاحقًا."
 }
