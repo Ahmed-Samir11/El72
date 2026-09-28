@@ -91,7 +91,7 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String get noLiveDeals => 'No live deals right now.';
+  String get noLiveDeals => 'No live deals right now. Check back soon.';
 
   @override
   String get myAccount => 'My account';
@@ -225,18 +225,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get fetchingPrice => 'Fetching live price...';
 
   @override
-  String targetPriceLabel(String price) {
-    return 'Target: $price';
-  }
-
-  @override
   String genericLoadError(String error) {
     return 'Failed to load.\n$error';
   }
 
   @override
   String get liveDeals => 'Live Deals';
-
-  @override
-  String get noLiveDealsSoon => 'No live deals right now. Check back soon.';
 }

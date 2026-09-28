@@ -92,7 +92,7 @@ class AppLocalizationsAr extends AppLocalizations {
   }
 
   @override
-  String get noLiveDeals => 'لا توجد صفقات حية الآن.';
+  String get noLiveDeals => 'لا توجد صفقات حية الآن. عد لاحقًا.';
 
   @override
   String get myAccount => 'حسابي';
@@ -225,18 +225,10 @@ class AppLocalizationsAr extends AppLocalizations {
   String get fetchingPrice => 'جارٍ جلب السعر المباشر...';
 
   @override
-  String targetPriceLabel(String price) {
-    return 'السعر المستهدف: $price';
-  }
-
-  @override
   String genericLoadError(String error) {
     return 'فشل في التحميل.\n$error';
   }
 
   @override
   String get liveDeals => 'الصفقات الحية';
-
-  @override
-  String get noLiveDealsSoon => 'لا توجد صفقات حية الآن. عد لاحقًا.';
 }

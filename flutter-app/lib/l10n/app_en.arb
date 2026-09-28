@@ -46,7 +46,7 @@
       "error": { "type": "String" }
     }
   },
-  "noLiveDeals": "No live deals right now.",
+  "noLiveDeals": "No live deals right now. Check back soon.",
   "myAccount": "My account",
   "demoAccount": "Demo account",
   "fullAccount": "Full account",
@@ -124,12 +124,6 @@
   },
 
   "fetchingPrice": "Fetching live price...",
-  "targetPriceLabel": "Target: {price}",
-  "@targetPriceLabel": {
-    "placeholders": {
-      "price": { "type": "String" }
-    }
-  },
 
   "genericLoadError": "Failed to load.\n{error}",
   "@genericLoadError": {
@@ -138,6 +132,5 @@
     }
   },
 
-  "liveDeals": "Live Deals",
-  "noLiveDealsSoon": "No live deals right now. Check back soon."
+  "liveDeals": "Live Deals"
 }

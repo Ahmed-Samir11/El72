@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../l10n/app_localizations.dart';
+import '../core/format/error_message.dart';
 import '../core/styles/app_theme.dart';
 import '../data/providers.dart';
 
@@ -86,7 +87,7 @@ class _CreateTrackerSheetState extends ConsumerState<CreateTrackerSheet> {
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                      content: Text(AppLocalizations.of(context).errorPrefix(e.toString())),
+                      content: Text(AppLocalizations.of(context).errorPrefix(errorMessage(e))),
                       backgroundColor: context.appTokens.error,
                     ),
                   );

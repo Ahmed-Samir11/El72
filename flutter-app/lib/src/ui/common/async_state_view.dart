@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../l10n/app_localizations.dart';
+import '../../core/format/error_message.dart';
 
 /// Uniform async-state rendering for the app's screens.
 ///
@@ -37,7 +38,7 @@ class AsyncStateView<T> extends StatelessWidget {
             child: Padding(
               padding: const EdgeInsets.all(24),
               child: Text(
-                AppLocalizations.of(context).genericLoadError(error.toString()),
+                AppLocalizations.of(context).genericLoadError(errorMessage(error)),
                 textAlign: TextAlign.center,
                 style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
               ),

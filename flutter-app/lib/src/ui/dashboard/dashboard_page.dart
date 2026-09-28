@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../l10n/app_localizations.dart';
+import '../../core/format/error_message.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/providers.dart';
@@ -64,7 +65,7 @@ class _TrackersTab extends ConsumerWidget {
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (e, _) => Center(
         child: Text(
-          AppLocalizations.of(context).failedToLoadTrackers(e.toString()),
+          AppLocalizations.of(context).failedToLoadTrackers(errorMessage(e)),
           textAlign: TextAlign.center,
         ),
       ),
@@ -188,7 +189,7 @@ class _DealsTab extends ConsumerWidget {
           error: (e, _) => SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.all(16),
-              child: Text(AppLocalizations.of(context).failedToLoadDeals(e.toString())),
+              child: Text(AppLocalizations.of(context).failedToLoadDeals(errorMessage(e))),
             ),
           ),
           data: (deals) {

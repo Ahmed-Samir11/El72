@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../l10n/app_localizations.dart';
+import '../../core/format/error_message.dart';
 import '../../core/format/price_format.dart';
 import '../../core/styles/app_colors.dart';
 import '../../core/styles/app_theme.dart';
@@ -30,7 +31,7 @@ class PriceHistoryPage extends ConsumerWidget {
       ),
       body: pointsAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => _ErrorView(message: e.toString()),
+        error: (e, _) => _ErrorView(message: errorMessage(e)),
         data: (points) {
           if (points.isEmpty) return const _EmptyView();
           return _PriceChart(points: points);

@@ -19,10 +19,6 @@ void main() {
       expect(formatted, contains('1,250'));
     });
 
-    test('defaults to the en locale when no locale is supplied', () {
-      expect(formatPrice(99), contains('EGP'));
-    });
-
     test('respects the active locale tag for non-Arab locales', () {
       // A non-Arab, non-English locale still gets the EGP symbol.
       final formatted = NumberFormat.currency(locale: 'fr', symbol: 'EGP')

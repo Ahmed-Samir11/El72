@@ -46,7 +46,7 @@
       "error": { "type": "String" }
     }
   },
-  "noLiveDeals": "لا توجد صفقات حية الآن.",
+  "noLiveDeals": "لا توجد صفقات حية الآن. عد لاحقًا.",
   "myAccount": "حسابي",
   "demoAccount": "حساب تجريبي",
   "fullAccount": "حساب كامل",
@@ -124,12 +124,6 @@
   },
 
   "fetchingPrice": "جارٍ جلب السعر المباشر...",
-  "targetPriceLabel": "السعر المستهدف: {price}",
-  "@targetPriceLabel": {
-    "placeholders": {
-      "price": { "type": "String" }
-    }
-  },
 
   "genericLoadError": "فشل في التحميل.\n{error}",
   "@genericLoadError": {
@@ -138,6 +132,5 @@
     }
   },
 
-  "liveDeals": "الصفقات الحية",
-  "noLiveDealsSoon": "لا توجد صفقات حية الآن. عد لاحقًا."
+  "liveDeals": "الصفقات الحية"
 }

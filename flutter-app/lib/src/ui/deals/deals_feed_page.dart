@@ -21,7 +21,7 @@ class DealsFeedPage extends ConsumerWidget {
         builder: (deals) {
           if (deals.isEmpty) {
             return Center(
-              child: Text(AppLocalizations.of(context).noLiveDealsSoon),
+              child: Text(AppLocalizations.of(context).noLiveDeals),
             );
           }
           return ListView.builder(

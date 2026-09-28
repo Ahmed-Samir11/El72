@@ -47,10 +47,10 @@ class ElhaqApp extends StatelessWidget {
         GlobalWidgetsLocalizations.delegate,
         GlobalCupertinoLocalizations.delegate,
       ],
-      // Arabic-first: ar is the default locale; RTL layout follows
-      // automatically from the active locale.
+      // Arabic-first: ar leads supportedLocales, so any unsupported platform
+      // locale falls back to Arabic. Supported devices (ar/en) use their own
+      // locale; RTL layout follows automatically from the active locale.
       supportedLocales: const [Locale('ar'), Locale('en')],
-      locale: const Locale('ar'),
       initialRoute: AppRoutes.splash,
       routes: AppRouter.routes,
     );

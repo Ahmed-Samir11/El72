@@ -117,7 +117,7 @@ class TrackerCard extends StatelessWidget {
                     if (targetPrice > 0) ...[
                       const SizedBox(height: 4),
                       Text(
-                        AppLocalizations.of(context).targetPriceLabel(
+                        AppLocalizations.of(context).targetLabel(
                             formatPrice(targetPrice, locale: locale)),
                         style: TextStyle(
                             fontSize: 14, color: colorScheme.onSurfaceVariant),

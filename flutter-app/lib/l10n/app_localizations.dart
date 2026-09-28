@@ -251,7 +251,7 @@ abstract class AppLocalizations {
   /// No description provided for @noLiveDeals.
   ///
   /// In en, this message translates to:
-  /// **'No live deals right now.'**
+  /// **'No live deals right now. Check back soon.'**
   String get noLiveDeals;
 
   /// No description provided for @myAccount.
@@ -488,12 +488,6 @@ abstract class AppLocalizations {
   /// **'Fetching live price...'**
   String get fetchingPrice;
 
-  /// No description provided for @targetPriceLabel.
-  ///
-  /// In en, this message translates to:
-  /// **'Target: {price}'**
-  String targetPriceLabel(String price);
-
   /// No description provided for @genericLoadError.
   ///
   /// In en, this message translates to:
@@ -505,12 +499,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Live Deals'**
   String get liveDeals;
-
-  /// No description provided for @noLiveDealsSoon.
-  ///
-  /// In en, this message translates to:
-  /// **'No live deals right now. Check back soon.'**
-  String get noLiveDealsSoon;
 }
 
 class _AppLocalizationsDelegate
