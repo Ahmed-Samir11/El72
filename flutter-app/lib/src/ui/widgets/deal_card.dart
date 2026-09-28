@@ -1,7 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
+
+import '../../../l10n/app_localizations.dart';
+import '../../core/format/price_format.dart';
 import '../../core/styles/app_colors.dart';
+import '../../core/styles/app_theme.dart';
 import '../../data/models/deal_model.dart';
+import 'product_image.dart';
 
 class DealCard extends StatelessWidget {
   final Deal deal;
@@ -10,6 +15,10 @@ class DealCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tokens = context.appTokens;
+    final colorScheme = Theme.of(context).colorScheme;
+    final locale = Localizations.localeOf(context);
+
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -20,7 +29,9 @@ class DealCard extends StatelessWidget {
           if (uri == null || !await launchUrl(uri)) {
             if (!context.mounted) return;
             ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Unable to open ${deal.title}')),
+              SnackBar(
+                content: Text(AppLocalizations.of(context).unableToOpen(deal.title)),
+              ),
             );
           }
         },
@@ -29,26 +40,7 @@ class DealCard extends StatelessWidget {
           padding: const EdgeInsets.all(16),
           child: Row(
             children: [
-              // Product Image
-              Container(
-                width: 60,
-                height: 60,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(8),
-                  color: Theme.of(context).cardColor,
-                ),
-                child: deal.imageUrl.isNotEmpty
-                    ? ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: Image.network(
-                          deal.imageUrl,
-                          fit: BoxFit.cover,
-                          errorBuilder: (context, error, stackTrace) =>
-                              const Icon(Icons.shopping_bag_outlined, size: 30),
-                        ),
-                      )
-                    : const Icon(Icons.shopping_bag_outlined, size: 30),
-              ),
+              ProductImage(imageUrl: deal.imageUrl, size: 60),
               const SizedBox(width: 16),
 
               // Center Content
@@ -71,7 +63,7 @@ class DealCard extends StatelessWidget {
                     Text(
                       deal.storeName,
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: AppColors.textSecondary,
+                        color: colorScheme.onSurfaceVariant,
                       ),
                     ),
                   ],
@@ -85,10 +77,9 @@ class DealCard extends StatelessWidget {
                 children: [
                   // Price
                   Text(
-                    'ج.م ${deal.price.toStringAsFixed(2)}',
-                    style: AppColors.priceTextStyle(
-                      Theme.of(context).colorScheme.onSurface,
-                    ).copyWith(
+                    formatPrice(deal.price, locale: locale),
+                    style: AppColors.priceTextStyle(colorScheme.onSurface)
+                        .copyWith(
                       fontSize: 18,
                       fontWeight: FontWeight.bold,
                     ),
@@ -97,10 +88,10 @@ class DealCard extends StatelessWidget {
                   // Original Price (strikethrough)
                   if (deal.originalPrice > deal.price)
                     Text(
-                      'ج.م ${deal.originalPrice.toStringAsFixed(2)}',
+                      formatPrice(deal.originalPrice, locale: locale),
                       style: TextStyle(
                         fontSize: 14,
-                        color: AppColors.textSecondary,
+                        color: colorScheme.onSurfaceVariant,
                         decoration: TextDecoration.lineThrough,
                       ),
                     ),
@@ -114,13 +105,13 @@ class DealCard extends StatelessWidget {
                       vertical: 4,
                     ),
                     decoration: BoxDecoration(
-                      color: AppColors.priceDown,
+                      color: tokens.priceDown,
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Text(
                       '-${deal.discountPercentage.toStringAsFixed(0)}%',
-                      style: const TextStyle(
-                        color: Colors.white,
+                      style: TextStyle(
+                        color: colorScheme.onPrimary,
                         fontSize: 12,
                         fontWeight: FontWeight.bold,
                       ),

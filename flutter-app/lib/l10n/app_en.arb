@@ -1,16 +1,136 @@
 {
   "@@locale": "en",
-  "appTitle": "El72 Deals",
-  "helloDoctor": "Hello, Dr. {firstName}",
-  "logout": "Logout",
-  "patients": "Patients",
-  "ai": "AI",
-  "alerts": "Alerts",
-  "reports": "Reports",
-  "settings": "Settings",
-  "language": "Language",
-  "darkTheme": "Dark Theme",
-  "notifications": "Enable Notifications",
-  "changePassword": "Change Password",
-  "logoutAction": "Logout"
+  "appTitle": "El72",
+  "@appTitle": {
+    "description": "App name shown in the dashboard app bar."
+  },
+
+  "login": "Log In",
+  "register": "Register",
+  "phoneNumber": "Phone Number",
+  "password": "Password",
+  "fillAllFields": "Please fill all fields",
+  "invalidCredentials": "Invalid credentials. Please try again.",
+  "loginFailed": "Login failed: {error}",
+  "@loginFailed": {
+    "placeholders": {
+      "error": { "type": "String" }
+    }
+  },
+  "cancel": "Cancel",
+  "registrationFailed": "Registration failed. Please try again.",
+  "haveAccountLogin": "Already have an account? Login",
+  "otpVerification": "OTP Verification",
+  "deliveryMethod": "Delivery Method",
+  "sms": "SMS",
+  "email": "Email",
+  "enterOtp": "Enter OTP",
+  "verify": "Verify",
+
+  "splashStatusOpening": "Opening application...",
+  "splashStatusConnecting": "Connecting to cloud...",
+  "splashStatusLoading": "Loading user data...",
+  "splashStatusReady": "Almost ready...",
+
+  "failedToLoadTrackers": "Failed to load your trackers.\n{error}",
+  "@failedToLoadTrackers": {
+    "placeholders": {
+      "error": { "type": "String" }
+    }
+  },
+  "noTrackersEmpty": "No active trackers yet.\nTap + to start tracking a product.",
+  "liveMarketFeed": "Live Market Feed",
+  "failedToLoadDeals": "Failed to load deals.\n{error}",
+  "@failedToLoadDeals": {
+    "placeholders": {
+      "error": { "type": "String" }
+    }
+  },
+  "noLiveDeals": "No live deals right now. Check back soon.",
+  "myAccount": "My account",
+  "demoAccount": "Demo account",
+  "fullAccount": "Full account",
+  "currentPlan": "Current plan",
+  "freePlan": "Free plan",
+  "manage": "Manage",
+  "demoMode": "Demo mode",
+  "usingSampleData": "Using sample data offline",
+  "usingLiveData": "Using live account and API data",
+  "logOut": "Log out",
+
+  "activeAlerts": "Active Alerts",
+  "dealsToday": "Deals Today",
+  "savings": "Savings",
+
+  "createPriceTracker": "Create Price Tracker",
+  "productUrlHint": "Product URL (any supported store)",
+  "targetPriceHint": "Target Price (Optional)",
+  "trackerCreated": "✅ Tracker created! You'll get a WhatsApp notification when we find a deal.",
+  "startTracking": "Start Tracking",
+  "errorPrefix": "Error: {error}",
+  "@errorPrefix": {
+    "placeholders": {
+      "error": { "type": "String" }
+    }
+  },
+
+  "unableToOpen": "Unable to open {title}",
+  "@unableToOpen": {
+    "placeholders": {
+      "title": { "type": "String" }
+    }
+  },
+
+  "priceHistory": "Price History",
+  "noPriceHistory": "No price history available for this product yet.",
+  "failedToLoadPriceHistory": "Failed to load price history.\n{message}",
+  "@failedToLoadPriceHistory": {
+    "placeholders": {
+      "message": { "type": "String" }
+    }
+  },
+
+  "subscriptionPlans": "Subscription Plans",
+  "freePlanShort": "Free",
+  "proPlan": "Pro",
+  "businessPlan": "Business",
+  "basicTracking": "Basic tracking for 3 products",
+  "unlimitedTracking": "Unlimited tracking + notifications",
+  "advancedAnalytics": "Advanced analytics + API access",
+  "egpPerMonth": "EGP {amount}/month",
+  "@egpPerMonth": {
+    "placeholders": {
+      "amount": { "type": "String" }
+    }
+  },
+
+  "statCurrent": "Current",
+  "statLow90d": "90d Low",
+  "statHigh90d": "90d High",
+  "statChange": "Change",
+
+  "close": "Close",
+  "targetLabel": "Target: {price}",
+  "@targetLabel": {
+    "placeholders": {
+      "price": { "type": "String" }
+    }
+  },
+  "currentLabel": "Current: {price}",
+  "@currentLabel": {
+    "placeholders": {
+      "price": { "type": "String" }
+    }
+  },
+
+  "fetchingPrice": "Fetching live price...",
+
+  "genericLoadError": "Failed to load.\n{error}",
+  "@genericLoadError": {
+    "placeholders": {
+      "error": { "type": "String" }
+    }
+  },
+
+  "liveDeals": "Live Deals"
 }

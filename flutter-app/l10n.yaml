@@ -1,0 +1,10 @@
+# flutter gen-l10n configuration.
+# Run with: flutter gen-l10n  (or automatically on build when generate: true)
+# nullable-getter is false because the app pins supportedLocales to [ar, en]
+# and registers AppLocalizations.delegate in main.dart, so
+# AppLocalizations.of(context) can never be null at runtime. Non-null getters
+# keep call sites clean of `?.` chains.
+arb-dir: lib/l10n
+template-arb-file: app_en.arb
+output-localization-file: app_localizations.dart
+nullable-getter: false

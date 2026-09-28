@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../l10n/app_localizations.dart';
+import '../../data/models/deal_model.dart';
 import '../../data/providers.dart';
+import '../common/async_state_view.dart';
 import '../widgets/deal_card.dart';
 
 /// Deal Discovery feed, consuming `GET /deals/live` (with demo fallback).
@@ -12,19 +15,13 @@ class DealsFeedPage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final dealsAsync = ref.watch(liveDealsProvider);
     return Scaffold(
-      appBar: AppBar(title: const Text('Live Deals')),
-      body: dealsAsync.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Center(
-          child: Text(
-            'Failed to load deals.\n$e',
-            textAlign: TextAlign.center,
-          ),
-        ),
-        data: (deals) {
+      appBar: AppBar(title: Text(AppLocalizations.of(context).liveDeals)),
+      body: AsyncStateView<List<Deal>>(
+        value: dealsAsync,
+        builder: (deals) {
           if (deals.isEmpty) {
-            return const Center(
-              child: Text('No live deals right now. Check back soon.'),
+            return Center(
+              child: Text(AppLocalizations.of(context).noLiveDeals),
             );
           }
           return ListView.builder(

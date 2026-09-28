@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+
+import '../../../l10n/app_localizations.dart';
+import '../../core/format/error_message.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/providers.dart';
@@ -62,7 +65,7 @@ class _TrackersTab extends ConsumerWidget {
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (e, _) => Center(
         child: Text(
-          'Failed to load your trackers.\n$e',
+          AppLocalizations.of(context).failedToLoadTrackers(errorMessage(e)),
           textAlign: TextAlign.center,
         ),
       ),
@@ -75,14 +78,14 @@ class _TrackersTab extends ConsumerWidget {
           child: items.isEmpty
               ? ListView(
                   physics: const AlwaysScrollableScrollPhysics(),
-                  children: const [
-                    SizedBox(height: 200),
+                  children: [
+                    const SizedBox(height: 200),
                     // No Center here: a Center inside a ListView gets
                     // unbounded height and trips a layout assert.
                     Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 32),
+                      padding: const EdgeInsets.symmetric(horizontal: 32),
                       child: Text(
-                        'No active trackers yet.\nTap + to start tracking a product.',
+                        AppLocalizations.of(context).noTrackersEmpty,
                         textAlign: TextAlign.center,
                       ),
                     ),
@@ -132,7 +135,7 @@ class _DealsTab extends ConsumerWidget {
         // SliverAppBar
         SliverAppBar(
           floating: true,
-          title: const Text('إلحق'),
+          title: Text(AppLocalizations.of(context).appTitle),
           actions: [
             IconButton(
               icon: const Icon(Icons.notifications),
@@ -167,7 +170,7 @@ class _DealsTab extends ConsumerWidget {
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
             child: Text(
-              'Live Market Feed',
+              AppLocalizations.of(context).liveMarketFeed,
               style: Theme.of(
                 context,
               ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
@@ -186,15 +189,15 @@ class _DealsTab extends ConsumerWidget {
           error: (e, _) => SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.all(16),
-              child: Text('Failed to load deals.\n$e'),
+              child: Text(AppLocalizations.of(context).failedToLoadDeals(errorMessage(e))),
             ),
           ),
           data: (deals) {
             if (deals.isEmpty) {
               return SliverToBoxAdapter(
-                child: const Padding(
-                  padding: EdgeInsets.all(16),
-                  child: Text('No live deals right now.'),
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Text(AppLocalizations.of(context).noLiveDeals),
                 ),
               );
             }
@@ -221,22 +224,24 @@ class _ProfileTab extends ConsumerWidget {
         Card(
           child: ListTile(
             leading: const CircleAvatar(child: Icon(Icons.person)),
-            title: const Text('My account'),
-            subtitle: Text(isDemo ? 'Demo account' : 'Full account'),
+            title: Text(AppLocalizations.of(context).myAccount),
+            subtitle: Text(isDemo
+                ? AppLocalizations.of(context).demoAccount
+                : AppLocalizations.of(context).fullAccount),
           ),
         ),
         const SizedBox(height: 12),
         Card(
           child: ListTile(
             leading: const Icon(Icons.workspace_premium_outlined),
-            title: const Text('Current plan'),
-            subtitle: const Text('Free plan'),
+            title: Text(AppLocalizations.of(context).currentPlan),
+            subtitle: Text(AppLocalizations.of(context).freePlan),
             trailing: TextButton(
               onPressed: () => Navigator.push(
                 context,
                 MaterialPageRoute(builder: (_) => const SubscriptionScreen()),
               ),
-              child: const Text('Manage'),
+              child: Text(AppLocalizations.of(context).manage),
             ),
           ),
         ),
@@ -244,11 +249,11 @@ class _ProfileTab extends ConsumerWidget {
         Card(
           child: SwitchListTile.adaptive(
             secondary: const Icon(Icons.science_outlined),
-            title: const Text('Demo mode'),
+            title: Text(AppLocalizations.of(context).demoMode),
             subtitle: Text(
               isDemo
-                  ? 'Using sample data offline'
-                  : 'Using live account and API data',
+                  ? AppLocalizations.of(context).usingSampleData
+                  : AppLocalizations.of(context).usingLiveData,
             ),
             value: isDemo,
             onChanged: (enabled) async {
@@ -279,7 +284,7 @@ class _ProfileTab extends ConsumerWidget {
             }
           },
           icon: const Icon(Icons.logout),
-          label: const Text('Log out'),
+          label: Text(AppLocalizations.of(context).logOut),
         ),
       ],
     );

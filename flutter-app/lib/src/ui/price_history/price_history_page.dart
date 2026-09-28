@@ -4,6 +4,9 @@ import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../l10n/app_localizations.dart';
+import '../../core/format/error_message.dart';
+import '../../core/format/price_format.dart';
 import '../../core/styles/app_colors.dart';
 import '../../core/styles/app_theme.dart';
 import '../../data/models/price_point_model.dart';
@@ -22,11 +25,13 @@ class PriceHistoryPage extends ConsumerWidget {
     final pointsAsync = ref.watch(priceHistoryProvider(sku));
     return Scaffold(
       appBar: AppBar(
-        title: Text(title.isEmpty ? 'Price History' : title),
+        title: Text(
+          title.isEmpty ? AppLocalizations.of(context).priceHistory : title,
+        ),
       ),
       body: pointsAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => _ErrorView(message: e.toString()),
+        error: (e, _) => _ErrorView(message: errorMessage(e)),
         data: (points) {
           if (points.isEmpty) return const _EmptyView();
           return _PriceChart(points: points);
@@ -167,28 +172,28 @@ class _SummaryRow extends StatelessWidget {
       children: [
         Expanded(
           child: _Stat(
-            label: 'Current',
-            value: 'EGP ${current.toStringAsFixed(0)}',
+            label: AppLocalizations.of(context).statCurrent,
+            value: formatPrice(current, locale: Localizations.localeOf(context)),
             color: context.appTokens.onSurface,
           ),
         ),
         Expanded(
           child: _Stat(
-            label: '90d Low',
-            value: 'EGP ${lowest.toStringAsFixed(0)}',
+            label: AppLocalizations.of(context).statLow90d,
+            value: formatPrice(lowest, locale: Localizations.localeOf(context)),
             color: context.appTokens.priceDown,
           ),
         ),
         Expanded(
           child: _Stat(
-            label: '90d High',
-            value: 'EGP ${highest.toStringAsFixed(0)}',
+            label: AppLocalizations.of(context).statHigh90d,
+            value: formatPrice(highest, locale: Localizations.localeOf(context)),
             color: context.appTokens.priceUp,
           ),
         ),
         Expanded(
           child: _Stat(
-            label: 'Change',
+            label: AppLocalizations.of(context).statChange,
             value:
                 '${change >= 0 ? '+' : ''}${changePct.toStringAsFixed(1)}%',
             color: change >= 0
@@ -243,10 +248,11 @@ class _EmptyView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Center(
+    return Center(
       child: Text(
-        'No price history available for this product yet.',
-        style: TextStyle(color: AppColors.textSecondary),
+        AppLocalizations.of(context).noPriceHistory,
+        style: TextStyle(
+            color: Theme.of(context).colorScheme.onSurfaceVariant),
       ),
     );
   }
@@ -263,9 +269,10 @@ class _ErrorView extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.all(24),
         child: Text(
-          'Failed to load price history.\n$message',
+          AppLocalizations.of(context).failedToLoadPriceHistory(message),
           textAlign: TextAlign.center,
-          style: const TextStyle(color: AppColors.textSecondary),
+          style:
+              TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
         ),
       ),
     );

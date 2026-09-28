@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../l10n/app_localizations.dart';
 import '../../core/styles/app_colors.dart';
 
 class WelcomePage extends StatelessWidget {
@@ -8,7 +9,7 @@ class WelcomePage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white, // Elhaq theme background
+      backgroundColor: Theme.of(context).colorScheme.surface,
       body: Center(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 24),
@@ -34,7 +35,7 @@ class WelcomePage extends StatelessWidget {
                     Navigator.pushNamed(context, '/register');
                   },
                   child: Text(
-                    "Register",
+                    AppLocalizations.of(context).register,
                     style: TextStyle(
                       fontFamily: 'IBM Plex Sans',
                       fontSize: 18,
@@ -61,7 +62,7 @@ class WelcomePage extends StatelessWidget {
                     Navigator.pushNamed(context, '/login');
                   },
                   child: Text(
-                    "Login",
+                    AppLocalizations.of(context).login,
                     style: TextStyle(
                       fontFamily: 'IBM Plex Sans',
                       fontSize: 18,

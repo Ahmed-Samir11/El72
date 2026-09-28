@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../../l10n/app_localizations.dart';
+import '../../core/format/error_message.dart';
+import '../../core/styles/app_theme.dart';
 import '../common/top_box.dart';
 import '../../data/providers.dart';
 import '../../core/styles/app_colors.dart';
@@ -20,7 +24,7 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white, // Elhaq theme background
+      backgroundColor: Theme.of(context).colorScheme.surface,
       appBar: const PreferredSize(
         preferredSize: Size.fromHeight(100),
         child: TopBox(),
@@ -30,13 +34,13 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            const Text(
-              'Register',
+            Text(
+              AppLocalizations.of(context).register,
               style: TextStyle(
                 fontFamily: 'IBM Plex Sans',
                 fontSize: 40,
                 fontStyle: FontStyle.italic,
-                color: Colors.black87,
+                color: Theme.of(context).colorScheme.onSurface,
               ),
               textAlign: TextAlign.center,
             ),
@@ -54,7 +58,7 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
                   child: ElevatedButton(
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.primary,
-                      foregroundColor: Colors.white,
+                      foregroundColor: Theme.of(context).colorScheme.onPrimary,
                       padding: const EdgeInsets.symmetric(vertical: 16),
                       textStyle: const TextStyle(
                         fontSize: 18,
@@ -69,8 +73,10 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
 
                             if (phone.isEmpty || password.isEmpty) {
                               ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text("Please fill all fields"),
+                                SnackBar(
+                                  content:
+                                      Text(AppLocalizations.of(context).fillAllFields),
+                                  backgroundColor: context.appTokens.warning,
                                 ),
                               );
                               return;
@@ -85,27 +91,30 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
                                 password,
                               );
 
-                              if (isValid && mounted) {
+                              if (isValid && context.mounted) {
                                 Navigator.pushNamedAndRemoveUntil(
                                   context,
                                   '/dashboard',
                                   (_) => false,
                                 );
-                              } else if (mounted) {
+                              } else if (context.mounted) {
                                 ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
+                                  SnackBar(
                                     content: Text(
-                                      "Registration failed. Please try again.",
+                                      AppLocalizations.of(context).registrationFailed,
                                     ),
+                                    backgroundColor: context.appTokens.warning,
                                   ),
                                 );
                               }
                             } catch (e) {
-                              if (mounted) {
+                              if (context.mounted) {
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   SnackBar(
-                                    content: Text(e.toString()),
-                                    backgroundColor: Colors.red,
+                                    content: Text(
+                                      AppLocalizations.of(context).errorPrefix(errorMessage(e)),
+                                    ),
+                                    backgroundColor: context.appTokens.error,
                                   ),
                                 );
                               }
@@ -113,7 +122,7 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
                               if (mounted) setState(() => _isLoading = false);
                             }
                           },
-                    child: const Text("Register"),
+                    child: Text(AppLocalizations.of(context).register),
                   ),
                 ),
                 const SizedBox(width: 16),
@@ -131,7 +140,7 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
                     onPressed: () {
                       Navigator.pushReplacementNamed(context, '/welcome');
                     },
-                    child: const Text("Cancel"),
+                    child: Text(AppLocalizations.of(context).cancel),
                   ),
                 ),
               ],
@@ -141,7 +150,7 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
               onPressed: () {
                 Navigator.pushReplacementNamed(context, '/login');
               },
-              child: const Text("Already have an account? Login"),
+              child: Text(AppLocalizations.of(context).haveAccountLogin),
             ),
           ],
         ),
@@ -155,12 +164,13 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
         TextField(
           controller: _phoneController,
           keyboardType: TextInputType.phone,
-          style: const TextStyle(color: Colors.black),
+          style: TextStyle(color: Theme.of(context).colorScheme.onSurface),
           decoration: InputDecoration(
-            labelText: 'Phone Number',
-            labelStyle: const TextStyle(color: Colors.black54),
+            labelText: AppLocalizations.of(context).phoneNumber,
+            labelStyle:
+                TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
             filled: true,
-            fillColor: Colors.white,
+            fillColor: Theme.of(context).colorScheme.surface,
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
               borderSide: BorderSide.none,
@@ -170,10 +180,10 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
         const SizedBox(height: 12),
         TextField(
           controller: _passwordController,
-          style: const TextStyle(color: Colors.black),
+          style: TextStyle(color: Theme.of(context).colorScheme.onSurface),
           obscureText: !_isPasswordVisible,
           decoration: InputDecoration(
-            labelText: 'Password',
+            labelText: AppLocalizations.of(context).password,
             filled: true,
             fillColor: Colors.white,
             border: OutlineInputBorder(

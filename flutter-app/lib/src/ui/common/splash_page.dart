@@ -1,26 +1,19 @@
 import 'package:flutter/material.dart';
 
-
 import '../../core/styles/app_colors.dart';
 import '../../data/repositories/auth_repository.dart';
 import '../../routing/app_router.dart';
+import '../../../l10n/app_localizations.dart';
 
 class SplashPage extends StatefulWidget {
-  const SplashPage({Key? key}) : super(key: key);
+  const SplashPage({super.key});
 
   @override
   State<SplashPage> createState() => _SplashPageState();
 }
 
 class _SplashPageState extends State<SplashPage> {
-  final List<String> statuses = [
-    "Opening application...",
-    "Connecting to cloud...",
-    "Loading user data...",
-    "Almost ready..."
-  ];
-  int _statusIndex = 0;
-  double _progress = 0.0;
+  static const Duration _minDisplay = Duration(milliseconds: 800);
 
   @override
   void initState() {
@@ -28,17 +21,18 @@ class _SplashPageState extends State<SplashPage> {
     _startLoading();
   }
 
-  void _startLoading() async {
-    for (int i = 0; i < statuses.length; i++) {
-      await Future.delayed(const Duration(seconds: 1));
-      setState(() {
-        _statusIndex = i;
-        _progress = (i + 1) / statuses.length;
-      });
-    }
+  /// Real splash initialization: resolve the stored auth token. A minimum
+  /// display time keeps the brand from flashing on fast devices; there is no
+  /// fake status cycling padding the perceived load.
+  Future<void> _startLoading() async {
+    final stopwatch = Stopwatch()..start();
     // Route based on existing auth state: a stored token means the user is
     // already registered, so skip straight to the dashboard.
     final token = await AuthRepository().getToken();
+    final elapsed = stopwatch.elapsed;
+    if (elapsed < _minDisplay) {
+      await Future.delayed(_minDisplay - elapsed);
+    }
     if (!mounted) return;
     Navigator.pushReplacementNamed(
       context,
@@ -48,47 +42,32 @@ class _SplashPageState extends State<SplashPage> {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
     return Scaffold(
       body: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            // ✅ Bigger logo
             Image.asset(
               'assets/logo.png',
               width: 223,
               height: 242,
             ),
             const SizedBox(height: 40),
-            // ✅ Rounded progress bar
-            ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: SizedBox(
-                width: 250,
-                child: LinearProgressIndicator(
-                  value: _progress,
-                  backgroundColor: const Color(0xFFE8D9B0), // light tan
-                  color: AppColors.primary, // Falcon Orange
-                  minHeight: 12,
-                ),
-              ),
+            CircularProgressIndicator(
+              color: AppColors.primary,
+              strokeWidth: 3,
             ),
             const SizedBox(height: 16),
             Text(
-              statuses[_statusIndex],
-              style: const TextStyle(
+              AppLocalizations.of(context).splashStatusOpening,
+              style: TextStyle(
                 fontFamily: 'IBM Plex Sans',
                 fontSize: 20,
-                color: Colors.black87,
+                color: colorScheme.onSurface,
                 fontWeight: FontWeight.w500,
               ),
             ),
-            const SizedBox(height: 16),
-            if (_statusIndex < statuses.length - 1)
-              CircularProgressIndicator(
-                color: AppColors.primary,
-                strokeWidth: 3,
-              ),
           ],
         ),
       ),

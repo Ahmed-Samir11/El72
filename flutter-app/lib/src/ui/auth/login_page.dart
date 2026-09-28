@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../../l10n/app_localizations.dart';
+import '../../core/format/error_message.dart';
+import '../../core/styles/app_theme.dart';
 import '../../routing/app_router.dart';
 import '../common/top_box.dart';
 import '../../data/providers.dart';
@@ -21,7 +25,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white, // Elhaq theme background
+      backgroundColor: Theme.of(context).colorScheme.surface,
       appBar: const PreferredSize(
         preferredSize: Size.fromHeight(100), // fixed height
         child: TopBox(), // stays pinned at the top
@@ -31,13 +35,13 @@ class _LoginPageState extends ConsumerState<LoginPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            const Text(
-              'Log In',
+            Text(
+              AppLocalizations.of(context).login,
               style: TextStyle(
                 fontFamily: 'IBM Plex Sans',
                 fontSize: 40,
                 fontStyle: FontStyle.italic,
-                color: Colors.black87,
+                color: Theme.of(context).colorScheme.onSurface,
               ),
               textAlign: TextAlign.center,
             ),
@@ -76,7 +80,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                   child: ElevatedButton(
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.primary,
-                      foregroundColor: Colors.white,
+                      foregroundColor: Theme.of(context).colorScheme.onPrimary,
                       padding: const EdgeInsets.symmetric(vertical: 16),
                       textStyle: const TextStyle(
                         fontSize: 18,
@@ -91,8 +95,10 @@ class _LoginPageState extends ConsumerState<LoginPage> {
 
                             if (phone.isEmpty || password.isEmpty) {
                               ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text("Please fill all fields"),
+                                SnackBar(
+                                  content:
+                                      Text(AppLocalizations.of(context).fillAllFields),
+                                  backgroundColor: context.appTokens.warning,
                                 ),
                               );
                               return;
@@ -107,27 +113,30 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                                 password,
                               );
 
-                              if (isValid && mounted) {
+                              if (isValid && context.mounted) {
                                 Navigator.pushNamedAndRemoveUntil(
                                   context,
                                   AppRoutes.dashboard,
                                   (_) => false,
                                 );
-                              } else if (mounted) {
+                              } else if (context.mounted) {
                                 ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
+                                  SnackBar(
                                     content: Text(
-                                      "Invalid credentials. Please try again.",
+                                      AppLocalizations.of(context).invalidCredentials,
                                     ),
+                                    backgroundColor: context.appTokens.warning,
                                   ),
                                 );
                               }
                             } catch (e) {
-                              if (mounted) {
+                              if (context.mounted) {
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   SnackBar(
-                                    content: Text("Login failed: $e"),
-                                    backgroundColor: Colors.red,
+                                    content: Text(
+                                      AppLocalizations.of(context).loginFailed(errorMessage(e)),
+                                    ),
+                                    backgroundColor: context.appTokens.error,
                                   ),
                                 );
                               }
@@ -135,7 +144,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                               if (mounted) setState(() => _isLoading = false);
                             }
                           },
-                    child: const Text("Log In"),
+                    child: Text(AppLocalizations.of(context).login),
                   ),
                 ),
                 const SizedBox(width: 16),
@@ -171,12 +180,13 @@ class _LoginPageState extends ConsumerState<LoginPage> {
         TextField(
           controller: _phoneController,
           keyboardType: TextInputType.phone,
-          style: const TextStyle(color: Colors.black),
+          style: TextStyle(color: Theme.of(context).colorScheme.onSurface),
           decoration: InputDecoration(
-            labelText: 'Phone Number',
-            labelStyle: const TextStyle(color: Colors.black54),
+            labelText: AppLocalizations.of(context).phoneNumber,
+            labelStyle:
+                TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
             filled: true,
-            fillColor: Colors.white,
+            fillColor: Theme.of(context).colorScheme.surface,
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
               borderSide: BorderSide.none,
@@ -186,12 +196,12 @@ class _LoginPageState extends ConsumerState<LoginPage> {
         const SizedBox(height: 12),
         TextField(
           controller: _passwordController,
-          style: const TextStyle(color: Colors.black),
+          style: TextStyle(color: Theme.of(context).colorScheme.onSurface),
           obscureText: !_isLoginPasswordVisible,
           decoration: InputDecoration(
-            labelText: 'Password',
+            labelText: AppLocalizations.of(context).password,
             filled: true,
-            fillColor: Colors.white,
+            fillColor: Theme.of(context).colorScheme.surface,
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
               borderSide: BorderSide.none,
