@@ -1,0 +1,7 @@
+# MS4 release signing template — copy to key.properties and fill in.
+# NEVER commit the real key.properties (it holds passwords); it is gitignored.
+# Create the keystore with scripts/make-release-keystore.sh.
+storeFile=/absolute/path/to/release.keystore
+storePassword=CHANGE_ME
+keyAlias=elhaq
+keyPassword=CHANGE_ME

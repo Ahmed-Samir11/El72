@@ -97,3 +97,81 @@ jobs:
           else
             echo "No notifier package.json"
           fi
+
+  # MS4: Flutter quality gate + signed App Bundle on PRs to main and v* tags.
+  flutter-ci:
+    name: Flutter - analyze, test, signed bundle
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pinned Flutter channel for deterministic analyze/test behavior.
+      # Bump deliberately (see docs/release-checklist.md).
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Flutter setup
+        run: |
+          cd flutter-app
+          flutter --version
+          flutter pub get
+
+      - name: Analyze (fail on any issue)
+        run: cd flutter-app && flutter analyze
+
+      - name: Format check
+        run: cd flutter-app && dart format --set-exit-if-changed lib test
+
+      - name: Test
+        run: cd flutter-app && flutter test
+
+      # --- Signed App Bundle: PRs to main + v* tags only ---
+      - name: Restore release keystore from CI secret
+        if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/tags/v')
+        env:
+          KEY_STORE: ${{ secrets.KEY_STORE }}
+        run: |
+          if [ -z "$KEY_STORE" ]; then
+            echo "Skipping signed build: KEY_STORE secret is not set."
+            exit 0
+          fi
+          mkdir -p "$RUNNER_TEMP/keystore"
+          echo "$KEY_STORE" | base64 -d > "$RUNNER_TEMP/keystore/release.keystore"
+          cat > flutter-app/android/key.properties <<EOF
+          storeFile=$RUNNER_TEMP/keystore/release.keystore
+          storePassword=${KEYSTORE_PASSWORD}
+          keyAlias=${KEY_ALIAS}
+          keyPassword=${KEY_ALIAS_PASSWORD}
+          EOF
+        id: keystore
+
+      - name: Build signed App Bundle
+        if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/tags/v')
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_ALIAS_PASSWORD: ${{ secrets.KEY_ALIAS_PASSWORD }}
+          PROD_API_BASE_URL: ${{ secrets.PROD_API_BASE_URL }}
+        run: |
+          cd flutter-app
+          # Auto-incrementing versionCode: one per commit on the branch.
+          export VERSION_CODE=$(git rev-list --count HEAD)
+          echo "Building release AAB (versionCode=$VERSION_CODE)"
+          flutter build appbundle --release             --dart-define=API_BASE_URL="$PROD_API_BASE_URL"
+
+      - name: Upload App Bundle artifact
+        if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v4
+        with:
+          name: elhaq-appbundle-${{ github.sha }}
+          path: flutter-app/build/app/outputs/flutter-release/app-release.aab
+          if-no-files-found: warn
+
+      - name: Publish GitHub Release (v* tags)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: flutter-app/build/app/outputs/flutter-release/app-release.aab

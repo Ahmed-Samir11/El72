@@ -1,9 +1,27 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("kotlin-android")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
+
+// MS4 release signing: reads android/key.properties when present (created
+// locally via scripts/make-release-keystore.sh, or injected by CI from the
+// KEY_STORE secret). Absent file => debug signing, so local
+// `flutter run --release` keeps working out of the box.
+val keystorePropertiesFile = rootProject.file("android/key.properties")
+val keystoreProperties: Properties? =
+    if (keystorePropertiesFile.exists()) {
+        Properties().also { p -> keystorePropertiesFile.inputStream().use { p.load(it) } }
+    } else {
+        null
+    }
+
+// MS4 versioning: CI may override versionCode via the VERSION_CODE env var
+// (auto-incremented in the flutter-ci job); defaults to the pubspec value.
+val ciVersionCode: Int? = System.getenv("VERSION_CODE")?.toIntOrNull()
 
 android {
     // Play Store package identity. If `com.elhaq.tracker` turns out to be
@@ -28,15 +46,28 @@ android {
         // targetSdk 35 is the current Play requirement.
         minSdk = 24
         targetSdk = 35
-        versionCode = flutter.versionCode
+        versionCode = ciVersionCode ?: flutter.versionCode
         versionName = flutter.versionName
+    }
+
+    signingConfigs {
+        create("release") {
+            keystoreProperties?.let { kp ->
+                keyAlias = kp["keyAlias"] as String
+                keyPassword = kp["keyPassword"] as String
+                storeFile = kp["storeFile"]?.let { f -> rootProject.file(f) }
+                storePassword = kp["storePassword"] as String
+            }
+        }
     }
 
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            // MS4: release signing when key.properties is present, debug
+            // signing locally when it is not.
+            signingConfig = signingConfigs.getByName(
+                if (keystoreProperties == null) "debug" else "release",
+            )
         }
     }
 }

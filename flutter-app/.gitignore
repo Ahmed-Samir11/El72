@@ -27,6 +27,9 @@ Thumbs.db
 .env.local
 .env.*.local
 
+# MS4 release signing — real credentials never committed
+android/key.properties
+
 
 
 # Flutter repo-specific
