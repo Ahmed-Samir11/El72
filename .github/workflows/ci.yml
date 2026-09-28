@@ -106,6 +106,10 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history: the PR-build versionCode is a commit count, which
+          # requires more than the default shallow checkout.
+          fetch-depth: 0
 
       # Pinned to the exact Flutter version verified by this repo's tests.
       # Bump deliberately (see docs/release-checklist.md).
@@ -166,6 +170,7 @@ jobs:
             echo "keyAlias=$KEY_ALIAS"
             echo "keyPassword=$KEY_ALIAS_PASSWORD"
           } > flutter-app/android/key.properties
+          chmod 600 "$RUNNER_TEMP/keystore/release.keystore"             flutter-app/android/key.properties
           echo "signed=true" >> "$GITHUB_OUTPUT"
 
       - name: Build signed App Bundle
@@ -210,10 +215,13 @@ jobs:
         if: steps.signing.outputs.signed == 'true'
         env:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
         run: |
           AAB=flutter-app/build/app/outputs/flutter-release/app-release.aab
-          EXPECTED=$(keytool -list             -keystore "$RUNNER_TEMP/keystore/release.keystore"             -storepass "$KEYSTORE_PASSWORD" | grep "SHA256:" | awk '{print $2}' | tr -d ':')
-          ACTUAL=$(apksigner verify --print-certs "$AAB" 2>&1             | grep "SHA256 digest" | head -n1 | awk '{print $3}' | tr -d ':')
+          # Alias-scoped keytool lookup; explicit SHA256 extraction so a
+          # format change cannot silently produce an empty fingerprint.
+          EXPECTED=$(keytool -list             -keystore "$RUNNER_TEMP/keystore/release.keystore"             -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" 2>/dev/null             | grep -oE 'SHA256:[[:space:]]*[0-9A-F:]+' | grep -oE '[0-9A-F:]+' | tr -d ':')
+          ACTUAL=$(apksigner verify --print-certs "$AAB" 2>&1             | grep -oE 'SHA256 digest:[[:space:]]*[0-9a-f:]+' | head -n1             | grep -oE '[0-9a-f:]+' | tr -d ':')
           if [ -z "$EXPECTED" ] || [ "$EXPECTED" != "$ACTUAL" ]; then
             echo "AAB certificate does not match the release keystore." >&2
             exit 1
@@ -239,6 +247,9 @@ jobs:
     permissions:
       contents: write
     steps:
+      # If flutter-ci skipped signing (secrets missing), no artifact exists
+      # and this download fails deliberately: a v* tag must never publish an
+      # unsigned release.
       - uses: actions/download-artifact@v4
         with:
           name: elhaq-appbundle-${{ github.sha }}

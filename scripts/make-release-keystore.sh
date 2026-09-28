@@ -37,6 +37,8 @@ ALIAS="${ALIAS:-elhaq}"
 read -r -s -p "Key password (hidden): " KEY_PW
 echo ""
 
+# keytool has no stdin password option; the passwords are on this one-time
+# local command line (owner's machine only, never leaves it).
 keytool -genkeypair \
   -keystore "$KEYSTORE" \
   -alias "$ALIAS" \
@@ -45,12 +47,15 @@ keytool -genkeypair \
   -keyalg RSA \
   -keysize 2048 \
   -storepass "$STORE_PW" \
+  -keypass "$KEY_PW" \
   -dname "CN=Elhaq Release, OU=El72, O=Elhaq, L=Cairo, ST=Cairo, C=EG" \
   -ext "SAN=dns:elhaq.app"
 
-# key.properties is written from the environment (never argv).
+# key.properties is written from the environment (never argv). storeFile is
+# absolute so Gradle resolves it the same way from any working directory.
+KEYSTORE_ABS=$(cd "$ANDROID_DIR" && pwd)/release.keystore
 {
-  echo "storeFile=$KEYSTORE"
+  echo "storeFile=$KEYSTORE_ABS"
   echo "storePassword=$STORE_PW"
   echo "keyAlias=$ALIAS"
   echo "keyPassword=$KEY_PW"

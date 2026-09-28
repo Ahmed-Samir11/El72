@@ -69,18 +69,20 @@ android {
                 // Fail with a clear message if the file exists but is
                 // incomplete (MS4): a half-filled key.properties must never
                 // silently produce a debug-signed bundle.
+                // Locals are deliberately named so they cannot shadow the
+                // SigningConfig properties being assigned below.
                 val alias = kp.getProperty("keyAlias")
                     ?: error("android/key.properties exists but is missing 'keyAlias'")
-                val keyPassword = kp.getProperty("keyPassword")
+                val kpass = kp.getProperty("keyPassword")
                     ?: error("android/key.properties exists but is missing 'keyPassword'")
-                val storeFile = kp.getProperty("storeFile")
+                val sfile = kp.getProperty("storeFile")
                     ?: error("android/key.properties exists but is missing 'storeFile'")
-                val storePassword = kp.getProperty("storePassword")
+                val spass = kp.getProperty("storePassword")
                     ?: error("android/key.properties exists but is missing 'storePassword'")
                 keyAlias = alias
-                this.keyPassword = keyPassword
-                this.storeFile = rootProject.file(storeFile)
-                storePassword = storePassword
+                this.keyPassword = kpass
+                this.storeFile = rootProject.file(sfile)
+                this.storePassword = spass
             }
         }
     }
