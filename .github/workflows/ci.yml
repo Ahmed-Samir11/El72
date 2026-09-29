@@ -155,11 +155,19 @@ jobs:
           KEY_ALIAS_PASSWORD: ${{ secrets.KEY_ALIAS_PASSWORD }}
         run: |
           set -euo pipefail
-          # Fail fast if any signing secret is missing: a debug-signed AAB
-          # must never be uploaded or published as a release artifact.
+          # A v* tag is an explicit release intent: if signing secrets are
+          # missing there, the job must FAIL (silently skipping would publish a
+          # tag with no signed AAB). On PRs to main, a missing secret skips the
+          # signed build so the analyze/test gates still run.
+          IS_V_TAG=0
+          case "$GITHUB_REF" in refs/tags/v*) IS_V_TAG=1 ;; esac
           for v in KEY_STORE KEYSTORE_PASSWORD KEY_ALIAS KEY_ALIAS_PASSWORD; do
             if [ -z "${!v}" ]; then
-              echo "Signing secret $v is not set - skipping signed build."
+              if [ "$IS_V_TAG" = "1" ]; then
+                echo "Signing secret $v is not set on a v* tag - cannot publish a release." >&2
+                exit 1
+              fi
+              echo "Signing secret $v is not set - skipping signed build (PR to main)."
               echo "signed=false" >> "$GITHUB_OUTPUT"
               exit 0
             fi
@@ -200,9 +208,15 @@ jobs:
           # private-network hosts so a misconfigured secret can't ship an app
           # that talks to localhost or an internal address.
           HOST="$(printf '%s' "$PROD_API_BASE_URL" | sed -E 's#^https://##; s#:.*$##; s#/.*$##')"
+          # Loopback + RFC1918/private ranges + common internal TLDs. A release
+          # must point at a public endpoint, never an address only this machine
+          # or LAN can reach.
           case "$HOST" in
-            localhost|127.*|10.*|192.168.*|169.254.*|0.0.0.0|*.local)
+            localhost|*.local|*.internal|\[?::1\]?)
               echo "PROD_API_BASE_URL host '$HOST' is loopback/internal - not allowed for release." >&2
+              exit 1 ;;
+            0.0.0.0|127.*|10.*|192.168.*|169.254.*|172.1[6-9].*|172.2[0-9].*|172.3[01].*)
+              echo "PROD_API_BASE_URL host '$HOST' is a private/loopback IP - not allowed for release." >&2
               exit 1 ;;
           esac
           cd flutter-app
@@ -227,8 +241,9 @@ jobs:
           else
             # PR builds use the total reachable commit count as an *informational*
             # versionCode (PR artifacts are never submitted to Play). Unshallow
-            # first so the count is accurate rather than the shallow-clone depth.
-            git fetch --unshallow 2>/dev/null || true
+            # first so the count is accurate; if it fails we fail loudly rather
+            # than ship a wrong (shallow-depth) versionCode.
+            git fetch --unshallow
             VERSION_CODE=$(git rev-list --count HEAD)
           fi
           # VERSION_CODE is passed to the flutter build (and inherited by
