@@ -10,9 +10,30 @@ def test_platform_metrics_are_data_backed_and_time_aware():
         {"product_id": "p2", "category": "laptops"},
     ]
     observations = [
-        {"product_id": "p1", "store_id": "amazon_eg", "category": "phones", "price": 100, "timestamp": start, "change_percent": -0.05},
-        {"product_id": "p1", "store_id": "noon", "category": "phones", "price": 110, "timestamp": start + timedelta(days=1), "change_percent": 0.02},
-        {"product_id": "p2", "store_id": "amazon_eg", "category": "laptops", "price": 1000, "timestamp": start + timedelta(days=6), "change_percent": 0.01},
+        {
+            "product_id": "p1",
+            "store_id": "amazon_eg",
+            "category": "phones",
+            "price": 100,
+            "timestamp": start,
+            "change_percent": -0.05,
+        },
+        {
+            "product_id": "p1",
+            "store_id": "noon",
+            "category": "phones",
+            "price": 110,
+            "timestamp": start + timedelta(days=1),
+            "change_percent": 0.02,
+        },
+        {
+            "product_id": "p2",
+            "store_id": "amazon_eg",
+            "category": "laptops",
+            "price": 1000,
+            "timestamp": start + timedelta(days=6),
+            "change_percent": 0.01,
+        },
     ]
     deals = [
         {"timestamp": start + timedelta(days=6), "is_historical_low": True},
@@ -22,7 +43,9 @@ def test_platform_metrics_are_data_backed_and_time_aware():
         {"timestamp": start + timedelta(days=6), "is_suspicious": True},
         {"timestamp": start, "is_suspicious": False},
     ]
-    result = platform_metrics(products, observations, deals, suspicious, as_of=date(2025, 9, 7))
+    result = platform_metrics(
+        products, observations, deals, suspicious, as_of=date(2025, 9, 7)
+    )
     assert result["products_tracked"] == 2
     assert result["stores_tracked"] == 2
     assert result["price_observations"] == 3

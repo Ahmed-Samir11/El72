@@ -8,9 +8,7 @@ from services.api.affiliate import build_affiliate_url, store_for_url
 def test_amazon_tag_is_added(monkeypatch):
     monkeypatch.setenv("AMAZON_AFFILIATE_TAG", "el72-20")
 
-    result = build_affiliate_url(
-        "amazon_eg", "https://www.amazon.eg/dp/ABC?ref=search"
-    )
+    result = build_affiliate_url("amazon_eg", "https://www.amazon.eg/dp/ABC?ref=search")
 
     assert "tag=el72-20" in result
     assert "ref=search" in result

@@ -1,27 +1,26 @@
-import os
 import json
 import logging
-from datetime import datetime, timedelta
-from typing import Optional
+import os
 
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, status
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, validator
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from jose import JWTError, jwt
-from passlib.context import CryptContext
-from pydantic import BaseModel, validator
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.orm import Session, sessionmaker
 
+from services.api.dependencies import get_current_user, get_db
 from services.api.models import Alert, Base, User
+from services.api.routers import affiliate as affiliate_router
+from services.api.routers import auth, public_api
+from services.api.routers import credits as credits_router
+from services.api.tracked_items_api import router as tracked_items_router
 from services.api.tracked_items_models import Base as TrackedBase
 from services.common.redis_client import RedisStreamClient
 
 logger = logging.getLogger(__name__)
-
-from services.api.dependencies import *
 
 # Configuration
 SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key")
@@ -40,8 +39,6 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base.metadata.create_all(bind=engine)
 TrackedBase.metadata.create_all(bind=engine)
 
-from fastapi.middleware.cors import CORSMiddleware
-
 app = FastAPI(title="Elhaq API")
 limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
@@ -51,7 +48,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 origins = [
     "http://localhost:8080",
     "http://127.0.0.1:8080",
-    "*"  # Allows all for development
+    "*",  # Allows all for development
 ]
 
 app.add_middleware(
@@ -63,24 +60,19 @@ app.add_middleware(
 )
 
 # Include routers
-from services.api.routers import auth
 app.include_router(auth.router, prefix="/auth", tags=["Auth"])
 
 # Public demo endpoints (no auth) consumed by the landing page and Flutter app:
 # /stats, /deals/live, /price-history/{sku}, /pricing.
-from services.api.routers import public_api
 app.include_router(public_api.router)
 
 # Credit balance endpoints (auth required): /credits/balance, /credits/transactions.
-from services.api.routers import credits as credits_router
 app.include_router(credits_router.router)
 
 # Affiliate click tracking and safe merchant redirects.
-from services.api.routers import affiliate as affiliate_router
 app.include_router(affiliate_router.router)
 
 # Tracked-item lifecycle, including one-credit deduction per new tracker.
-from services.api.tracked_items_api import router as tracked_items_router
 app.include_router(tracked_items_router)
 
 # Demo mode: seed realistic demo data on startup (idempotent).
@@ -94,10 +86,12 @@ def _seed_demo_data_on_startup() -> None:
         return
     try:
         from services.api.seed_demo_data import run_seed
+
         summary = run_seed(engine=engine)
         logger.info("Demo data seeded on startup", extra={"summary": summary})
     except Exception as e:  # fail-soft: demo data is non-critical
         logger.exception("Demo seed failed; continuing", extra={"error": str(e)})
+
 
 # Background task function to push new alert targets to scraper stream
 async def push_to_stream(target_url: str, alert_id: int):
@@ -106,7 +100,7 @@ async def push_to_stream(target_url: str, alert_id: int):
         redis_client = await RedisStreamClient.create(REDIS_URL)
         # Extract SKU from URL (for Amazon: last part of path)
         sku = target_url.rstrip('/').split('/')[-1]
-        
+
         # Detect store from URL
         store = "unknown"
         if "amazon.eg" in target_url or "amazon.com" in target_url:
@@ -131,12 +125,8 @@ async def push_to_stream(target_url: str, alert_id: int):
             store = "town_team_eg"
         elif "alfrensia.com" in target_url:
             store = "alfrensia_eg"
-        
-        target = {
-            "url": target_url,
-            "sku": sku,
-            "store": store
-        }
+
+        target = {"url": target_url, "sku": sku, "store": store}
         await redis_client.xadd(TARGETS_STREAM, {"payload": json.dumps(target)})
         logger.info(
             "Pushed alert target to Redis",
@@ -148,6 +138,7 @@ async def push_to_stream(target_url: str, alert_id: int):
             "Failed to push alert target to Redis",
             extra={"alert_id": alert_id, "stream": TARGETS_STREAM, "error": str(e)},
         )
+
 
 # Pydantic models
 class AlertCreate(BaseModel):
@@ -162,7 +153,12 @@ class AlertCreate(BaseModel):
 
 
 @app.post("/alerts")
-def create_alert(alert: AlertCreate, background_tasks: BackgroundTasks, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def create_alert(
+    alert: AlertCreate,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     # Validate URL (basic)
     if not alert.target_url.startswith("http"):
         raise HTTPException(status_code=400, detail="Invalid URL")
@@ -172,7 +168,7 @@ def create_alert(alert: AlertCreate, background_tasks: BackgroundTasks, current_
         user_id=current_user.id,
         target_url=alert.target_url,
         target_price=alert.target_price,
-        active_status=True
+        active_status=True,
     )
     db.add(db_alert)
     db.commit()

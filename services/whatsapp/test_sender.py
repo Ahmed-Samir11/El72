@@ -59,7 +59,9 @@ def test_get_db_connection_reuses_open_conn():
 
 def test_get_db_connection_creates_when_missing():
     mock_conn = MagicMock()
-    with patch("services.whatsapp.sender.psycopg2.connect", return_value=mock_conn) as connect:
+    with patch(
+        "services.whatsapp.sender.psycopg2.connect", return_value=mock_conn
+    ) as connect:
         conn = sender.get_db_connection()
         assert conn is mock_conn
         connect.assert_called_once_with(sender.DATABASE_URL)
@@ -92,7 +94,18 @@ def test_get_subscribers_for_sku_success():
 
 
 def test_format_price_alert_localized_arabic():
-    msg = sender.format_price_alert({"name": "محمد", "sku": "SKU1", "product_title": "Laptop", "price": 1000, "original_price": 1200, "discount_percent": 20, "url": "https://example.com/p"}, language="ar")
+    msg = sender.format_price_alert(
+        {
+            "name": "محمد",
+            "sku": "SKU1",
+            "product_title": "Laptop",
+            "price": 1000,
+            "original_price": 1200,
+            "discount_percent": 20,
+            "url": "https://example.com/p",
+        },
+        language="ar",
+    )
     assert "مرحباً محمد" in msg
     assert "وجدنا عرضاً جيداً على Laptop" in msg
     assert "السعر السابق: 1,200.00 جنيه" in msg
@@ -247,7 +260,9 @@ async def test_send_whatsapp_api_exception():
 @pytest.mark.asyncio
 async def test_process_message_no_sku_acks():
     sender.redis_client = AsyncMock()
-    await sender.process_message("1-0", {b"payload": json.dumps({"price": 10}).encode()})
+    await sender.process_message(
+        "1-0", {b"payload": json.dumps({"price": 10}).encode()}
+    )
     sender.redis_client.xack.assert_awaited_once()
 
 
@@ -382,7 +397,9 @@ def test_plain_text_message_contains_all_deal_values():
     assert message.index("محمد") < message.index("Lenovo Legion 5")
     assert message.index("47,115.75 جنيه") < message.index("36,210.39 جنيه")
     assert message.index("36,210.39 جنيه") < message.index("23.15%")
-    assert message.index("23.15%") < message.index("https://example.com/deal/lenovo-legion-5")
+    assert message.index("23.15%") < message.index(
+        "https://example.com/deal/lenovo-legion-5"
+    )
 
 
 @pytest.mark.asyncio
@@ -442,7 +459,14 @@ async def test_send_whatsapp_price_alert_success():
     ):
         ok = await sender.send_whatsapp_price_alert(
             "201000000001",
-            {"name": "محمد", "sku": "S1", "price": 10, "original_price": 20, "discount_percent": 50, "url": "https://x"},
+            {
+                "name": "محمد",
+                "sku": "S1",
+                "price": 10,
+                "original_price": 20,
+                "discount_percent": 50,
+                "url": "https://x",
+            },
             language="ar",
         )
     assert ok is True
@@ -498,9 +522,7 @@ async def test_consume_loop_processes_then_cancels():
 
     with patch(
         "services.whatsapp.sender.ensure_consumer_group", new=AsyncMock()
-    ), patch(
-        "services.whatsapp.sender.process_message", new=AsyncMock()
-    ) as process:
+    ), patch("services.whatsapp.sender.process_message", new=AsyncMock()) as process:
         await sender.consume_loop()
 
     process.assert_awaited_once()
@@ -527,7 +549,9 @@ async def test_main_db_failure_exits():
     with patch(
         "services.whatsapp.sender.get_db_connection",
         side_effect=Exception("no db"),
-    ), patch("services.whatsapp.sender.sys.exit", side_effect=SystemExit(1)) as exit_mock:
+    ), patch(
+        "services.whatsapp.sender.sys.exit", side_effect=SystemExit(1)
+    ) as exit_mock:
         with pytest.raises(SystemExit):
             await sender.main()
         exit_mock.assert_called_with(1)
@@ -539,10 +563,13 @@ async def test_main_redis_failure_exits():
     mock_redis.ping.side_effect = Exception("no redis")
 
     with patch(
-        "services.whatsapp.sender.get_db_connection", return_value=MagicMock(closed=False)
+        "services.whatsapp.sender.get_db_connection",
+        return_value=MagicMock(closed=False),
     ), patch(
         "services.whatsapp.sender.aioredis.from_url", return_value=mock_redis
-    ), patch("services.whatsapp.sender.sys.exit", side_effect=SystemExit(1)):
+    ), patch(
+        "services.whatsapp.sender.sys.exit", side_effect=SystemExit(1)
+    ):
         with pytest.raises(SystemExit):
             await sender.main()
 
@@ -556,9 +583,7 @@ async def test_main_success_path():
 
     with patch.object(
         sender, "DATABASE_URL", "postgresql://u:p@localhost:5432/db"
-    ), patch(
-        "services.whatsapp.sender.get_db_connection", return_value=mock_db
-    ), patch(
+    ), patch("services.whatsapp.sender.get_db_connection", return_value=mock_db), patch(
         "services.whatsapp.sender.aioredis.from_url", return_value=mock_redis
     ), patch(
         "services.whatsapp.sender.consume_loop", new=AsyncMock()

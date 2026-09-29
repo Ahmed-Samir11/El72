@@ -24,11 +24,46 @@ def test_competitor_position_for_retailer():
 def _observations():
     first = datetime(2025, 9, 1, tzinfo=timezone.utc)
     return [
-        {"product_id": "p1", "category": "phones", "store_id": "amazon_eg", "timestamp": first, "price": 10000, "discount_percent": 0},
-        {"product_id": "p1", "category": "phones", "store_id": "amazon_eg", "timestamp": first + timedelta(days=1), "price": 8500, "discount_percent": 15},
-        {"product_id": "p2", "category": "phones", "store_id": "noon", "timestamp": first, "price": 12000, "discount_percent": 0},
-        {"product_id": "p2", "category": "phones", "store_id": "noon", "timestamp": first + timedelta(days=1), "price": 13000, "discount_percent": 0},
-        {"product_id": "p3", "category": "laptops", "store_id": "jumia_eg", "timestamp": first, "price": 50000, "discount_percent": 0},
+        {
+            "product_id": "p1",
+            "category": "phones",
+            "store_id": "amazon_eg",
+            "timestamp": first,
+            "price": 10000,
+            "discount_percent": 0,
+        },
+        {
+            "product_id": "p1",
+            "category": "phones",
+            "store_id": "amazon_eg",
+            "timestamp": first + timedelta(days=1),
+            "price": 8500,
+            "discount_percent": 15,
+        },
+        {
+            "product_id": "p2",
+            "category": "phones",
+            "store_id": "noon",
+            "timestamp": first,
+            "price": 12000,
+            "discount_percent": 0,
+        },
+        {
+            "product_id": "p2",
+            "category": "phones",
+            "store_id": "noon",
+            "timestamp": first + timedelta(days=1),
+            "price": 13000,
+            "discount_percent": 0,
+        },
+        {
+            "product_id": "p3",
+            "category": "laptops",
+            "store_id": "jumia_eg",
+            "timestamp": first,
+            "price": 50000,
+            "discount_percent": 0,
+        },
     ]
 
 
@@ -56,7 +91,9 @@ def test_opportunity_signals_are_real_counts():
         {"price_gap_vs_average": 0.02},
         {"price_gap_vs_average": 0.15},
     ]
-    assert opportunity_signals(positions, historical_low_count=4, volatile_product_count=2) == {
+    assert opportunity_signals(
+        positions, historical_low_count=4, volatile_product_count=2
+    ) == {
         "products_above_market_10_percent": 2,
         "products_at_historical_lows": 4,
         "products_with_high_volatility": 2,
@@ -68,10 +105,28 @@ def test_invalid_b2b_inputs_are_rejected():
     with pytest.raises(ValueError):
         competitor_position("missing", {"amazon_eg": 100})
     with pytest.raises(ValueError):
-        category_trends([{"category": "phones", "price": 0, "timestamp": datetime.now(timezone.utc)}])
+        category_trends(
+            [
+                {
+                    "category": "phones",
+                    "price": 0,
+                    "timestamp": datetime.now(timezone.utc),
+                }
+            ]
+        )
     with pytest.raises(ValueError):
-        store_movements([{"store_id": "amazon_eg", "price": 100, "timestamp": datetime.now(timezone.utc)}])
+        store_movements(
+            [
+                {
+                    "store_id": "amazon_eg",
+                    "price": 100,
+                    "timestamp": datetime.now(timezone.utc),
+                }
+            ]
+        )
     with pytest.raises(ValueError):
-        category_trends([{"category": "phones", "price": 100, "timestamp": "not-a-date"}])
+        category_trends(
+            [{"category": "phones", "price": 100, "timestamp": "not-a-date"}]
+        )
     with pytest.raises(ValueError):
         category_trends([{"price": 100, "timestamp": datetime.now(timezone.utc)}])

@@ -13,7 +13,9 @@ def monitor():
     db_pool = MagicMock()
     redis = AsyncMock()
     browser_pool = AsyncMock()
-    return TrackedItemMonitor(db_pool, redis, browser_pool, scrape_interval=0, max_concurrent_scrapes=2)
+    return TrackedItemMonitor(
+        db_pool, redis, browser_pool, scrape_interval=0, max_concurrent_scrapes=2
+    )
 
 
 @pytest.mark.asyncio
@@ -104,7 +106,9 @@ async def test_scrape_tracked_item_success_failure_and_exception(monitor):
         "tracked_item_id": 1,
         "user_id": 2,
         "canonical_product_id": "p",
-        "stores": [{"store_id": "amazon_eg", "store_sku": "A", "store_url": "https://a"}],
+        "stores": [
+            {"store_id": "amazon_eg", "store_sku": "A", "store_url": "https://a"}
+        ],
     }
     with patch(
         "services.scraper.tracked_item_monitor.ScraperFactory.get_scraper",

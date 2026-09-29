@@ -100,7 +100,9 @@ async def test_close(client):
 async def test_create_pings_redis():
     mock_redis = AsyncMock()
     mock_redis.ping.return_value = True
-    with patch("services.common.redis_client.aioredis.from_url", return_value=mock_redis):
+    with patch(
+        "services.common.redis_client.aioredis.from_url", return_value=mock_redis
+    ):
         client = await RedisStreamClient.create("redis://localhost:6379", password="x")
         assert client._redis is mock_redis
         # singleton reuse

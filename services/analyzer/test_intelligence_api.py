@@ -8,7 +8,6 @@ from fastapi.testclient import TestClient
 
 from services.analyzer.app import app
 
-
 client = TestClient(app)
 
 
@@ -53,8 +52,18 @@ def test_fake_discount_and_store_movements_endpoints():
         "/analytics/store-movements",
         json={
             "observations": [
-                {"product_id": "p1", "store_id": "amazon_eg", "timestamp": "2025-09-01T00:00:00Z", "price": 100},
-                {"product_id": "p1", "store_id": "amazon_eg", "timestamp": "2025-09-02T00:00:00Z", "price": 90},
+                {
+                    "product_id": "p1",
+                    "store_id": "amazon_eg",
+                    "timestamp": "2025-09-01T00:00:00Z",
+                    "price": 100,
+                },
+                {
+                    "product_id": "p1",
+                    "store_id": "amazon_eg",
+                    "timestamp": "2025-09-02T00:00:00Z",
+                    "price": 90,
+                },
             ]
         },
     )
@@ -78,10 +87,25 @@ def test_category_trends_and_platform_metrics_endpoints():
     timestamp = datetime(2025, 9, 1, tzinfo=timezone.utc).isoformat()
     later = datetime(2025, 9, 2, tzinfo=timezone.utc).isoformat()
     observations = [
-        {"product_id": "p1", "category": "phones", "store_id": "amazon_eg", "timestamp": timestamp, "price": 10000},
-        {"product_id": "p1", "category": "phones", "store_id": "amazon_eg", "timestamp": later, "price": 8500, "discount_percent": 15},
+        {
+            "product_id": "p1",
+            "category": "phones",
+            "store_id": "amazon_eg",
+            "timestamp": timestamp,
+            "price": 10000,
+        },
+        {
+            "product_id": "p1",
+            "category": "phones",
+            "store_id": "amazon_eg",
+            "timestamp": later,
+            "price": 8500,
+            "discount_percent": 15,
+        },
     ]
-    trends = client.post("/analytics/category-trends", json={"observations": observations})
+    trends = client.post(
+        "/analytics/category-trends", json={"observations": observations}
+    )
     assert trends.status_code == 200
     assert trends.json()["categories"][0]["products_dropping"] == 1
 
@@ -90,7 +114,9 @@ def test_category_trends_and_platform_metrics_endpoints():
         json={
             "products": [{"product_id": "p1", "category": "phones"}],
             "observations": observations,
-            "deals": [{"product_id": "p1", "timestamp": later, "is_historical_low": True}],
+            "deals": [
+                {"product_id": "p1", "timestamp": later, "is_historical_low": True}
+            ],
             "suspicious_discounts": [],
             "as_of": "2025-09-02",
         },

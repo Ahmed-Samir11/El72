@@ -1,4 +1,7 @@
-from pydantic import BaseSettings, Field
+from typing import Optional
+
+from pydantic import Field
+from pydantic_settings import BaseSettings
 
 
 class AnalyzerSettings(BaseSettings):
@@ -13,7 +16,7 @@ class AnalyzerSettings(BaseSettings):
 
     # Database
     database_url: str = Field(..., env="DATABASE_URL")
-    timescale_url: str = Field(None, env="TIMESCALE_URL")
+    timescale_url: Optional[str] = Field(None, env="TIMESCALE_URL")
 
     # ML
     ml_method: str = Field("mad", env="ML_METHOD")

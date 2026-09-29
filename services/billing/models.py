@@ -1,6 +1,5 @@
-from datetime import datetime
-
 import uuid
+from datetime import datetime
 
 from sqlalchemy import CHAR, Column, DateTime, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import UUID as postgres_UUID
@@ -29,6 +28,7 @@ class GUID(TypeDecorator):
         if value is None or isinstance(value, uuid.UUID):
             return value
         return uuid.UUID(str(value))
+
 
 Base = declarative_base()
 

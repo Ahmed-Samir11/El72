@@ -8,7 +8,10 @@ from typing import Dict, List, Optional
 from fastapi import APIRouter
 from pydantic import BaseModel, Field, validator
 
-from services.analyzer.b2b_analytics import category_trends, competitor_position, store_movements
+from services.analyzer.b2b_analytics import (
+    category_trends,
+    store_movements,
+)
 from services.analyzer.cross_store import compare_store_prices
 from services.analyzer.deal_scorer import score_deal
 from services.analyzer.fake_discount import detect_fake_discount
@@ -114,12 +117,16 @@ async def cross_store(product_id: str, request: CrossStoreRequest):
 
 @router.post("/analytics/category-trends")
 async def category_trends_endpoint(request: CategoryTrendRequest):
-    return {"categories": category_trends([item.dict() for item in request.observations])}
+    return {
+        "categories": category_trends([item.dict() for item in request.observations])
+    }
 
 
 @router.post("/analytics/store-movements")
 async def store_movements_endpoint(request: StoreMovementRequest):
-    return {"movements": store_movements([item.dict() for item in request.observations])}
+    return {
+        "movements": store_movements([item.dict() for item in request.observations])
+    }
 
 
 @router.post("/metrics/platform")

@@ -1,20 +1,23 @@
-import os
 import hashlib
 import hmac
 import json
+import os
 import uuid
 
-os.environ["DATABASE_URL"] = "sqlite:///test.db"
+# Use a distinct SQLite file so this module does not clash with the API
+# tests (which use test.db); on Windows an open file cannot be removed.
+os.environ["DATABASE_URL"] = "sqlite:///billing_test.db"
 os.environ["PAYMOB_HMAC_SECRET"] = "test-secret"
-if os.path.exists("test.db"):
-    os.remove("test.db")
+if os.path.exists("billing_test.db"):
+    os.remove("billing_test.db")
 
-import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
+
 from services.billing.main import app
 
 client = TestClient(app)
+
 
 def test_get_pricing():
     response = client.get("/pricing")
@@ -31,21 +34,29 @@ def _signed_request(payload):
     signature = hmac.new(b"test-secret", body, hashlib.sha512).hexdigest()
     return body, {"X-Paymob-Signature": signature}
 
+
 def test_paymob_webhook_success():
-    from services.billing.models import Base
     from services.billing.main import engine as app_engine
+    from services.billing.models import Base
+
     Base.metadata.create_all(bind=app_engine)
-    
+
     user_id = str(uuid.uuid4())
     with app_engine.begin() as connection:
-        connection.execute(text(
-            "CREATE TABLE IF NOT EXISTS user_credits "
-            "(user_id TEXT PRIMARY KEY, balance INTEGER NOT NULL, updated_at TIMESTAMP)"
-        ))
-        connection.execute(text(
-            "CREATE TABLE IF NOT EXISTS credit_transactions "
-            "(id TEXT PRIMARY KEY, user_id TEXT, amount INTEGER, reason TEXT, created_at TIMESTAMP)"
-        ))
+        connection.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS user_credits "
+                "(user_id TEXT PRIMARY KEY, balance INTEGER NOT NULL, "
+                "updated_at TIMESTAMP)"
+            )
+        )
+        connection.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS credit_transactions "
+                "(id TEXT PRIMARY KEY, user_id TEXT, amount INTEGER, "
+                "reason TEXT, created_at TIMESTAMP)"
+            )
+        )
     payload = {
         "order_id": f"test-{uuid.uuid4()}",
         "amount": 90.0,
@@ -58,6 +69,7 @@ def test_paymob_webhook_success():
     response = client.post("/webhook/paymob", content=body, headers=headers)
     assert response.status_code == 200
     assert response.json() == {"status": "processed"}
+
 
 def test_paymob_webhook_invalid_status():
     payload = {

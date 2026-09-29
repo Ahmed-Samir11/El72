@@ -1,8 +1,9 @@
 """Expanded tests for price processor."""
 
-import pytest
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from services.scraper.price_processor import PriceProcessor
 from services.scraper.store_scrapers import ScrapeResult

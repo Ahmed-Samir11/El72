@@ -2,7 +2,6 @@ import pytest
 
 from services.analyzer.deal_scorer import detect_fake_discount, score_deal
 
-
 HISTORY = [9800, 9950, 10000, 10000, 10100, 10200, 10300]
 
 
@@ -80,7 +79,11 @@ def test_genuine_discount_without_reference_is_not_flagged():
     [
         {"current_price": 0, "historical_prices": HISTORY},
         {"current_price": 100, "historical_prices": []},
-        {"current_price": 100, "historical_prices": HISTORY, "discount_duration_days": -1},
+        {
+            "current_price": 100,
+            "historical_prices": HISTORY,
+            "discount_duration_days": -1,
+        },
     ],
 )
 def test_invalid_scoring_inputs_are_rejected(kwargs):

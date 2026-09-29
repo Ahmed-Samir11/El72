@@ -30,7 +30,9 @@ class FetchedPrice:
 
 
 def _to_usd(price: float, currency: str) -> float:
-    return round(price * EGP_TO_USD, 4) if currency.upper() == "EGP" else round(price, 4)
+    return (
+        round(price * EGP_TO_USD, 4) if currency.upper() == "EGP" else round(price, 4)
+    )
 
 
 def _parse_jsonld(html: str) -> list:
@@ -132,7 +134,9 @@ def _first_image_url(image) -> Optional[str]:
     return None
 
 
-def _extract_from_html(html: str) -> Optional[tuple[float, str, Optional[str], Optional[str]]]:
+def _extract_from_html(
+    html: str,
+) -> Optional[tuple[float, str, Optional[str], Optional[str]]]:
     """Best-effort extraction of ``(price, currency, title, image_url)``.
 
     Parses the embedded JSON-LD **once** per page and tries, in order:
@@ -194,7 +198,11 @@ def _extract_from_html(html: str) -> Optional[tuple[float, str, Optional[str], O
     if price is None:
         # 3. Visible-text fallback: a number followed by an EGP marker.
         text = re.sub(r"<[^>]+>", " ", html)
-        m = re.search(r"(\d+(?:,\d{3})*(?:\.\d{1,2})?)\s*(?:EGP|ج\.م|جنيه|£|pound)", text, re.IGNORECASE)
+        m = re.search(
+            r"(\d+(?:,\d{3})*(?:\.\d{1,2})?)\s*(?:EGP|ج\.م|جنيه|£|pound)",
+            text,
+            re.IGNORECASE,
+        )
         if m:
             price = _parse_amount(m.group(1))
 
@@ -215,7 +223,9 @@ def _extract_from_html(html: str) -> Optional[tuple[float, str, Optional[str], O
 def _extract_meta(html: str, prop: str) -> Optional[str]:
     """Extract a meta tag's content value by property/name (og:title etc.)."""
     m = re.search(
-        r'<meta[^>]+(?:property|name)=["\']' + re.escape(prop) + r'["\'][^>]+content=["\']([^"\']*)',
+        r'<meta[^>]+(?:property|name)=["\']'
+        + re.escape(prop)
+        + r'["\'][^>]+content=["\']([^"\']*)',
         html,
         re.IGNORECASE,
     )
@@ -250,8 +260,10 @@ def _fetch_html_requests(url: str, timeout: int = 30) -> Optional[str]:
 
 
 def _fetch_html_playwright(url: str, timeout_ms: int = 25000) -> Optional[str]:
-    """Fetch page HTML via headless Chromium (JS-rendered pages). ``None`` on failure."""
-    """Fetch page HTML with headless Chromium (JS-rendered fallback)."""
+    """Fetch page HTML via headless Chromium (JS-rendered pages).
+
+    Returns ``None`` on failure.
+    """
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
@@ -290,7 +302,11 @@ def fetch_price(url: str) -> Optional[FetchedPrice]:
     found = _extract_from_html(html) if html else None
 
     if found is None:
-        logger.info("Requests fetch yielded no price for %s; trying Playwright browser fallback", url)
+        logger.info(
+            "Requests fetch yielded no price for %s; "
+            "trying Playwright browser fallback",
+            url,
+        )
         html_pw = _fetch_html_playwright(url)
         if html_pw:
             html = html_pw
@@ -306,7 +322,14 @@ def fetch_price(url: str) -> Optional[FetchedPrice]:
 
     price, currency, title, image_url = found
 
-    logger.info("Price fetch succeeded for %s: price=%s %s, title=%s, image_url=%s", url, price, currency, title, image_url)
+    logger.info(
+        "Price fetch succeeded for %s: price=%s %s, title=%s, image_url=%s",
+        url,
+        price,
+        currency,
+        title,
+        image_url,
+    )
     return FetchedPrice(
         price_local=price,
         currency=currency,

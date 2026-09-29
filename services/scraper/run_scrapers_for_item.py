@@ -47,10 +47,18 @@ class RunResult:
     screenshot_path: Optional[str]
 
 
-async def run_for_store(playwright, store_id: str, url_or_query: str, canonical_id: str, screenshot_dir: Optional[str]) -> RunResult:
+async def run_for_store(
+    playwright,
+    store_id: str,
+    url_or_query: str,
+    canonical_id: str,
+    screenshot_dir: Optional[str],
+) -> RunResult:
     scraper = ScraperFactory.get_scraper(store_id)
     if not scraper:
-        return RunResult(store_id, False, f"Unsupported store_id: {store_id}", None, None)
+        return RunResult(
+            store_id, False, f"Unsupported store_id: {store_id}", None, None
+        )
 
     browser = await playwright.chromium.launch(headless=True)
     context = await browser.new_context()
@@ -69,7 +77,9 @@ async def run_for_store(playwright, store_id: str, url_or_query: str, canonical_
                     await page.screenshot(path=screenshot_path, full_page=True)
                 except Exception:
                     screenshot_path = None
-            return RunResult(store_id, False, "Scrape returned no result", None, screenshot_path)
+            return RunResult(
+                store_id, False, "Scrape returned no result", None, screenshot_path
+            )
 
         data = result.to_dict()
         return RunResult(store_id, True, None, data, screenshot_path)
@@ -93,10 +103,28 @@ async def run_for_store(playwright, store_id: str, url_or_query: str, canonical_
 
 async def main():
     p = argparse.ArgumentParser(description="Run store scrapers for a product")
-    p.add_argument("--product", help="Product name/query to search for (auto-searches all stores)")
-    p.add_argument("--canonical-id", help="Canonical product identifier; auto-generated from product name if not provided")
-    p.add_argument("--store", action="append", default=[], help="Store to scrape from. Either just store_id (for search mode) or store_id=url (for direct URL). Repeatable.")
-    p.add_argument("--screenshot-dir", help="Directory to save screenshots for failed scrapes")
+    p.add_argument(
+        "--product", help="Product name/query to search for (auto-searches all stores)"
+    )
+    p.add_argument(
+        "--canonical-id",
+        help=(
+            "Canonical product identifier; "
+            "auto-generated from product name if not provided",
+        ),
+    )
+    p.add_argument(
+        "--store",
+        action="append",
+        default=[],
+        help=(
+            "Store to scrape from. Either just store_id (for search mode) "
+            "or store_id=url (for direct URL). Repeatable.",
+        ),
+    )
+    p.add_argument(
+        "--screenshot-dir", help="Directory to save screenshots for failed scrapes"
+    )
     args = p.parse_args()
 
     # Determine mode: search vs. direct URL
@@ -104,17 +132,19 @@ async def main():
         # Search mode: --product "product name" --store store1 --store store2
         if not args.store:
             raise SystemExit("Provide at least one --store argument")
-        
+
         # Validate stores (should not have = in search mode)
         store_ids = []
         for store in args.store:
             if "=" in store:
-                raise SystemExit(f"In search mode, use --store store_id (not store_id=url): {store}")
+                raise SystemExit(
+                    f"In search mode, use --store store_id (not store_id=url): {store}"
+                )
             store_ids.append(store)
-        
+
         canonical_id = args.canonical_id or args.product.lower().replace(" ", "-")
         product_query = args.product
-        
+
         print("Running scrapers in SEARCH mode:")
         print(f"  Product: {product_query}")
         print(f"  Canonical ID: {canonical_id}")
@@ -123,17 +153,22 @@ async def main():
 
         async with async_playwright() as playwright:
             tasks = [
-                run_for_store(playwright, sid, product_query, canonical_id, args.screenshot_dir)
+                run_for_store(
+                    playwright, sid, product_query, canonical_id, args.screenshot_dir
+                )
                 for sid in store_ids
             ]
             results = await asyncio.gather(*tasks)
-    
+
     elif args.store:
         # Direct URL mode: --canonical-id "id" --store store_id=url --store store_id=url
         store_map: Dict[str, str] = {}
         for entry in args.store:
             if "=" not in entry:
-                raise SystemExit(f"In direct URL mode, use --store store_id=url (not just store_id): {entry}")
+                raise SystemExit(
+                    "In direct URL mode, use --store store_id=url "
+                    f"(not just store_id): {entry}"
+                )
             sid, url = entry.split("=", 1)
             sid = sid.strip()
             url = url.strip()
@@ -142,7 +177,7 @@ async def main():
             store_map[sid] = url
 
         canonical_id = args.canonical_id or "unknown-product"
-        
+
         print("Running scrapers in DIRECT URL mode:")
         print(f"  Canonical ID: {canonical_id}")
         for sid, url in store_map.items():
@@ -154,7 +189,7 @@ async def main():
                 for sid, url in store_map.items()
             ]
             results = await asyncio.gather(*tasks)
-    
+
     else:
         raise SystemExit("Provide either --product or --store arguments")
 

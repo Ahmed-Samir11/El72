@@ -1,8 +1,7 @@
 """Additional ml_detector coverage."""
 
 import json
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import joblib
 import numpy as np
@@ -47,7 +46,9 @@ def test_load_model_from_dir_with_artifact(tmp_path):
 
 
 def test_load_model_missing_path(tmp_path):
-    (tmp_path / "latest.json").write_text(json.dumps({"path": str(tmp_path / "missing")}))
+    (tmp_path / "latest.json").write_text(
+        json.dumps({"path": str(tmp_path / "missing")})
+    )
     ml_detector.load_model_from_dir(str(tmp_path))
 
 
@@ -57,10 +58,15 @@ def test_load_model_invalid_metadata_is_logged_and_ignored(tmp_path):
 
 
 def test_mad_and_isolation_failures_return_safe_score():
-    with patch("services.analyzer.ml_detector.np.asarray", side_effect=ValueError("bad data")):
+    with patch(
+        "services.analyzer.ml_detector.np.asarray", side_effect=ValueError("bad data")
+    ):
         assert ml_detector.score_prices(np.ones(5), method="mad") == 0.0
 
-    with patch("services.analyzer.ml_detector.IsolationForest", side_effect=ValueError("model unavailable")):
+    with patch(
+        "services.analyzer.ml_detector.IsolationForest",
+        side_effect=ValueError("model unavailable"),
+    ):
         ml_detector._loaded_model = None
         assert ml_detector.score_prices(np.ones(5), method="isolation") == 0.0
 
@@ -69,7 +75,10 @@ def test_mad_and_isolation_failures_return_safe_score():
 async def test_process_and_publish_if_deal():
     redis = AsyncMock()
     await ml_detector.process_and_publish_if_deal(
-        redis, {"sku": "S", "store": "a", "price": 1, "timestamp": 1}, 0.9, threshold=0.8
+        redis,
+        {"sku": "S", "store": "a", "price": 1, "timestamp": 1},
+        0.9,
+        threshold=0.8,
     )
     redis.xadd.assert_awaited()
 
