@@ -104,6 +104,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      # actions:write is required by actions/upload-artifact for the signed
+      # AAB; everything else stays read-only.
+      actions: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -162,6 +165,10 @@ jobs:
           done
           mkdir -p "$RUNNER_TEMP/keystore"
           echo "$KEY_STORE" | base64 -d > "$RUNNER_TEMP/keystore/release.keystore"
+          # Validate the decoded keystore against the secret password before
+          # any build: a stale/mismatched KEYSTORE_PASSWORD must fail here,
+          # not deep inside Gradle.
+          keytool -list             -keystore "$RUNNER_TEMP/keystore/release.keystore"             -storepass "$KEYSTORE_PASSWORD" >/dev/null
           # Values come from the step environment (not argv); file is deleted
           # with the runner.
           {
@@ -182,10 +189,10 @@ jobs:
           # Fail fast on a missing or non-HTTPS production URL: a release
           # AAB with the emulator default baked in is useless (the WS5
           # startup guard would reject it at runtime anyway).
-          case "$PROD_API_BASE_URL" in
-            https://*) ;;
-            *) echo "PROD_API_BASE_URL must be a non-empty HTTPS URL." >&2; exit 1 ;;
-          esac
+          if ! [[ "$PROD_API_BASE_URL" =~ ^https://[a-zA-Z0-9.-]+(:[0-9]+)?(/.*)?$ ]]; then
+            echo "PROD_API_BASE_URL must be an HTTPS URL with a host (got: '$PROD_API_BASE_URL')." >&2
+            exit 1
+          fi
           cd flutter-app
           # versionCode policy (MS4):
           # - v* tag releases: owner-controlled RELEASE_VERSION_CODE secret,
@@ -211,22 +218,36 @@ jobs:
           echo "Building release AAB (versionCode=$VERSION_CODE)"
           flutter build appbundle --release             --dart-define=API_BASE_URL="$PROD_API_BASE_URL"
 
-      - name: Verify the AAB carries the release certificate
+      - name: Verify the AAB certificate and versionCode
         if: steps.signing.outputs.signed == 'true'
         env:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          RELEASE_VERSION_CODE: ${{ secrets.RELEASE_VERSION_CODE }}
         run: |
           AAB=flutter-app/build/app/outputs/flutter-release/app-release.aab
-          # Alias-scoped keytool lookup; explicit SHA256 extraction so a
-          # format change cannot silently produce an empty fingerprint.
-          EXPECTED=$(keytool -list             -keystore "$RUNNER_TEMP/keystore/release.keystore"             -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" 2>/dev/null             | grep -oE 'SHA256:[[:space:]]*[0-9A-F:]+' | grep -oE '[0-9A-F:]+' | tr -d ':')
-          ACTUAL=$(apksigner verify --print-certs "$AAB" 2>&1             | grep -oE 'SHA256 digest:[[:space:]]*[0-9a-f:]+' | head -n1             | grep -oE '[0-9a-f:]+' | tr -d ':')
-          if [ -z "$EXPECTED" ] || [ "$EXPECTED" != "$ACTUAL" ]; then
+          # apksigner/aapt ship in the SDK build-tools, not on PATH.
+          BUILD_TOOLS=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)
+          APKSIGNER="$BUILD_TOOLS"apksigner
+          AAPT="$BUILD_TOOLS"aapt
+          # Both fingerprints normalized to lowercase: keytool prints
+          # uppercase hex, apksigner lowercase - a raw comparison would
+          # always mismatch.
+          norm() { tr -d ':' | tr 'A-F' 'a-f'; }
+          EXPECTED=$(keytool -list             -keystore "$RUNNER_TEMP/keystore/release.keystore"             -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" 2>/dev/null             | grep -oE 'SHA256:[[:space:]]*[0-9A-F:]+' | head -n1 | awk '{print $2}' | norm)
+          ACTUAL=$("$APKSIGNER" verify --print-certs "$AAB" 2>&1             | grep -oE 'SHA256 digest:[[:space:]]*[0-9a-f:]+' | head -n1 | awk '{print $3}' | norm)
+          if [ -z "$EXPECTED" ] || [ -z "$ACTUAL" ] || [ "$EXPECTED" != "$ACTUAL" ]; then
             echo "AAB certificate does not match the release keystore." >&2
             exit 1
           fi
           echo "AAB signed with the release keystore (SHA256 $ACTUAL)."
+          # Assert the built versionCode matches the intended value.
+          BUILT_CODE=$("$AAPT" dump badging "$AAB" | grep -oE 'versionCode=[0-9]+' | cut -d= -f2)
+          if [ -n "$RELEASE_VERSION_CODE" ] && [ "$BUILT_CODE" != "$RELEASE_VERSION_CODE" ]; then
+            echo "AAB versionCode $BUILT_CODE != intended $RELEASE_VERSION_CODE." >&2
+            exit 1
+          fi
+          echo "AAB versionCode: $BUILT_CODE"
 
       - name: Upload App Bundle artifact
         if: steps.signing.outputs.signed == 'true'
@@ -246,6 +267,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      # actions:read is required by actions/download-artifact.
+      actions: read
     steps:
       # If flutter-ci skipped signing (secrets missing), no artifact exists
       # and this download fails deliberately: a v* tag must never publish an
