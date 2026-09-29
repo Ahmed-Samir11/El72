@@ -9,7 +9,7 @@ or analytics are added in a later release).**
 
 ---
 
-Elhaq (the "إلحق" price-tracking app") is a tool that helps you follow the prices
+Elhaq (the "إلحق" price-tracking app) is a tool that helps you follow the prices
 of products you care about on Egyptian online stores (Amazon Egypt, Noon, Jumia)
 and notify you when a price drops. This policy explains what data we collect,
 how it is used, and your choices.

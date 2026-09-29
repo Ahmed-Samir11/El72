@@ -108,9 +108,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # Full history: the PR-build versionCode is a commit count, which
-          # requires more than the default shallow checkout.
-          fetch-depth: 0
+          # Shallow by default (fast): branch/PR runs that stop at
+          # analyze/format/test do not need full history. The signed-build step
+          # unshallows on its own only when it must count commits for a PR
+          # versionCode, so the full-history cost is paid only on builds.
+          fetch-depth: 1
 
       # Pinned to the exact Flutter version verified by this repo's tests.
       # Bump deliberately (see docs/release-checklist.md).
@@ -183,6 +185,7 @@ jobs:
           echo "signed=true" >> "$GITHUB_OUTPUT"
 
       - name: Build signed App Bundle
+        id: build
         if: steps.signing.outputs.signed == 'true'
         env:
           PROD_API_BASE_URL: ${{ secrets.PROD_API_BASE_URL }}
@@ -193,6 +196,15 @@ jobs:
             echo "PROD_API_BASE_URL is not a valid HTTPS URL with a host." >&2
             exit 1
           fi
+          # A release must point at a public HTTPS endpoint: reject loopback and
+          # private-network hosts so a misconfigured secret can't ship an app
+          # that talks to localhost or an internal address.
+          HOST="$(printf '%s' "$PROD_API_BASE_URL" | sed -E 's#^https://##; s#:.*$##; s#/.*$##')"
+          case "$HOST" in
+            localhost|127.*|10.*|192.168.*|169.254.*|0.0.0.0|*.local)
+              echo "PROD_API_BASE_URL host '$HOST' is loopback/internal - not allowed for release." >&2
+              exit 1 ;;
+          esac
           cd flutter-app
           # versionCode policy (MS4):
           # - v* tag releases: owner-controlled RELEASE_VERSION_CODE secret,
@@ -213,6 +225,10 @@ jobs:
             fi
             VERSION_CODE="$RELEASE_VERSION_CODE"
           else
+            # PR builds use the total reachable commit count as an *informational*
+            # versionCode (PR artifacts are never submitted to Play). Unshallow
+            # first so the count is accurate rather than the shallow-clone depth.
+            git fetch --unshallow 2>/dev/null || true
             VERSION_CODE=$(git rev-list --count HEAD)
           fi
           # VERSION_CODE is passed to the flutter build (and inherited by
@@ -223,13 +239,16 @@ jobs:
           VERSION_CODE="$VERSION_CODE" \
             flutter build appbundle --release \
             --dart-define=API_BASE_URL="$PROD_API_BASE_URL"
+          # Expose the versionCode actually baked into the AAB so the verify step
+          # checks the real value (not the release-only RELEASE_VERSION_CODE, which
+          # is irrelevant to a PR build).
+          echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
 
       - name: Verify the AAB certificate and versionCode
         if: steps.signing.outputs.signed == 'true'
         env:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          RELEASE_VERSION_CODE: ${{ secrets.RELEASE_VERSION_CODE }}
         run: |
           set -euo pipefail
           AAB=flutter-app/build/app/outputs/flutter-release/app-release.aab
@@ -237,16 +256,18 @@ jobs:
           BUILD_TOOLS=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)
           APKSIGNER="$BUILD_TOOLS"apksigner
           [ -x "$APKSIGNER" ] || { echo "apksigner not found in $BUILD_TOOLS" >&2; exit 1; }
-          # scripts/verify-release-aab.py asserts:
+          # scripts/verify-release-aab.py (at the repo root, so `scripts/...` not
+          # `../scripts/...`) asserts:
           #   1. the AAB certificate SHA256 matches the release keystore,
-          #   2. the AAB versionCode matches RELEASE_VERSION_CODE (when set).
-          python3 ../scripts/verify-release-aab.py \
+          #   2. the AAB versionCode matches the value actually built
+          #      (steps.build.outputs.version_code).
+          python3 scripts/verify-release-aab.py \
             --keystore "$RUNNER_TEMP/keystore/release.keystore" \
             --storepass "$KEYSTORE_PASSWORD" \
             --alias "$KEY_ALIAS" \
             --apksigner "$APKSIGNER" \
             --aab "$AAB" \
-            --intended-version-code "$RELEASE_VERSION_CODE"
+            --intended-version-code "${{ steps.build.outputs.version_code }}"
 
       - name: Upload App Bundle artifact
         if: steps.signing.outputs.signed == 'true'
