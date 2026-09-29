@@ -44,7 +44,9 @@ def detect_fake_discount(
     if competitor_prices:
         competitors = _validate_prices(competitor_prices, "competitor_prices")
         competitor_average = mean(competitors)
-        competitor_advantage = max(0.0, (current - competitor_average) / competitor_average)
+        competitor_advantage = max(
+            0.0, (current - competitor_average) / competitor_average
+        )
     recent_inflation = 0.0
     if recent_prices:
         recent_inflation = max(
@@ -57,16 +59,22 @@ def detect_fake_discount(
     reasons: list[str] = []
     if reference_gap >= 0.10:
         confidence += 0.50 * _clamp(reference_gap / 0.20)
-        reasons.append(f"Reference price is {reference_gap:.0%} above the historical median")
+        reasons.append(
+            f"Reference price is {reference_gap:.0%} above the historical median"
+        )
     if reference_gap >= 0.10 and actual_discount < 0.08:
         confidence += 0.30
-        reasons.append(f"Current price is only {actual_discount:.0%} below the historical median")
+        reasons.append(
+            f"Current price is only {actual_discount:.0%} below the historical median"
+        )
     if competitor_advantage >= 0.03:
         confidence += 0.20 * _clamp(competitor_advantage / 0.15)
         reasons.append("Competitors offer a lower average price")
     if recent_inflation >= 0.10:
         confidence += 0.25 * _clamp(recent_inflation / 0.20)
-        reasons.append(f"Recent price peaked {recent_inflation:.0%} above the historical median")
+        reasons.append(
+            f"Recent price peaked {recent_inflation:.0%} above the historical median"
+        )
     if reference_gap >= 0.10 and not historical_low:
         confidence += 0.20
         reasons.append("Current price is not near the historical low")

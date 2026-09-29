@@ -60,7 +60,8 @@ PRODUCT_TITLES: Dict[str, str] = {
     "rtx-5060-el-badr": "Gigabyte RTX 5060 WINDFORCE MAX OC 8GB",
     "rtx-5060-compumarts": "ZOTAC RTX 5060 Twin Edge 8GB",
     "asus-rog-hatsune-miku-xg27acmeg-g": "ASUS ROG Strix Hatsune Miku 27 XG27ACMEG-G",
-    "ravin-white-fruit-print-tee-r219636": "White Oversized Fresh and Tasty Graphic Tee",
+    "ravin-white-fruit-print-tee-r219636": "White Oversized Fresh and Tasty "
+    "Graphic Tee",
 }
 
 
@@ -211,7 +212,9 @@ def get_live_deals(request: Request, db: Session = Depends(get_db)) -> List[dict
         source_url = e["last"].get("source_url") or ""
         redirect_url = source_url
         if source_url:
-            base_url = os.getenv("PUBLIC_API_BASE_URL", "http://localhost:8000").rstrip("/")
+            base_url = os.getenv("PUBLIC_API_BASE_URL", "http://localhost:8000").rstrip(
+                "/"
+            )
             redirect_url = (
                 f"{base_url}/affiliate/redirect?"
                 f"{urlencode({'target_url': source_url, 'sku': sku, 'deal_id': sku})}"
@@ -220,7 +223,9 @@ def get_live_deals(request: Request, db: Session = Depends(get_db)) -> List[dict
             {
                 "id": sku,
                 "title": PRODUCT_TITLES.get(sku, _humanize_sku(sku)),
-                "store_name": STORE_NAMES.get(e["last"]["store_id"], e["last"]["store_id"]),
+                "store_name": STORE_NAMES.get(
+                    e["last"]["store_id"], e["last"]["store_id"]
+                ),
                 "image_url": e["last"].get("image_url") or "",
                 "price": round(current, 2),
                 "original_price": round(original, 2),

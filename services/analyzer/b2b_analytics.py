@@ -22,7 +22,10 @@ def competitor_position(
     """Return a retailer's market position for one matched product."""
     if not store_id or store_id not in product_prices:
         raise ValueError("store_id must identify a supplied product price")
-    prices = {store: _positive(price, "product price") for store, price in product_prices.items()}
+    prices = {
+        store: _positive(price, "product price")
+        for store, price in product_prices.items()
+    }
     own_price = prices[store_id]
     market_average = mean(prices.values())
     market_minimum = min(prices.values())
@@ -69,16 +72,22 @@ def category_trends(observations: Iterable[Mapping]) -> list[dict]:
             last = float(ordered[-1]["price"])
             drops += last < first
             increases += last > first
-        results.append({
-            "category": category,
-            "observation_count": len(items),
-            "product_count": len(by_product),
-            "average_price": round(mean(prices), 2),
-            "price_volatility": round(pstdev(prices) / mean(prices), 4),
-            "products_dropping": drops,
-            "products_increasing": increases,
-            "deal_density": round(sum(float(item.get("discount_percent", 0)) >= 15 for item in items) / len(items), 4),
-        })
+        results.append(
+            {
+                "category": category,
+                "observation_count": len(items),
+                "product_count": len(by_product),
+                "average_price": round(mean(prices), 2),
+                "price_volatility": round(pstdev(prices) / mean(prices), 4),
+                "products_dropping": drops,
+                "products_increasing": increases,
+                "deal_density": round(
+                    sum(float(item.get("discount_percent", 0)) >= 15 for item in items)
+                    / len(items),
+                    4,
+                ),
+            }
+        )
     return results
 
 
@@ -99,14 +108,18 @@ def store_movements(observations: Iterable[Mapping]) -> list[dict]:
         first = float(ordered[0]["price"])
         last = float(ordered[-1]["price"])
         change = (last - first) / first
-        movements.append({
-            "store_id": store_id,
-            "product_id": product_id,
-            "first_price": round(first, 2),
-            "last_price": round(last, 2),
-            "change_percent": round(change, 4),
-            "direction": "down" if change < -0.001 else "up" if change > 0.001 else "stable",
-        })
+        movements.append(
+            {
+                "store_id": store_id,
+                "product_id": product_id,
+                "first_price": round(first, 2),
+                "last_price": round(last, 2),
+                "change_percent": round(change, 4),
+                "direction": (
+                    "down" if change < -0.001 else "up" if change > 0.001 else "stable"
+                ),
+            }
+        )
     return movements
 
 
@@ -116,7 +129,10 @@ def opportunity_signals(
     volatile_product_count: int = 0,
 ) -> dict:
     """Summarize retailer-facing opportunities from computed signals."""
-    above_market = sum(float(item.get("price_gap_vs_average", 0)) > 0.10 for item in competitor_positions)
+    above_market = sum(
+        float(item.get("price_gap_vs_average", 0)) > 0.10
+        for item in competitor_positions
+    )
     return {
         "products_above_market_10_percent": above_market,
         "products_at_historical_lows": max(0, int(historical_low_count)),

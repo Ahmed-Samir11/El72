@@ -1,15 +1,17 @@
-import pytest
 import uuid
-from datetime import datetime, timedelta
-from services.billing.models import PaymentLog, Base
+from datetime import datetime
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+
+from services.billing.models import Base, PaymentLog
 
 # In-memory SQLite for testing
 engine = create_engine("sqlite:///:memory:")
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base.metadata.create_all(bind=engine)
+
 
 def test_payment_log_creation():
     db = SessionLocal()
@@ -20,12 +22,13 @@ def test_payment_log_creation():
         currency="EGP",
         status="success",
         tier="premium",
-        created_at=datetime.utcnow()
+        created_at=datetime.utcnow(),
     )
     db.add(payment)
     db.commit()
     assert payment.id is not None
     db.close()
+
 
 def test_payment_log_attributes():
     user_id = uuid.uuid4()
@@ -35,11 +38,12 @@ def test_payment_log_attributes():
         amount=50.0,
         currency="USD",
         status="pending",
-        tier="free"
+        tier="free",
     )
     assert payment.user_id == user_id
     assert payment.amount == 50.0
     assert payment.currency == "USD"
+
 
 def test_payment_log_defaults():
     payment = PaymentLog(
@@ -47,12 +51,14 @@ def test_payment_log_defaults():
         paymob_order_id="order789",
         amount=200.0,
         status="success",
-        tier="enterprise"
+        tier="enterprise",
     )
     assert payment.currency is None  # default not applied to object
 
+
 def test_payment_log_table_name():
     assert PaymentLog.__tablename__ == "payment_logs"
+
 
 def test_payment_log_columns():
     # Check if columns are defined

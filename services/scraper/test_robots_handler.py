@@ -1,7 +1,6 @@
 """Tests for robots.txt handler with mocked parser dependency."""
 
 import sys
-from datetime import datetime, timedelta
 from types import ModuleType
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -41,26 +40,37 @@ def handler():
 
 @pytest.mark.asyncio
 async def test_fetch_robots_success_404_and_error(handler):
-    mock_resp = MagicMock(status_code=200, text="User-agent: *\nDisallow: /admin\nCrawl-delay: 2\nSitemap: https://x/s.xml")
+    mock_resp = MagicMock(
+        status_code=200,
+        text="User-agent: *\nDisallow: /admin\nCrawl-delay: 2\nSitemap: https://x/s.xml",
+    )
     mock_client = AsyncMock()
     mock_client.get.return_value = mock_resp
     mock_client.__aenter__.return_value = mock_client
     mock_client.__aexit__.return_value = False
 
-    with patch("services.scraper.robots_handler.httpx.AsyncClient", return_value=mock_client):
+    with patch(
+        "services.scraper.robots_handler.httpx.AsyncClient", return_value=mock_client
+    ):
         text = await handler._fetch_robots_txt("https://example.com")
         assert "Disallow" in text
 
     mock_resp.status_code = 404
-    with patch("services.scraper.robots_handler.httpx.AsyncClient", return_value=mock_client):
+    with patch(
+        "services.scraper.robots_handler.httpx.AsyncClient", return_value=mock_client
+    ):
         assert await handler._fetch_robots_txt("https://example.com") is None
 
     mock_resp.status_code = 500
-    with patch("services.scraper.robots_handler.httpx.AsyncClient", return_value=mock_client):
+    with patch(
+        "services.scraper.robots_handler.httpx.AsyncClient", return_value=mock_client
+    ):
         assert await handler._fetch_robots_txt("https://example.com") is None
 
     mock_client.get.side_effect = Exception("net")
-    with patch("services.scraper.robots_handler.httpx.AsyncClient", return_value=mock_client):
+    with patch(
+        "services.scraper.robots_handler.httpx.AsyncClient", return_value=mock_client
+    ):
         assert await handler._fetch_robots_txt("https://example.com") is None
 
 
@@ -96,7 +106,9 @@ async def test_cache_reuse_and_helpers(handler):
     mock_client.__aenter__.return_value = mock_client
     mock_client.__aexit__.return_value = False
 
-    with patch("services.scraper.robots_handler.httpx.AsyncClient", return_value=mock_client):
+    with patch(
+        "services.scraper.robots_handler.httpx.AsyncClient", return_value=mock_client
+    ):
         delay1 = await handler.get_crawl_delay("https://ex.com/a")
         delay2 = await handler.get_crawl_delay("https://ex.com/b")
         sitemaps = await handler.get_sitemaps("https://ex.com/c")

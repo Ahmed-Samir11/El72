@@ -39,4 +39,6 @@ def affiliate_redirect(
         )
     )
     db.commit()
-    return RedirectResponse(url=affiliate_url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+    return RedirectResponse(
+        url=affiliate_url, status_code=status.HTTP_307_TEMPORARY_REDIRECT
+    )

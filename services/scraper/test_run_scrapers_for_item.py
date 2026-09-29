@@ -74,12 +74,23 @@ async def test_main_search_mode_and_validation():
         "services.scraper.run_scrapers_for_item.asyncio.gather",
         new=AsyncMock(
             return_value=[
-                RunResult("amazon_eg", True, None, {"price": 1, "currency": "EGP", "in_stock": True, "title": "t", "url": "u", "timestamp": "now"}, None)
+                RunResult(
+                    "amazon_eg",
+                    True,
+                    None,
+                    {
+                        "price": 1,
+                        "currency": "EGP",
+                        "in_stock": True,
+                        "title": "t",
+                        "url": "u",
+                        "timestamp": "now",
+                    },
+                    None,
+                )
             ]
         ),
-    ), patch(
-        "services.scraper.run_scrapers_for_item.async_playwright"
-    ) as ap, patch(
+    ), patch("services.scraper.run_scrapers_for_item.async_playwright") as ap, patch(
         "sys.argv",
         ["prog", "--product", "GPU Card", "--store", "amazon_eg"],
     ):
@@ -89,7 +100,9 @@ async def test_main_search_mode_and_validation():
         ap.return_value = pw_cm
         await main()
 
-    with patch("sys.argv", ["prog", "--product", "GPU", "--store", "amazon_eg=https://x"]):
+    with patch(
+        "sys.argv", ["prog", "--product", "GPU", "--store", "amazon_eg=https://x"]
+    ):
         with pytest.raises(SystemExit):
             await main()
 
@@ -102,14 +115,16 @@ async def test_main_search_mode_and_validation():
 async def test_main_direct_url_mode():
     with patch(
         "services.scraper.run_scrapers_for_item.asyncio.gather",
-        new=AsyncMock(
-            return_value=[RunResult("amazon_eg", False, "fail", None, None)]
-        ),
-    ), patch(
-        "services.scraper.run_scrapers_for_item.async_playwright"
-    ) as ap, patch(
+        new=AsyncMock(return_value=[RunResult("amazon_eg", False, "fail", None, None)]),
+    ), patch("services.scraper.run_scrapers_for_item.async_playwright") as ap, patch(
         "sys.argv",
-        ["prog", "--canonical-id", "cid", "--store", "amazon_eg=https://amazon.eg/dp/X"],
+        [
+            "prog",
+            "--canonical-id",
+            "cid",
+            "--store",
+            "amazon_eg=https://amazon.eg/dp/X",
+        ],
     ):
         pw_cm = AsyncMock()
         pw_cm.__aenter__.return_value = MagicMock()

@@ -45,7 +45,9 @@ def score_deal(
     if competitor_prices:
         competitors = _validate_prices(competitor_prices, "competitor_prices")
         cross_store_average = mean(competitors)
-        cross_store_advantage = max(0.0, (cross_store_average - current) / cross_store_average)
+        cross_store_advantage = max(
+            0.0, (cross_store_average - current) / cross_store_average
+        )
 
     suspicious = detect_fake_discount(
         current,
@@ -76,9 +78,11 @@ def score_deal(
         grade = "No deal"
 
     reasons = [
-        f"{historical_discount:.0%} below the historical median"
-        if historical_discount > 0
-        else "At or above the historical median",
+        (
+            f"{historical_discount:.0%} below the historical median"
+            if historical_discount > 0
+            else "At or above the historical median"
+        ),
         f"Current price is in the {historical_percentile:.0%} historical percentile",
     ]
     if historical_low:
@@ -101,7 +105,11 @@ def score_deal(
             "historical_minimum": round(historical_minimum, 2),
             "historical_percentile": round(historical_percentile, 4),
             "historical_discount": round(historical_discount, 4),
-            "cross_store_average": round(cross_store_average, 2) if cross_store_average is not None else None,
+            "cross_store_average": (
+                round(cross_store_average, 2)
+                if cross_store_average is not None
+                else None
+            ),
             "cross_store_advantage": round(cross_store_advantage, 4),
             "price_volatility": round(pstdev(history) / historical_mean, 4),
             "discount_duration_days": discount_duration_days,

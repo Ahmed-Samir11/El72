@@ -104,7 +104,8 @@ async def test_insert_and_fetch_prices():
     conn = AsyncMock()
     conn.fetch.return_value = [{"price_egp": 10}, {"price_egp": 12}]
     await insert_price_history(
-        conn, {"timestamp": 1, "sku": "S", "store": "amazon", "price": 10, "in_stock": True}
+        conn,
+        {"timestamp": 1, "sku": "S", "store": "amazon", "price": 10, "in_stock": True},
     )
     conn.execute.assert_awaited()
     prices = await fetch_recent_prices(conn, "S", "amazon", limit=2)
@@ -115,7 +116,9 @@ async def test_insert_and_fetch_prices():
 async def test_find_alerting_users_success_and_error():
     conn = AsyncMock()
     conn.fetch.return_value = [{"user_id": 1, "category": "laptops"}]
-    assert await find_alerting_users(conn, "SKU") == [{"user_id": 1, "category": "laptops"}]
+    assert await find_alerting_users(conn, "SKU") == [
+        {"user_id": 1, "category": "laptops"}
+    ]
 
     conn.fetch.side_effect = Exception("no table")
     assert await find_alerting_users(conn, "SKU") == []
@@ -218,7 +221,12 @@ async def test_consume_loop_filters_out_of_stock_and_acks():
                         "1-0",
                         {
                             b"payload": json.dumps(
-                                {"sku": "S", "store": "a", "price": 10, "in_stock": False}
+                                {
+                                    "sku": "S",
+                                    "store": "a",
+                                    "price": 10,
+                                    "in_stock": False,
+                                }
                             ).encode()
                         },
                     )
@@ -266,7 +274,12 @@ async def test_consume_loop_anomaly_publishes():
         "trace_id": "t",
     }
     redis.xreadgroup.side_effect = [
-        [("stream:price_ingest", [("2-0", {b"payload": json.dumps(payload).encode()})])],
+        [
+            (
+                "stream:price_ingest",
+                [("2-0", {b"payload": json.dumps(payload).encode()})],
+            )
+        ],
         asyncio.CancelledError(),
     ]
 
@@ -345,11 +358,19 @@ async def test_startup_initializes_stream_pools_and_background_tasks():
     async def forever():
         await asyncio.Event().wait()
 
-    with patch("services.analyzer.app.RedisStreamClient.create", new=AsyncMock(return_value=redis)), \
-        patch("services.analyzer.app.asyncpg.create_pool", new=AsyncMock(side_effect=[pg_pool, ts_pool])), \
-        patch("services.analyzer.app.consume_loop", new=forever), \
-        patch("services.analyzer.app.publisher_loop", new=forever), \
-        patch("services.analyzer.app.ml_detector.load_model_from_dir") as load_model:
+    with patch(
+        "services.analyzer.app.RedisStreamClient.create",
+        new=AsyncMock(return_value=redis),
+    ), patch(
+        "services.analyzer.app.asyncpg.create_pool",
+        new=AsyncMock(side_effect=[pg_pool, ts_pool]),
+    ), patch(
+        "services.analyzer.app.consume_loop", new=forever
+    ), patch(
+        "services.analyzer.app.publisher_loop", new=forever
+    ), patch(
+        "services.analyzer.app.ml_detector.load_model_from_dir"
+    ) as load_model:
         await analyzer_app.startup()
 
     redis.ensure_group.assert_awaited_once()
@@ -365,7 +386,10 @@ async def test_startup_fails_fast_without_database_url():
     original_database_url = settings.database_url
     settings.database_url = ""
     try:
-        with patch("services.analyzer.app.RedisStreamClient.create", new=AsyncMock(return_value=AsyncMock())):
+        with patch(
+            "services.analyzer.app.RedisStreamClient.create",
+            new=AsyncMock(return_value=AsyncMock()),
+        ):
             with pytest.raises(SystemExit, match="DATABASE_URL is required"):
                 await analyzer_app.startup()
     finally:

@@ -40,7 +40,9 @@ def compare_store_prices(
             "store_id": store_id,
             "price": round(price, 2),
             "rank": rank,
-            "difference_from_average": round((price - market_average) / market_average, 4),
+            "difference_from_average": round(
+                (price - market_average) / market_average, 4
+            ),
             "is_cheapest": store_id == cheapest_store,
             "is_most_expensive": store_id == most_expensive_store,
         }
@@ -58,7 +60,9 @@ def compare_store_prices(
                 raise ValueError("historical prices must contain positive values")
             all_history.extend(values)
             if store_id in prices:
-                store_historical_lows[store_id] = prices[store_id] <= min(values) * 1.005
+                store_historical_lows[store_id] = (
+                    prices[store_id] <= min(values) * 1.005
+                )
         if all_history:
             historical_minimum = min(all_history)
             historical_low = market_minimum <= historical_minimum * 1.005
@@ -81,7 +85,9 @@ def compare_store_prices(
         "spread_percent": round(spread_percent, 4),
         "market_position": market_position,
         "is_historical_low": historical_low,
-        "historical_minimum": round(historical_minimum, 2) if historical_minimum is not None else None,
+        "historical_minimum": (
+            round(historical_minimum, 2) if historical_minimum is not None else None
+        ),
         "store_historical_lows": store_historical_lows,
         "ranking": ranking,
     }

@@ -8,9 +8,9 @@ import re
 import time
 from typing import Any, Dict, List, Optional
 
+import asyncpg
 from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import async_playwright
-import asyncpg
 
 from services.common.redis_client import RedisStreamClient
 from services.scraper.browser_pool import BrowserPool
@@ -20,7 +20,9 @@ logger = logging.getLogger("scraper")
 
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://elhaq:elhaq_pass@postgres:5432/elhaq")
+DATABASE_URL = os.getenv(
+    "DATABASE_URL", "postgresql://elhaq:elhaq_pass@postgres:5432/elhaq"
+)
 STREAM = os.getenv("STREAM_PRICE_INGEST", "stream:price_ingest")
 CONFIRMED_DEALS_STREAM = os.getenv("STREAM_CONFIRMED_DEALS", "stream:confirmed_deals")
 FAILED_QUEUE = os.getenv("FAILED_QUEUE", "queue:failed_scrapes")
@@ -57,17 +59,17 @@ OUT_OF_STOCK_KEYWORDS = ["out of stock", "unavailable", "sold out", "غير مت
 
 async def check_alerts_for_sku(sku: str, scraped_price: float) -> List[Dict]:
     """Check if any user alerts should trigger for this SKU and price.
-    
+
     Args:
         sku: Product SKU
         scraped_price: Current scraped price
-        
+
     Returns:
         List of alert dictionaries that should trigger notifications
     """
     try:
         conn = await asyncpg.connect(DATABASE_URL)
-        
+
         # Find alerts where:
         # 1. target_url contains the SKU
         # 2. scraped_price <= target_price
@@ -80,24 +82,29 @@ async def check_alerts_for_sku(sku: str, scraped_price: float) -> List[Dict]:
             AND a.target_url LIKE $1
             AND a.target_price >= $2
         """
-        
+
         rows = await conn.fetch(query, f'%{sku}%', scraped_price)
         await conn.close()
-        
+
         alerts = []
         for row in rows:
-            alerts.append({
-                'alert_id': row['id'],
-                'user_id': row['user_id'],
-                'phone': row['phone'],
-                'target_url': row['target_url'],
-                'target_price': float(row['target_price']),
-                'scraped_price': scraped_price
-            })
-        
+            alerts.append(
+                {
+                    'alert_id': row['id'],
+                    'user_id': row['user_id'],
+                    'phone': row['phone'],
+                    'target_url': row['target_url'],
+                    'target_price': float(row['target_price']),
+                    'scraped_price': scraped_price,
+                }
+            )
+
         if alerts:
-            logger.info(f"🔔 Found {len(alerts)} alerts triggered for SKU {sku} at price {scraped_price}")
-        
+            logger.info(
+                f"🔔 Found {len(alerts)} alerts triggered "
+                f"for SKU {sku} at price {scraped_price}"
+            )
+
         return alerts
     except Exception as e:
         logger.error(f"❌ Failed to check alerts: {e}")
@@ -106,7 +113,7 @@ async def check_alerts_for_sku(sku: str, scraped_price: float) -> List[Dict]:
 
 async def extract_product_title(page) -> str:
     """Extract product title using Playwright selectors.
-    
+
     Returns the product title or empty string if not found.
     """
     # Amazon-specific title selectors
@@ -116,7 +123,7 @@ async def extract_product_title(page) -> str:
         '[data-feature-name="title"]',
         'h1[id*="title"]',
     ]
-    
+
     for selector in selectors:
         try:
             element = await page.query_selector(selector)
@@ -125,13 +132,13 @@ async def extract_product_title(page) -> str:
                 return title.strip() if title else ""
         except Exception:
             continue
-    
+
     return ""
 
 
 async def extract_price_from_page(page) -> float:
     """Extract price using Playwright selectors (more accurate than regex).
-    
+
     This is the preferred method for Amazon and similar sites.
     Falls back to regex extraction if selectors fail.
     """
@@ -143,7 +150,7 @@ async def extract_price_from_page(page) -> float:
         '#priceblock_dealprice',
         '.a-price .a-offscreen',
     ]
-    
+
     for selector in selectors:
         try:
             elements = await page.query_selector_all(selector)
@@ -151,8 +158,9 @@ async def extract_price_from_page(page) -> float:
                 text = await elem.inner_text()
                 if not text:
                     continue
-                
-                # Extract numbers from text (handles both "50,000.00" and "جنيه‎50,000.00‎")
+
+                # Extract numbers from text (handles both "50,000.00" and
+                # "جنيه‎50,000.00‎")
                 numbers = re.findall(r'([\d,]+(?:\.\d{1,2})?)', text)
                 for num_str in numbers:
                     try:
@@ -163,7 +171,7 @@ async def extract_price_from_page(page) -> float:
                         continue
         except Exception:
             continue
-    
+
     return 0.0
 
 
@@ -174,7 +182,7 @@ async def extract_price(html: str) -> float:
     Uses multiple patterns and filters out small numbers (likely ratings/reviews).
     """
     candidates = []
-    
+
     for rx in PRICE_PATTERNS:
         matches = rx.findall(html)
         for match in matches:
@@ -189,17 +197,17 @@ async def extract_price(html: str) -> float:
                     candidates.append(price)
             except (ValueError, TypeError):
                 continue
-    
+
     # Return the most common price if multiple found, or the first valid one
     if candidates:
         return candidates[0]
-    
+
     return 0.0
 
 
 async def check_in_stock_from_page(page) -> bool:
     """Check if product is in stock using Playwright selectors (more accurate).
-    
+
     Checks for positive indicators like Add to Cart button.
     Returns True if in stock, False otherwise.
     """
@@ -207,28 +215,34 @@ async def check_in_stock_from_page(page) -> bool:
         # Check for Add to Cart or Buy Now buttons (strong indicator of availability)
         add_to_cart = await page.query_selector('#add-to-cart-button')
         buy_now = await page.query_selector('#buy-now-button')
-        
+
         if add_to_cart or buy_now:
             return True
-        
+
         # Check availability section for positive messages
         availability = await page.query_selector('#availability')
         if availability:
             text = await availability.inner_text()
             text_lower = text.lower()
-            
+
             # Positive indicators (in stock)
             positive_keywords = ['in stock', 'متوفر', 'تبقى', 'اطلبه']
             for keyword in positive_keywords:
                 if keyword in text_lower:
                     return True
-            
+
             # Negative indicators (out of stock)
-            negative_keywords = ['currently unavailable', 'out of stock', 'sold out', 'غير متوفر', 'نفد']
+            negative_keywords = [
+                'currently unavailable',
+                'out of stock',
+                'sold out',
+                'غير متوفر',
+                'نفد',
+            ]
             for keyword in negative_keywords:
                 if keyword in text_lower:
                     return False
-        
+
         # Default: assume in stock if no clear negative indicator
         return True
     except Exception:
@@ -238,12 +252,12 @@ async def check_in_stock_from_page(page) -> bool:
 
 async def check_in_stock(html: str) -> bool:
     """Fallback HTML-based stock check (less accurate).
-    
+
     Only checks for explicit out-of-stock messages in main content.
     Returns False if out-of-stock keywords found, True otherwise.
     """
     low = html.lower()
-    
+
     # Only check for very specific out-of-stock phrases in main content areas
     # Avoid false positives from variant selectors
     specific_out_of_stock = [
@@ -254,11 +268,11 @@ async def check_in_stock(html: str) -> bool:
         'المنتج غير متوفر',  # Product not available
         'نفذت الكمية',  # Quantity exhausted
     ]
-    
+
     for kw in specific_out_of_stock:
         if kw in low:
             return False
-    
+
     return True
 
 
@@ -346,16 +360,16 @@ async def fetch_target(  # noqa: C901
             # navigation timeout in ms (configurable)
             nav_timeout = int(os.getenv("SCRAPER_NAV_TIMEOUT_MS", "20000"))
             await page.goto(url, timeout=nav_timeout)
-            
+
             # Extract product information
             product_title = await extract_product_title(page)
-            
+
             # Try to extract price using Playwright selectors first (more accurate)
             price = await extract_price_from_page(page)
-            
+
             # Check stock status using selectors (more accurate)
             in_stock = await check_in_stock_from_page(page)
-            
+
             # Fallback to HTML regex if selector method fails
             if price == 0.0:
                 html = await page.content()
@@ -363,7 +377,7 @@ async def fetch_target(  # noqa: C901
             else:
                 # Still get HTML for hash
                 html = await page.content()
-            
+
             # Offload CPU-heavy hash to threadpool
             html_hash = await asyncio.to_thread(
                 lambda s=html: hashlib.sha256(s.encode("utf-8")).hexdigest()
@@ -392,10 +406,10 @@ async def fetch_target(  # noqa: C901
             # Publish to price_ingest stream for analysis
             await redis_client.xadd(STREAM, {"payload": payload})
             logger.info("Pushed %s from %s (price=%s) to %s", sku, store, price, STREAM)
-            
+
             # Check if any user alerts should trigger for this price
             triggered_alerts = await check_alerts_for_sku(sku, price)
-            
+
             if triggered_alerts:
                 # Publish to confirmed_deals for WhatsApp notifications
                 store_display_name = {
@@ -404,7 +418,7 @@ async def fetch_target(  # noqa: C901
                     "jumia_eg": "Jumia Egypt",
                     "noon_eg": "Noon",
                 }.get(store, store)
-                
+
                 for alert in triggered_alerts:
                     whatsapp_payload = {
                         "sku": sku,
@@ -418,7 +432,10 @@ async def fetch_target(  # noqa: C901
                         "timestamp": int(time.time()),
                     }
                     await redis_client.xadd(CONFIRMED_DEALS_STREAM, whatsapp_payload)
-                    logger.info(f"🔔 Pushed alert to WhatsApp for user {alert['phone']}: {sku} @ {price} EGP (target: {alert['target_price']})")
+                    logger.info(
+                        f"🔔 Pushed alert to WhatsApp for user {alert['phone']}: "
+                        f"{sku} @ {price} EGP (target: {alert['target_price']})"
+                    )
             else:
                 logger.info(f"ℹ️ No alerts triggered for SKU {sku} at price {price}")
 
@@ -615,7 +632,9 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--targets", default="services/scraper/targets_example.json", help="path to targets JSON file"
+        "--targets",
+        default="services/scraper/targets_example.json",
+        help="path to targets JSON file",
     )
     args = parser.parse_args()
 

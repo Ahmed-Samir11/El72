@@ -37,7 +37,13 @@ def test_product_schema_invalid():
 def test_search_schema_parse_and_helpers():
     data = {
         "products": [
-            {"title": "A", "url": "/a", "price": 10, "currency": "EGP", "in_stock": True}
+            {
+                "title": "A",
+                "url": "/a",
+                "price": 10,
+                "currency": "EGP",
+                "in_stock": True,
+            }
         ],
         "total_results": 1,
         "current_page": 1,

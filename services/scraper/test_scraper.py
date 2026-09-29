@@ -89,7 +89,9 @@ async def test_check_alerts_for_sku_success_and_error():
             "target_price": 100,
         }
     ]
-    with patch("services.scraper.scraper.asyncpg.connect", new=AsyncMock(return_value=conn)):
+    with patch(
+        "services.scraper.scraper.asyncpg.connect", new=AsyncMock(return_value=conn)
+    ):
         alerts = await check_alerts_for_sku("SKU", 90)
     assert len(alerts) == 1
     assert alerts[0]["phone"] == "+20111"
@@ -146,7 +148,9 @@ async def test_fetch_target_success_with_alerts():
                 {"phone": "+201", "target_price": 120, "alert_id": 1, "user_id": 1}
             ]
         ),
-    ), patch.object(scraper_mod, "MAX_RETRIES", 1):
+    ), patch.object(
+        scraper_mod, "MAX_RETRIES", 1
+    ):
         ok = await fetch_target(
             {"url": "https://amazon.eg/dp/X", "sku": "X", "store": "amazon_eg"},
             redis,
@@ -208,9 +212,7 @@ async def test_run_targets_mocked():
     with patch(
         "services.scraper.scraper.RedisStreamClient.create",
         new=AsyncMock(return_value=AsyncMock()),
-    ), patch(
-        "services.scraper.scraper.async_playwright"
-    ) as ap, patch(
+    ), patch("services.scraper.scraper.async_playwright") as ap, patch(
         "services.scraper.scraper.BrowserPool"
     ) as BP, patch(
         "services.scraper.scraper.fetch_target",

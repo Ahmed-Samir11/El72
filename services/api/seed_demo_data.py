@@ -90,7 +90,10 @@ STORES: Dict[str, Dict[str, str]] = {
         "url_base": "https://geeksstoreeg.com/product/",
     },
     "ravin_eg": {"name": "Ravin", "url_base": "https://shop.iravin.com/products/"},
-    "alfrensia_eg": {"name": "Alfrensia", "url_base": "https://alfrensia.com/en/product/"},
+    "alfrensia_eg": {
+        "name": "Alfrensia",
+        "url_base": "https://alfrensia.com/en/product/",
+    },
 }
 
 # Per-store price factor so stores differ slightly (makes the "lowest price"

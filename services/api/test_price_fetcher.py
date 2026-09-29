@@ -27,6 +27,7 @@ def _page_with_jsonld(payload: str) -> str:
 #  _parse_jsonld                                                               #
 # --------------------------------------------------------------------------- #
 
+
 class TestParseJsonld:
     def test_single_object(self):
         html = _page_with_jsonld('{"@type": "Product"}')
@@ -44,7 +45,9 @@ class TestParseJsonld:
         assert _parse_jsonld(html) == []
 
     def test_empty_blocks_are_skipped(self):
-        html = "<html><head><script type='application/ld+json'>   </script></head></html>"
+        html = (
+            "<html><head><script type='application/ld+json'>   </script></head></html>"
+        )
         assert _parse_jsonld(html) == []
 
     def test_multiple_blocks(self):
@@ -65,6 +68,7 @@ class TestParseJsonld:
 #  _jsonld_product                                                             #
 # --------------------------------------------------------------------------- #
 
+
 class TestJsonldProduct:
     def test_top_level_product(self):
         html = _page_with_jsonld('{"@type": "Product", "name": "X"}')
@@ -81,7 +85,9 @@ class TestJsonldProduct:
         assert prod is not None and prod["name"] == "In Graph"
 
     def test_uri_typed_product(self):
-        html = _page_with_jsonld('{"@type": "https://schema.org/Product", "name": "URI"}')
+        html = _page_with_jsonld(
+            '{"@type": "https://schema.org/Product", "name": "URI"}'
+        )
         prod = _jsonld_product(html)
         assert prod is not None and prod["name"] == "URI"
 
@@ -101,6 +107,7 @@ class TestJsonldProduct:
 # --------------------------------------------------------------------------- #
 #  _parse_amount                                                               #
 # --------------------------------------------------------------------------- #
+
 
 class TestParseAmount:
     @pytest.mark.parametrize(
@@ -128,12 +135,14 @@ class TestParseAmount:
 #  _extract_from_html                                                          #
 # --------------------------------------------------------------------------- #
 
+
 class TestExtractFromHtml:
     def test_full_product_page(self):
         html = _page_with_jsonld(
             '{"@type": "Product", "name": "GPU", '
             '"image": "https://img.com/gpu.jpg", '
-            '"offers": {"@type": "Offer", "price": "129999.00", "priceCurrency": "EGP"}}'
+            '"offers": {"@type": "Offer", "price": "129999.00", '
+            '"priceCurrency": "EGP"}}'
         )
         price, currency, title, image = _extract_from_html(html)
         assert (price, currency, title, image) == (
@@ -150,7 +159,8 @@ class TestExtractFromHtml:
 
     def test_price_string_with_currency_suffix(self):
         html = _page_with_jsonld(
-            '{"@type": "Product", "offers": {"price": "129,999 EGP", "priceCurrency": "EGP"}}'
+            '{"@type": "Product", "offers": '
+            '{"price": "129,999 EGP", "priceCurrency": "EGP"}}'
         )
         price, currency, _, _ = _extract_from_html(html)
         assert (price, currency) == (129999.0, "EGP")
@@ -165,7 +175,8 @@ class TestExtractFromHtml:
 
     def test_image_as_list_of_objects(self):
         html = _page_with_jsonld(
-            '{"@type": "Product", "image": [{"url": "https://img.com/1.jpg"}, "https://img.com/2.jpg"], '
+            '{"@type": "Product", "image": '
+            '[{"url": "https://img.com/1.jpg"}, "https://img.com/2.jpg"], '
             '"offers": {"price": 10}}'
         )
         _, _, _, image = _extract_from_html(html)
@@ -180,7 +191,12 @@ class TestExtractFromHtml:
             "</head><body></body></html>"
         )
         price, currency, title, image = _extract_from_html(html)
-        assert (price, currency, title, image) == (45000.0, "EGP", "Meta Title", "https://img.com/m.jpg")
+        assert (price, currency, title, image) == (
+            45000.0,
+            "EGP",
+            "Meta Title",
+            "https://img.com/m.jpg",
+        )
 
     def test_visible_text_fallback_english(self):
         html = "<html><body><span>Price: 129,999 EGP</span></body></html>"
@@ -228,7 +244,8 @@ class TestExtractFromHtml:
         html = (
             "<html><head>"
             '<script type="application/ld+json">{"@graph": [{"@type": "Product", '
-            '"name": "From Graph", "offers": {"price": "500", "priceCurrency": "EGP"}}]}</script>'
+            '"name": "From Graph", "offers": {"price": "500", '
+            '"priceCurrency": "EGP"}}]}</script>'
             '<meta property="og:price:amount" content="999,999">'
             "</head><body></body></html>"
         )
