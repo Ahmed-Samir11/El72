@@ -217,7 +217,10 @@ jobs:
           else
             export VERSION_CODE=$(git rev-list --count HEAD)
           fi
-          echo "Building release AAB (versionCode=$VERSION_CODE)"
+          # The exported VERSION_CODE is inherited by flutter -> Gradle,
+          # which reads it via System.getenv("VERSION_CODE") in
+          # android/app/build.gradle.kts.
+          echo "Building release AAB (VERSION_CODE=$VERSION_CODE, inherited by Gradle)"
           flutter build appbundle --release             --dart-define=API_BASE_URL="$PROD_API_BASE_URL"
 
       - name: Verify the AAB certificate and versionCode
@@ -233,26 +236,53 @@ jobs:
           BUILD_TOOLS=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)
           APKSIGNER="$BUILD_TOOLS"apksigner
           [ -x "$APKSIGNER" ] || { echo "apksigner not found in $BUILD_TOOLS" >&2; exit 1; }
-          # Both fingerprints normalized to lowercase: keytool prints
-          # uppercase hex, apksigner lowercase - a raw comparison would
-          # always mismatch.
-          norm() { tr -d ':' | tr 'A-F' 'a-f'; }
-          EXPECTED=$(keytool -list             -keystore "$RUNNER_TEMP/keystore/release.keystore"             -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" 2>/dev/null             | grep -oE 'SHA256:[[:space:]]*[0-9A-F:]+' | head -n1 | awk '{print $2}' | norm)
-          ACTUAL=$("$APKSIGNER" verify --print-certs "$AAB" 2>&1             | grep -oE 'SHA256 digest:[[:space:]]*[0-9a-f:]+' | head -n1 | awk '{print $3}' | norm)
-          if [ -z "$EXPECTED" ] || [ -z "$ACTUAL" ] || [ "$EXPECTED" != "$ACTUAL" ]; then
-            echo "AAB certificate does not match the release keystore." >&2
-            exit 1
-          fi
-          echo "AAB signed with the release keystore (SHA256 $ACTUAL)."
-          # Assert the built versionCode matches the intended value. The AAB
-          # is a zip; versionCode lives in BaseManifest.xml (aapt dump
-          # badging only works on APKs, not AABs).
-          BUILT_CODE=$(unzip -p "$AAB" BaseManifest.xml             | grep -oE 'android:versionCode="[0-9]+"' | grep -oE '[0-9]+')
-          if [ -n "$RELEASE_VERSION_CODE" ] && [ "$BUILT_CODE" != "$RELEASE_VERSION_CODE" ]; then
-            echo "AAB versionCode $BUILT_CODE != intended $RELEASE_VERSION_CODE." >&2
-            exit 1
-          fi
-          echo "AAB versionCode: $BUILT_CODE"
+          # Python keeps the fingerprint + versionCode assertions explicit
+          # and readable (shell regex pipelines are error-prone). keytool
+          # prints uppercase hex, apksigner lowercase - both are normalized
+          # to lowercase before comparison.
+          python3 - "$RUNNER_TEMP/keystore/release.keystore"             "$KEYSTORE_PASSWORD" "$KEY_ALIAS" "$APKSIGNER" "$AAB" \"$RELEASE_VERSION_CODE\" <<'PYEOF'
+          import re, subprocess, sys, zipfile
+
+          keystore, storepass, alias, apksigner, aab, intended = sys.argv[1:7]
+          intended = intended.strip('"')
+
+          # keytool prints the fingerprint differently across JDK versions:
+          #   old:  "SHA256: xx:xx:..."
+          #   new:  "Certificate fingerprint (SHA-256): xx:xx:..."
+          # apksigner prints "SHA256 digest: xx:xx:...".
+          def sha256_hex(text, patterns, source):
+              for pat in patterns:
+                  m = re.search(pat + r"\s*([0-9A-Fa-f:]{40})", text)
+                  if m:
+                      return m.group(1).replace(":", "").lower()
+              raise SystemExit(f"Could not find SHA256 fingerprint in {source} output")
+
+          keytool_out = subprocess.run(
+              ["keytool", "-list", "-keystore", keystore,
+               "-storepass", storepass, "-alias", alias],
+              capture_output=True, text=True, check=True).stdout
+          expected = sha256_hex(keytool_out, [r"SHA256:", r"\(SHA-?256\)\s*:"], "keytool")
+
+          apksigner_out = subprocess.run(
+              [apksigner, "verify", "--print-certs", aab],
+              capture_output=True, text=True).stdout
+          actual = sha256_hex(apksigner_out, [r"SHA256 digest:"], "apksigner")
+
+          if expected != actual:
+              raise SystemExit("AAB certificate does not match the release keystore")
+          print(f"AAB signed with the release keystore (SHA256 {actual}).")
+
+          # versionCode lives in BaseManifest.xml inside the AAB zip.
+          with zipfile.ZipFile(aab) as z:
+              manifest = z.read("BaseManifest.xml").decode("utf-8")
+          m = re.search(r'android:versionCode="(\d+)"', manifest)
+          if not m:
+              raise SystemExit("Could not find versionCode in BaseManifest.xml")
+          built = m.group(1)
+          if intended and built != intended:
+              raise SystemExit(f"AAB versionCode {built} != intended {intended}")
+          print(f"AAB versionCode: {built}")
+          PYEOF
 
       - name: Upload App Bundle artifact
         if: steps.signing.outputs.signed == 'true'
