@@ -19,22 +19,17 @@ class DealNotificationCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final discount = ((targetPrice - currentPrice) / targetPrice * 100).abs();
-    
+
     return Card(
       margin: const EdgeInsets.all(16),
       elevation: 8,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-      ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: Container(
         decoration: BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: [
-              Colors.green.shade400,
-              Colors.green.shade700,
-            ],
+            colors: [Colors.green.shade400, Colors.green.shade700],
           ),
           borderRadius: BorderRadius.circular(16),
         ),
@@ -84,9 +79,9 @@ class DealNotificationCard extends StatelessWidget {
                   ),
                 ],
               ),
-              
+
               const SizedBox(height: 20),
-              
+
               // Product Name
               Text(
                 productName,
@@ -98,12 +93,15 @@ class DealNotificationCard extends StatelessWidget {
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
               ),
-              
+
               const SizedBox(height: 12),
-              
+
               // Store Badge
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
+                ),
                 decoration: BoxDecoration(
                   color: Colors.white.withValues(alpha: 0.2),
                   borderRadius: BorderRadius.circular(20),
@@ -124,9 +122,9 @@ class DealNotificationCard extends StatelessWidget {
                   ],
                 ),
               ),
-              
+
               const SizedBox(height: 16),
-              
+
               // Price Information
               Container(
                 padding: const EdgeInsets.all(16),
@@ -142,10 +140,7 @@ class DealNotificationCard extends StatelessWidget {
                       children: [
                         const Text(
                           'Current Price',
-                          style: TextStyle(
-                            color: Colors.grey,
-                            fontSize: 12,
-                          ),
+                          style: TextStyle(color: Colors.grey, fontSize: 12),
                         ),
                         const SizedBox(height: 4),
                         Text(
@@ -179,9 +174,9 @@ class DealNotificationCard extends StatelessWidget {
                   ],
                 ),
               ),
-              
+
               const SizedBox(height: 12),
-              
+
               // Stock Status
               Row(
                 children: [
@@ -201,9 +196,9 @@ class DealNotificationCard extends StatelessWidget {
                   ),
                 ],
               ),
-              
+
               const SizedBox(height: 16),
-              
+
               // Close Button
               SizedBox(
                 width: double.infinity,
@@ -219,10 +214,7 @@ class DealNotificationCard extends StatelessWidget {
                   ),
                   child: const Text(
                     'Got it!',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                    ),
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                   ),
                 ),
               ),

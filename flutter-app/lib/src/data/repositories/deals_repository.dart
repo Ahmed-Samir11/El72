@@ -17,7 +17,8 @@ class DealsRepository {
         if (data is List) {
           list = data;
         } else if (data is Map<String, dynamic>) {
-          list = (data['deals'] as List?) ??
+          list =
+              (data['deals'] as List?) ??
               (data['data'] as List?) ??
               const <dynamic>[];
         } else {

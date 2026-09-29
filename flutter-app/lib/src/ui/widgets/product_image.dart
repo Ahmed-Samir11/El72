@@ -7,11 +7,7 @@ class ProductImage extends StatelessWidget {
   final String imageUrl;
   final double size;
 
-  const ProductImage({
-    super.key,
-    required this.imageUrl,
-    this.size = 60,
-  });
+  const ProductImage({super.key, required this.imageUrl, this.size = 60});
 
   @override
   Widget build(BuildContext context) {
@@ -26,8 +22,11 @@ class ProductImage extends StatelessWidget {
           borderRadius: radius,
           color: colorScheme.surfaceContainerHighest,
         ),
-        child: Icon(Icons.shopping_bag_outlined,
-            size: size * 0.5, color: colorScheme.onSurfaceVariant),
+        child: Icon(
+          Icons.shopping_bag_outlined,
+          size: size * 0.5,
+          color: colorScheme.onSurfaceVariant,
+        ),
       );
     }
 
@@ -45,8 +44,11 @@ class ProductImage extends StatelessWidget {
         errorWidget: (BuildContext context, String url, Object error) =>
             Container(
               color: colorScheme.surfaceContainerHighest,
-              child: Icon(Icons.shopping_bag_outlined,
-                  size: size * 0.5, color: colorScheme.onSurfaceVariant),
+              child: Icon(
+                Icons.shopping_bag_outlined,
+                size: size * 0.5,
+                color: colorScheme.onSurfaceVariant,
+              ),
             ),
       ),
     );

@@ -14,7 +14,9 @@ import 'package:elhaq_tracker/src/core/styles/app_theme.dart';
 double _relativeLuminance(Color c) {
   double channel(double v) {
     // Color.r/g/b are already in 0..1.
-    return v <= 0.04045 ? v / 12.92 : math.pow((v + 0.055) / 1.055, 2.4) as double;
+    return v <= 0.04045
+        ? v / 12.92
+        : math.pow((v + 0.055) / 1.055, 2.4) as double;
   }
 
   return 0.2126 * channel(c.r) + 0.7152 * channel(c.g) + 0.0722 * channel(c.b);
@@ -51,30 +53,48 @@ void main() {
     });
 
     test('textSecondary contrast fix (was ~3.9:1)', () {
-      expect(_contrast(AppColors.textSecondary, AppColors.backgroundLight),
-          greaterThan(aa));
+      expect(
+        _contrast(AppColors.textSecondary, AppColors.backgroundLight),
+        greaterThan(aa),
+      );
     });
 
     test('per-theme semantic colors meet AA on their own surface', () {
       for (final t in [AppTheme.lightData, AppTheme.darkData]) {
-        for (final s in [t.success, t.error, t.warning, t.info, t.priceUp, t.priceDown]) {
-          expect(_contrast(s, t.surface), greaterThan(aa),
-              reason: '$s on ${t.surface}');
+        for (final s in [
+          t.success,
+          t.error,
+          t.warning,
+          t.info,
+          t.priceUp,
+          t.priceDown,
+        ]) {
+          expect(
+            _contrast(s, t.surface),
+            greaterThan(aa),
+            reason: '$s on ${t.surface}',
+          );
         }
       }
     });
 
     test('onError meets AA against error in both themes', () {
       for (final t in [AppTheme.lightData, AppTheme.darkData]) {
-        expect(_contrast(t.onError, t.error), greaterThan(aa),
-            reason: 'onError on error (${t.brightness})');
+        expect(
+          _contrast(t.onError, t.error),
+          greaterThan(aa),
+          reason: 'onError on error (${t.brightness})',
+        );
       }
     });
 
     test('primaryText meets AA as text on both surfaces', () {
       for (final t in [AppTheme.lightData, AppTheme.darkData]) {
-        expect(_contrast(t.primaryText, t.surface), greaterThan(aa),
-            reason: 'primaryText on ${t.surface}');
+        expect(
+          _contrast(t.primaryText, t.surface),
+          greaterThan(aa),
+          reason: 'primaryText on ${t.surface}',
+        );
       }
     });
   });
@@ -101,7 +121,10 @@ void main() {
       expect(t.cardTheme.color, AppTheme.lightData.surfaceContainerLow);
       expect(t.scaffoldBackgroundColor, AppTheme.lightData.surface);
       expect(t.elevatedButtonTheme.style?.backgroundColor, isNotNull);
-      expect(t.bottomSheetTheme.backgroundColor, AppTheme.lightData.surfaceContainerLow);
+      expect(
+        t.bottomSheetTheme.backgroundColor,
+        AppTheme.lightData.surfaceContainerLow,
+      );
       expect(t.textTheme.headlineMedium, isNotNull);
     });
 

@@ -44,10 +44,7 @@ class TrackingState {
 
 class TrackingStatusNotifier extends StateNotifier<TrackingState> {
   TrackingStatusNotifier()
-      : super(const TrackingState(
-          status: TrackingStatus.idle,
-          message: '',
-        ));
+    : super(const TrackingState(status: TrackingStatus.idle, message: ''));
 
   void startTracking(String url, double price) {
     state = TrackingState(
@@ -58,7 +55,11 @@ class TrackingStatusNotifier extends StateNotifier<TrackingState> {
     );
   }
 
-  void updateStatus(TrackingStatus status, String message, {double? currentPrice}) {
+  void updateStatus(
+    TrackingStatus status,
+    String message, {
+    double? currentPrice,
+  }) {
     state = state.copyWith(
       status: status,
       message: message,
@@ -77,21 +78,15 @@ class TrackingStatusNotifier extends StateNotifier<TrackingState> {
   }
 
   void error(String message) {
-    state = state.copyWith(
-      status: TrackingStatus.error,
-      message: message,
-    );
+    state = state.copyWith(status: TrackingStatus.error, message: message);
   }
 
   void reset() {
-    state = const TrackingState(
-      status: TrackingStatus.idle,
-      message: '',
-    );
+    state = const TrackingState(status: TrackingStatus.idle, message: '');
   }
 }
 
 final trackingStatusProvider =
     StateNotifierProvider<TrackingStatusNotifier, TrackingState>((ref) {
-  return TrackingStatusNotifier();
-});
+      return TrackingStatusNotifier();
+    });

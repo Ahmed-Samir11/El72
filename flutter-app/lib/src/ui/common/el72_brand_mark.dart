@@ -19,7 +19,9 @@ class El72BrandMark extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: alignCenter ? CrossAxisAlignment.center : CrossAxisAlignment.start,
+      crossAxisAlignment: alignCenter
+          ? CrossAxisAlignment.center
+          : CrossAxisAlignment.start,
       children: [
         Semantics(
           label: 'El72 logo',
@@ -30,7 +32,11 @@ class El72BrandMark extends StatelessWidget {
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(size * 0.28),
               gradient: const LinearGradient(
-                colors: [Color(0xFFFFE066), Color(0xFFFFA726), Color(0xFFFF6F00)],
+                colors: [
+                  Color(0xFFFFE066),
+                  Color(0xFFFFA726),
+                  Color(0xFFFF6F00),
+                ],
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
               ),

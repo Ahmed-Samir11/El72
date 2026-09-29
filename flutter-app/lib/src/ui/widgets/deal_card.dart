@@ -30,7 +30,9 @@ class DealCard extends StatelessWidget {
             if (!context.mounted) return;
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
-                content: Text(AppLocalizations.of(context).unableToOpen(deal.title)),
+                content: Text(
+                  AppLocalizations.of(context).unableToOpen(deal.title),
+                ),
               ),
             );
           }
@@ -78,11 +80,9 @@ class DealCard extends StatelessWidget {
                   // Price
                   Text(
                     formatPrice(deal.price, locale: locale),
-                    style: AppColors.priceTextStyle(colorScheme.onSurface)
-                        .copyWith(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
+                    style: AppColors.priceTextStyle(
+                      colorScheme.onSurface,
+                    ).copyWith(fontSize: 18, fontWeight: FontWeight.bold),
                   ),
 
                   // Original Price (strikethrough)

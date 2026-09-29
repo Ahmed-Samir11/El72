@@ -65,23 +65,23 @@ class AppThemeData {
   final Color priceDown;
 
   ColorScheme toColorScheme() => ColorScheme(
-        brightness: brightness,
-        error: error,
-        onError: onError,
-        primary: primary,
-        onPrimary: onPrimary,
-        secondary: secondary,
-        onSecondary: onSecondary,
-        tertiary: tertiary,
-        onTertiary: onTertiary,
-        surface: surface,
-        onSurface: onSurface,
-        surfaceContainerLow: surfaceContainerLow,
-        surfaceContainer: surfaceContainer,
-        surfaceContainerHigh: surfaceContainerHigh,
-        onSurfaceVariant: onSurfaceVariant,
-        outline: outline,
-      );
+    brightness: brightness,
+    error: error,
+    onError: onError,
+    primary: primary,
+    onPrimary: onPrimary,
+    secondary: secondary,
+    onSecondary: onSecondary,
+    tertiary: tertiary,
+    onTertiary: onTertiary,
+    surface: surface,
+    onSurface: onSurface,
+    surfaceContainerLow: surfaceContainerLow,
+    surfaceContainer: surfaceContainer,
+    surfaceContainerHigh: surfaceContainerHigh,
+    onSurfaceVariant: onSurfaceVariant,
+    outline: outline,
+  );
 }
 
 /// Builds the app's [ThemeData] from explicit tokens — no seed derivation.
@@ -93,7 +93,9 @@ abstract final class AppTheme {
     surfaceContainer: Color(0xFFF8F3DC),
     surfaceContainerHigh: Color(0xFFF2EBD0),
     onSurface: Color(0xFF3D2B0F), // Dark brown body text
-    onSurfaceVariant: Color(0xFF6B5327), // Darkened muted brown (4.5:1+ on cream)
+    onSurfaceVariant: Color(
+      0xFF6B5327,
+    ), // Darkened muted brown (4.5:1+ on cream)
     outline: Color(0xFFD4C49A),
     primary: AppColors.primary,
     onPrimary: Color(0xFF3D2B0F), // 5.2:1 on falcon orange
@@ -158,7 +160,10 @@ abstract final class AppTheme {
       inputDecorationTheme: InputDecorationThemeData(
         filled: true,
         fillColor: t.surfaceContainer,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 16,
+          vertical: 14,
+        ),
         outlineBorder: BorderSide(color: t.outline),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
@@ -181,7 +186,9 @@ abstract final class AppTheme {
           disabledForegroundColor: t.onSurfaceVariant,
           elevation: 0,
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
           textStyle: const TextStyle(
             fontFamily: 'IBM Plex Sans',
             fontWeight: FontWeight.w600,
@@ -194,7 +201,9 @@ abstract final class AppTheme {
           foregroundColor: t.primaryText,
           side: BorderSide(color: t.outline),
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
         ),
       ),
       bottomSheetTheme: BottomSheetThemeData(
@@ -244,23 +253,26 @@ abstract final class AppTheme {
     );
   }
 
-  static TextStyle _t(AppThemeData t, double size, FontWeight weight, double height) =>
-      TextStyle(
-        fontFamily: 'IBM Plex Sans',
-        fontSize: size,
-        fontWeight: weight,
-        height: height / size,
-        color: t.onSurface,
-      );
+  static TextStyle _t(
+    AppThemeData t,
+    double size,
+    FontWeight weight,
+    double height,
+  ) => TextStyle(
+    fontFamily: 'IBM Plex Sans',
+    fontSize: size,
+    fontWeight: weight,
+    height: height / size,
+    color: t.onSurface,
+  );
 }
 
 extension BuildContextTokens on BuildContext {
   /// The [AppThemeData] tokens for the active theme. Use these for any
   /// semantic color (status, price, brand-as-text) — never a raw hex.
-  AppThemeData get appTokens =>
-      Theme.of(this).brightness == Brightness.dark
-          ? AppTheme.darkData
-          : AppTheme.lightData;
+  AppThemeData get appTokens => Theme.of(this).brightness == Brightness.dark
+      ? AppTheme.darkData
+      : AppTheme.lightData;
 }
 
 /// User-selectable theme mode, persisted across launches.
@@ -268,10 +280,10 @@ enum AppThemeMode { system, light, dark }
 
 extension AppThemeModeX on AppThemeMode {
   ThemeMode get toThemeMode => switch (this) {
-        AppThemeMode.system => ThemeMode.system,
-        AppThemeMode.light => ThemeMode.light,
-        AppThemeMode.dark => ThemeMode.dark,
-      };
+    AppThemeMode.system => ThemeMode.system,
+    AppThemeMode.light => ThemeMode.light,
+    AppThemeMode.dark => ThemeMode.dark,
+  };
 }
 
 /// Persists the user's [AppThemeMode] in SharedPreferences.
@@ -294,18 +306,15 @@ class ThemePreferenceStore {
 
   /// The currently persisted [AppThemeMode] (default: system).
   AppThemeMode get mode => switch (_prefs.getString(_key)) {
-        'light' => AppThemeMode.light,
-        'dark' => AppThemeMode.dark,
-        _ => AppThemeMode.system,
-      };
+    'light' => AppThemeMode.light,
+    'dark' => AppThemeMode.dark,
+    _ => AppThemeMode.system,
+  };
 
   /// Persists [m] as the active theme mode.
-  Future<void> setMode(AppThemeMode m) => _prefs.setString(
-        _key,
-        switch (m) {
-          AppThemeMode.light => 'light',
-          AppThemeMode.dark => 'dark',
-          _ => 'system',
-        },
-      );
+  Future<void> setMode(AppThemeMode m) => _prefs.setString(_key, switch (m) {
+    AppThemeMode.light => 'light',
+    AppThemeMode.dark => 'dark',
+    _ => 'system',
+  });
 }

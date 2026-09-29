@@ -18,13 +18,11 @@ class AppRoutes {
 
 class AppRouter {
   static Map<String, WidgetBuilder> get routes => {
-        AppRoutes.splash: (context) => const SplashPage(),
-        AppRoutes.login: (context) => const LoginPage(),
-        AppRoutes.register: (context) => const RegisterPage(),
-        AppRoutes.otp: (context) => const OtpPage(),
-        AppRoutes.dashboard: (context) => const DashboardPage(),
-        AppRoutes.welcome: (context) => const WelcomePage(),
-      };
+    AppRoutes.splash: (context) => const SplashPage(),
+    AppRoutes.login: (context) => const LoginPage(),
+    AppRoutes.register: (context) => const RegisterPage(),
+    AppRoutes.otp: (context) => const OtpPage(),
+    AppRoutes.dashboard: (context) => const DashboardPage(),
+    AppRoutes.welcome: (context) => const WelcomePage(),
+  };
 }
-
-

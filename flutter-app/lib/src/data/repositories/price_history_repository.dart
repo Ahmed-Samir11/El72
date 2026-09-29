@@ -17,18 +17,20 @@ class PriceHistoryRepository {
         if (data is List) {
           list = data;
         } else if (data is Map<String, dynamic>) {
-          list = (data['points'] as List?) ??
+          list =
+              (data['points'] as List?) ??
               (data['history'] as List?) ??
               (data['data'] as List?) ??
               const <dynamic>[];
         } else {
           list = const <dynamic>[];
         }
-        final points = list
-            .whereType<Map<String, dynamic>>()
-            .map(PricePoint.fromJson)
-            .toList()
-          ..sort((a, b) => a.time.compareTo(b.time));
+        final points =
+            list
+                .whereType<Map<String, dynamic>>()
+                .map(PricePoint.fromJson)
+                .toList()
+              ..sort((a, b) => a.time.compareTo(b.time));
         if (points.isNotEmpty) return points;
       }
     } on DioException catch (_) {

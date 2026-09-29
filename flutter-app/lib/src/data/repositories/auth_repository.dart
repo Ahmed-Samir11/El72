@@ -11,22 +11,22 @@ class AuthRepository {
   String _formatPhone(String phone) {
     // Remove any whitespace
     phone = phone.trim().replaceAll(' ', '');
-    
+
     // If starts with +20, return as is
     if (phone.startsWith('+20')) {
       return phone;
     }
-    
+
     // If starts with 20, add +
     if (phone.startsWith('20')) {
       return '+$phone';
     }
-    
+
     // If starts with 0, replace with +20
     if (phone.startsWith('0')) {
       return '+2${phone.substring(1)}';
     }
-    
+
     // Otherwise add +20
     return '+20$phone';
   }
@@ -40,10 +40,7 @@ class AuthRepository {
       final formattedPhone = _formatPhone(phone);
       final response = await _apiClient.dio.post(
         '/auth/login',
-        data: {
-          'phone': formattedPhone,
-          'password': password,
-        },
+        data: {'phone': formattedPhone, 'password': password},
       );
 
       if (response.statusCode == 200) {
@@ -70,10 +67,7 @@ class AuthRepository {
       // login call is needed.
       final response = await _apiClient.dio.post(
         '/auth/register',
-        data: {
-          'phone': formattedPhone,
-          'password': password,
-        },
+        data: {'phone': formattedPhone, 'password': password},
       );
       if (response.statusCode == 200) {
         final token = response.data['access_token'] as String;

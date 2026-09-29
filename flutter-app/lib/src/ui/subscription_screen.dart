@@ -9,7 +9,9 @@ class SubscriptionScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text(AppLocalizations.of(context).subscriptionPlans)),
+      appBar: AppBar(
+        title: Text(AppLocalizations.of(context).subscriptionPlans),
+      ),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -45,7 +47,13 @@ class SubscriptionScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildPlanCard(String title, String description, String price, Color color, VoidCallback onTap) {
+  Widget _buildPlanCard(
+    String title,
+    String description,
+    String price,
+    Color color,
+    VoidCallback onTap,
+  ) {
     return Card(
       color: color.withValues(alpha: 0.1),
       child: InkWell(

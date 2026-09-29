@@ -189,7 +189,9 @@ class _DealsTab extends ConsumerWidget {
           error: (e, _) => SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.all(16),
-              child: Text(AppLocalizations.of(context).failedToLoadDeals(errorMessage(e))),
+              child: Text(
+                AppLocalizations.of(context).failedToLoadDeals(errorMessage(e)),
+              ),
             ),
           ),
           data: (deals) {
@@ -225,9 +227,11 @@ class _ProfileTab extends ConsumerWidget {
           child: ListTile(
             leading: const CircleAvatar(child: Icon(Icons.person)),
             title: Text(AppLocalizations.of(context).myAccount),
-            subtitle: Text(isDemo
-                ? AppLocalizations.of(context).demoAccount
-                : AppLocalizations.of(context).fullAccount),
+            subtitle: Text(
+              isDemo
+                  ? AppLocalizations.of(context).demoAccount
+                  : AppLocalizations.of(context).fullAccount,
+            ),
           ),
         ),
         const SizedBox(height: 12),

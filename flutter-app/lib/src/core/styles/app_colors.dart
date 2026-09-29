@@ -12,7 +12,9 @@ class AppColors {
 
   // Semantic Colors for Price Tracking
   static const Color priceUp = Color(0xFFEF4444); // Red for price increase
-  static const Color priceDown = Color(0xFF10B981); // Green for price decrease/deals
+  static const Color priceDown = Color(
+    0xFF10B981,
+  ); // Green for price decrease/deals
 
   // Background Colors
   static const Color backgroundLight = Color(0xFFFDFCEB); // Cream
@@ -20,7 +22,9 @@ class AppColors {
 
   // Text Colors
   static const Color textPrimary = Color(0xFF3D2B0F); // Dark Brown
-  static const Color textSecondary = Color(0xFF6B5327); // Muted Brown (4.5:1+ on cream)
+  static const Color textSecondary = Color(
+    0xFF6B5327,
+  ); // Muted Brown (4.5:1+ on cream)
   static const Color textOnPrimary = Colors.white;
 
   // Status Colors
@@ -41,16 +45,16 @@ class AppColors {
   /// Price text style (bundled monospace — zero network font calls). The
   /// color must come from the active theme's onSurface; pass it in.
   static TextStyle priceTextStyle(Color onSurface) => TextStyle(
-        fontFamily: 'JetBrains Mono',
-        fontSize: 16,
-        fontWeight: FontWeight.w600,
-        color: onSurface,
-      );
+    fontFamily: 'JetBrains Mono',
+    fontSize: 16,
+    fontWeight: FontWeight.w600,
+    color: onSurface,
+  );
 
   static TextStyle priceTextStyleLarge(Color onSurface) => TextStyle(
-        fontFamily: 'JetBrains Mono',
-        fontSize: 24,
-        fontWeight: FontWeight.bold,
-        color: onSurface,
-      );
+    fontFamily: 'JetBrains Mono',
+    fontSize: 24,
+    fontWeight: FontWeight.bold,
+    color: onSurface,
+  );
 }

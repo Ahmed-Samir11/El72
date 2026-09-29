@@ -96,8 +96,9 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                             if (phone.isEmpty || password.isEmpty) {
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
-                                  content:
-                                      Text(AppLocalizations.of(context).fillAllFields),
+                                  content: Text(
+                                    AppLocalizations.of(context).fillAllFields,
+                                  ),
                                   backgroundColor: context.appTokens.warning,
                                 ),
                               );
@@ -123,7 +124,9 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   SnackBar(
                                     content: Text(
-                                      AppLocalizations.of(context).invalidCredentials,
+                                      AppLocalizations.of(
+                                        context,
+                                      ).invalidCredentials,
                                     ),
                                     backgroundColor: context.appTokens.warning,
                                   ),
@@ -134,7 +137,9 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   SnackBar(
                                     content: Text(
-                                      AppLocalizations.of(context).loginFailed(errorMessage(e)),
+                                      AppLocalizations.of(
+                                        context,
+                                      ).loginFailed(errorMessage(e)),
                                     ),
                                     backgroundColor: context.appTokens.error,
                                   ),
@@ -183,8 +188,9 @@ class _LoginPageState extends ConsumerState<LoginPage> {
           style: TextStyle(color: Theme.of(context).colorScheme.onSurface),
           decoration: InputDecoration(
             labelText: AppLocalizations.of(context).phoneNumber,
-            labelStyle:
-                TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
+            labelStyle: TextStyle(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
             filled: true,
             fillColor: Theme.of(context).colorScheme.surface,
             border: OutlineInputBorder(

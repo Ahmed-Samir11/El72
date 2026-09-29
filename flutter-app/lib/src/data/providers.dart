@@ -14,8 +14,7 @@ final authRepositoryProvider = Provider<AuthRepository>((ref) {
   return AuthRepository();
 });
 
-final trackedItemsRepositoryProvider =
-    Provider<TrackedItemsRepository>((ref) {
+final trackedItemsRepositoryProvider = Provider<TrackedItemsRepository>((ref) {
   return TrackedItemsRepository();
 });
 
@@ -27,8 +26,7 @@ final statsRepositoryProvider = Provider<StatsRepository>((ref) {
   return StatsRepository();
 });
 
-final priceHistoryRepositoryProvider =
-    Provider<PriceHistoryRepository>((ref) {
+final priceHistoryRepositoryProvider = Provider<PriceHistoryRepository>((ref) {
   return PriceHistoryRepository();
 });
 
@@ -48,7 +46,9 @@ final platformStatsProvider = FutureProvider<PlatformStats>((ref) {
 });
 
 /// Price history for a single SKU (keyed by [sku]).
-final priceHistoryProvider =
-    FutureProvider.family<List<PricePoint>, String>((ref, sku) {
+final priceHistoryProvider = FutureProvider.family<List<PricePoint>, String>((
+  ref,
+  sku,
+) {
   return ref.read(priceHistoryRepositoryProvider).getPriceHistory(sku);
 });

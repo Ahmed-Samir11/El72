@@ -18,6 +18,10 @@ class StatsRepository {
       // Fall through to demo fallback below.
     }
     if (AppConfig.demoMode) return DemoData.stats;
-    return const PlatformStats(totalTrackers: 0, dealsToday: 0, totalSavings: 0);
+    return const PlatformStats(
+      totalTrackers: 0,
+      dealsToday: 0,
+      totalSavings: 0,
+    );
   }
 }
