@@ -17,6 +17,11 @@ sqlalchemy>=2.0.0
 # Pinned to match the production services (which import BaseSettings from
 # `pydantic`); newer pydantic moved BaseSettings to `pydantic-settings`.
 pydantic==2.5.0
+# The analyzer's settings.py imports `BaseSettings` from `pydantic_settings`
+# (pydantic v2 migration), so the package is required to collect its tests.
+# Pinned to the pydantic 2.5.0 era to avoid the resolver pulling a newer
+# pydantic-settings that would force a pydantic upgrade past the pin above.
+pydantic-settings==2.1.0
 
 numpy>=1.26.0
 scikit-learn>=1.4.0
