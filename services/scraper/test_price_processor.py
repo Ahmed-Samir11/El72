@@ -56,6 +56,34 @@ async def test_insert_price_history_egp_and_other(mock_db_pool):
 
 
 @pytest.mark.asyncio
+async def test_insert_price_history_passes_image_url(mock_db_pool):
+    pool, conn = mock_db_pool
+    processor = PriceProcessor(pool)
+
+    # conn.execute is called as (query, sku, store_id, price_egp, in_stock,
+    # image_url); image_url is the 6th positional argument (index 5).
+    await processor._insert_price_history(
+        conn, 1, "amazon_eg", "SKU", 3.2, 100.0, "EGP", True
+    )
+    assert conn.execute.await_args[0][5] is None
+
+    # Explicit: a populated image_url is passed through to the SQL execute call.
+    conn.execute.reset_mock()
+    await processor._insert_price_history(
+        conn,
+        1,
+        "amazon_eg",
+        "SKU",
+        3.2,
+        100.0,
+        "EGP",
+        True,
+        image_url="https://img.com/a.jpg",
+    )
+    assert conn.execute.await_args[0][5] == "https://img.com/a.jpg"
+
+
+@pytest.mark.asyncio
 async def test_update_lowest_price_none_and_match(mock_db_pool):
     pool, conn = mock_db_pool
     processor = PriceProcessor(pool)
