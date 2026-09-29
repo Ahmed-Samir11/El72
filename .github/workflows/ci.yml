@@ -154,6 +154,7 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_ALIAS_PASSWORD: ${{ secrets.KEY_ALIAS_PASSWORD }}
         run: |
+          set -euo pipefail
           # Fail fast if any signing secret is missing: a debug-signed AAB
           # must never be uploaded or published as a release artifact.
           for v in KEY_STORE KEYSTORE_PASSWORD KEY_ALIAS KEY_ALIAS_PASSWORD; do
@@ -168,7 +169,7 @@ jobs:
           # Validate the decoded keystore against the secret password before
           # any build: a stale/mismatched KEYSTORE_PASSWORD must fail here,
           # not deep inside Gradle.
-          keytool -list             -keystore "$RUNNER_TEMP/keystore/release.keystore"             -storepass "$KEYSTORE_PASSWORD" >/dev/null
+          keytool -list             -keystore "$RUNNER_TEMP/keystore/release.keystore"             -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" >/dev/null
           # Values come from the step environment (not argv); file is deleted
           # with the runner.
           {
@@ -186,11 +187,12 @@ jobs:
           PROD_API_BASE_URL: ${{ secrets.PROD_API_BASE_URL }}
           RELEASE_VERSION_CODE: ${{ secrets.RELEASE_VERSION_CODE }}
         run: |
+          set -euo pipefail
           # Fail fast on a missing or non-HTTPS production URL: a release
           # AAB with the emulator default baked in is useless (the WS5
           # startup guard would reject it at runtime anyway).
           if ! [[ "$PROD_API_BASE_URL" =~ ^https://[a-zA-Z0-9.-]+(:[0-9]+)?(/.*)?$ ]]; then
-            echo "PROD_API_BASE_URL must be an HTTPS URL with a host (got: '$PROD_API_BASE_URL')." >&2
+            echo "PROD_API_BASE_URL is not a valid HTTPS URL with a host." >&2
             exit 1
           fi
           cd flutter-app
@@ -225,11 +227,12 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           RELEASE_VERSION_CODE: ${{ secrets.RELEASE_VERSION_CODE }}
         run: |
+          set -euo pipefail
           AAB=flutter-app/build/app/outputs/flutter-release/app-release.aab
-          # apksigner/aapt ship in the SDK build-tools, not on PATH.
+          # apksigner ships in the SDK build-tools, not on PATH.
           BUILD_TOOLS=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)
           APKSIGNER="$BUILD_TOOLS"apksigner
-          AAPT="$BUILD_TOOLS"aapt
+          [ -x "$APKSIGNER" ] || { echo "apksigner not found in $BUILD_TOOLS" >&2; exit 1; }
           # Both fingerprints normalized to lowercase: keytool prints
           # uppercase hex, apksigner lowercase - a raw comparison would
           # always mismatch.
@@ -241,8 +244,10 @@ jobs:
             exit 1
           fi
           echo "AAB signed with the release keystore (SHA256 $ACTUAL)."
-          # Assert the built versionCode matches the intended value.
-          BUILT_CODE=$("$AAPT" dump badging "$AAB" | grep -oE 'versionCode=[0-9]+' | cut -d= -f2)
+          # Assert the built versionCode matches the intended value. The AAB
+          # is a zip; versionCode lives in BaseManifest.xml (aapt dump
+          # badging only works on APKs, not AABs).
+          BUILT_CODE=$(unzip -p "$AAB" BaseManifest.xml             | grep -oE 'android:versionCode="[0-9]+"' | grep -oE '[0-9]+')
           if [ -n "$RELEASE_VERSION_CODE" ] && [ "$BUILT_CODE" != "$RELEASE_VERSION_CODE" ]; then
             echo "AAB versionCode $BUILT_CODE != intended $RELEASE_VERSION_CODE." >&2
             exit 1
