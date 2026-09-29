@@ -48,16 +48,9 @@ class _SplashPageState extends State<SplashPage> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Image.asset(
-              'assets/logo.png',
-              width: 223,
-              height: 242,
-            ),
+            Image.asset('assets/logo.png', width: 223, height: 242),
             const SizedBox(height: 40),
-            CircularProgressIndicator(
-              color: AppColors.primary,
-              strokeWidth: 3,
-            ),
+            CircularProgressIndicator(color: AppColors.primary, strokeWidth: 3),
             const SizedBox(height: 16),
             Text(
               AppLocalizations.of(context).splashStatusOpening,

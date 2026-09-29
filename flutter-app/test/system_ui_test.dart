@@ -18,12 +18,18 @@ void main() {
     return store;
   }
 
-  testWidgets('light theme uses dark icons on the surface color', (tester) async {
+  testWidgets('light theme uses dark icons on the surface color', (
+    tester,
+  ) async {
     final store = await storeWith(AppThemeMode.light);
     await tester.pumpWidget(ElhaqApp(themePreference: store));
-    final region = tester.widget(find.byWidgetPredicate(
-      (w) => w is AnnotatedRegion<SystemUiOverlayStyle>,
-    )) as AnnotatedRegion<SystemUiOverlayStyle>;
+    final region =
+        tester.widget(
+              find.byWidgetPredicate(
+                (w) => w is AnnotatedRegion<SystemUiOverlayStyle>,
+              ),
+            )
+            as AnnotatedRegion<SystemUiOverlayStyle>;
     final style = region.value;
     expect(style.statusBarIconBrightness, Brightness.dark);
     expect(style.systemNavigationBarIconBrightness, Brightness.dark);
@@ -31,12 +37,18 @@ void main() {
     expect(style.statusBarColor, const Color(0xFFFDFCEB));
   });
 
-  testWidgets('dark theme uses light icons on the surface color', (tester) async {
+  testWidgets('dark theme uses light icons on the surface color', (
+    tester,
+  ) async {
     final store = await storeWith(AppThemeMode.dark);
     await tester.pumpWidget(ElhaqApp(themePreference: store));
-    final region = tester.widget(find.byWidgetPredicate(
-      (w) => w is AnnotatedRegion<SystemUiOverlayStyle>,
-    )) as AnnotatedRegion<SystemUiOverlayStyle>;
+    final region =
+        tester.widget(
+              find.byWidgetPredicate(
+                (w) => w is AnnotatedRegion<SystemUiOverlayStyle>,
+              ),
+            )
+            as AnnotatedRegion<SystemUiOverlayStyle>;
     final style = region.value;
     expect(style.statusBarIconBrightness, Brightness.light);
     expect(style.systemNavigationBarIconBrightness, Brightness.light);

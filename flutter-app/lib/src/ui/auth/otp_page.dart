@@ -27,21 +27,25 @@ class _OtpPageState extends State<OtpPage> {
               initialValue: method,
               items: [
                 DropdownMenuItem(
-                    value: 'SMS',
-                    child: Text(AppLocalizations.of(context).sms)),
+                  value: 'SMS',
+                  child: Text(AppLocalizations.of(context).sms),
+                ),
                 DropdownMenuItem(
-                    value: 'Email',
-                    child: Text(AppLocalizations.of(context).email)),
+                  value: 'Email',
+                  child: Text(AppLocalizations.of(context).email),
+                ),
               ],
               onChanged: (v) => setState(() => method = v ?? 'SMS'),
               decoration: InputDecoration(
-                  labelText: AppLocalizations.of(context).deliveryMethod),
+                labelText: AppLocalizations.of(context).deliveryMethod,
+              ),
             ),
             const SizedBox(height: 12),
             TextField(
               controller: _otpCtrl,
-              decoration:
-                  InputDecoration(labelText: AppLocalizations.of(context).enterOtp),
+              decoration: InputDecoration(
+                labelText: AppLocalizations.of(context).enterOtp,
+              ),
               keyboardType: TextInputType.number,
             ),
             const SizedBox(height: 20),
@@ -57,5 +61,3 @@ class _OtpPageState extends State<OtpPage> {
     );
   }
 }
-
-

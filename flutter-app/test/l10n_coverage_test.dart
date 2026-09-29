@@ -22,8 +22,7 @@ void main() {
     test('every template key has a non-empty Arabic translation', () {
       final missing = keys(en).where((k) {
         final value = ar[k];
-        return value == null ||
-            (value is String && value.trim().isEmpty);
+        return value == null || (value is String && value.trim().isEmpty);
       }).toList();
       expect(missing, isEmpty, reason: 'Missing/empty in app_ar.arb: $missing');
     });
@@ -37,8 +36,11 @@ void main() {
       for (final key in keys(en)) {
         final enPh = (en['@$key'] as Map?)?['placeholders'] as Map?;
         final arPh = (ar['@$key'] as Map?)?['placeholders'] as Map?;
-        expect(arPh?.keys.toSet(), enPh?.keys.toSet(),
-            reason: 'Placeholder mismatch for $key');
+        expect(
+          arPh?.keys.toSet(),
+          enPh?.keys.toSet(),
+          reason: 'Placeholder mismatch for $key',
+        );
       }
     });
   });
@@ -54,9 +56,11 @@ void main() {
       final arabicRegex = RegExp('[\u0600-\u06FF]');
       const allowedNoArabicScript = <String>{'appTitle'};
       final offenders = keys(ar)
-          .where((k) =>
-              !allowedNoArabicScript.contains(k) &&
-              !arabicRegex.hasMatch(ar[k] as String))
+          .where(
+            (k) =>
+                !allowedNoArabicScript.contains(k) &&
+                !arabicRegex.hasMatch(ar[k] as String),
+          )
           .toList();
       expect(offenders, isEmpty, reason: 'No Arabic script: $offenders');
     });

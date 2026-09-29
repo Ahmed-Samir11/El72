@@ -28,7 +28,9 @@ class TrackingStatusBox extends ConsumerWidget {
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: _getGradientColors(trackingState.status)[0].withValues(alpha: 0.3),
+            color: _getGradientColors(
+              trackingState.status,
+            )[0].withValues(alpha: 0.3),
             blurRadius: 12,
             offset: const Offset(0, 6),
           ),
@@ -79,13 +81,19 @@ class TrackingStatusBox extends ConsumerWidget {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        const Icon(Icons.flag_outlined, color: Colors.white70, size: 16),
+                        const Icon(
+                          Icons.flag_outlined,
+                          color: Colors.white70,
+                          size: 16,
+                        ),
                         const SizedBox(width: 8),
                         Text(
                           AppLocalizations.of(context).targetLabel(
-                              formatPrice(
-                                  trackingState.targetPrice!,
-                                  locale: Localizations.localeOf(context))),
+                            formatPrice(
+                              trackingState.targetPrice!,
+                              locale: Localizations.localeOf(context),
+                            ),
+                          ),
                           style: const TextStyle(
                             color: Colors.white70,
                             fontSize: 14,
@@ -99,13 +107,19 @@ class TrackingStatusBox extends ConsumerWidget {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        const Icon(Icons.price_check, color: Colors.white, size: 16),
+                        const Icon(
+                          Icons.price_check,
+                          color: Colors.white,
+                          size: 16,
+                        ),
                         const SizedBox(width: 8),
                         Text(
                           AppLocalizations.of(context).currentLabel(
-                              formatPrice(
-                                  trackingState.currentPrice!,
-                                  locale: Localizations.localeOf(context))),
+                            formatPrice(
+                              trackingState.currentPrice!,
+                              locale: Localizations.localeOf(context),
+                            ),
+                          ),
                           style: const TextStyle(
                             color: Colors.white,
                             fontSize: 14,
@@ -130,7 +144,10 @@ class TrackingStatusBox extends ConsumerWidget {
               },
               style: TextButton.styleFrom(
                 backgroundColor: Colors.white.withValues(alpha: 0.2),
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: 12,
+                ),
               ),
               child: Text(
                 AppLocalizations.of(context).close,

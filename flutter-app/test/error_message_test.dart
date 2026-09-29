@@ -8,23 +8,27 @@ RequestOptions _options() => RequestOptions(path: '/test');
 void main() {
   group('errorMessage', () {
     test('returns the DioException message when present', () {
-      final e = DioException(requestOptions: _options(),
-          message: 'Server not reachable');
+      final e = DioException(
+        requestOptions: _options(),
+        message: 'Server not reachable',
+      );
       expect(errorMessage(e), 'Server not reachable');
     });
 
     test('maps connection timeouts to a friendly phrase', () {
       final e = DioException(
-          requestOptions: _options(),
-          type: DioExceptionType.connectionTimeout);
+        requestOptions: _options(),
+        type: DioExceptionType.connectionTimeout,
+      );
       expect(errorMessage(e), 'The connection timed out.');
     });
 
     test('maps bad responses to a friendly phrase', () {
       final e = DioException(
-          requestOptions: _options(),
-          type: DioExceptionType.badResponse,
-          response: Response(requestOptions: _options(), statusCode: 500));
+        requestOptions: _options(),
+        type: DioExceptionType.badResponse,
+        response: Response(requestOptions: _options(), statusCode: 500),
+      );
       expect(errorMessage(e), 'The server returned an error.');
     });
 

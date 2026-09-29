@@ -8,7 +8,9 @@ import '../services/api_client.dart';
 class TrackedItemsRepository {
   final ApiClient _apiClient = ApiClient();
 
-  Future<List<TrackedItem>> getTrackedItems({bool includeInactive = false}) async {
+  Future<List<TrackedItem>> getTrackedItems({
+    bool includeInactive = false,
+  }) async {
     try {
       final response = await _apiClient.dio.get(
         '/tracked-items',
@@ -34,8 +36,7 @@ class TrackedItemsRepository {
       '/tracked-items/from-url',
       data: {
         'url': url,
-        if (targetPrice != null && targetPrice > 0)
-          'target_price': targetPrice,
+        if (targetPrice != null && targetPrice > 0) 'target_price': targetPrice,
       },
     );
     if (response.statusCode != null &&

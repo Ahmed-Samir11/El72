@@ -48,9 +48,12 @@ class ElhaqApp extends StatelessWidget {
           value: SystemUiOverlayStyle(
             statusBarColor: theme.colorScheme.surface,
             systemNavigationBarColor: theme.colorScheme.surface,
-            statusBarIconBrightness: isDark ? Brightness.light : Brightness.dark,
-            systemNavigationBarIconBrightness:
-                isDark ? Brightness.light : Brightness.dark,
+            statusBarIconBrightness: isDark
+                ? Brightness.light
+                : Brightness.dark,
+            systemNavigationBarIconBrightness: isDark
+                ? Brightness.light
+                : Brightness.dark,
           ),
           child: child!,
         );

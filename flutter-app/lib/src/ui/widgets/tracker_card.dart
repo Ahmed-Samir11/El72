@@ -65,7 +65,9 @@ class TrackerCard extends StatelessWidget {
                         if (currentPrice > 0) ...[
                           Text(
                             formatPrice(currentPrice, locale: locale),
-                            style: AppColors.priceTextStyleLarge(colorScheme.onSurface),
+                            style: AppColors.priceTextStyleLarge(
+                              colorScheme.onSurface,
+                            ),
                           ),
                           const SizedBox(width: 8),
                           Container(
@@ -86,7 +88,8 @@ class TrackerCard extends StatelessWidget {
                               color: tokens.warning.withValues(alpha: 0.12),
                               borderRadius: BorderRadius.circular(6),
                               border: Border.all(
-                                  color: tokens.warning.withValues(alpha: 0.4)),
+                                color: tokens.warning.withValues(alpha: 0.4),
+                              ),
                             ),
                             child: Row(
                               mainAxisSize: MainAxisSize.min,
@@ -117,10 +120,13 @@ class TrackerCard extends StatelessWidget {
                     if (targetPrice > 0) ...[
                       const SizedBox(height: 4),
                       Text(
-                        AppLocalizations.of(context).targetLabel(
-                            formatPrice(targetPrice, locale: locale)),
+                        AppLocalizations.of(
+                          context,
+                        ).targetLabel(formatPrice(targetPrice, locale: locale)),
                         style: TextStyle(
-                            fontSize: 14, color: colorScheme.onSurfaceVariant),
+                          fontSize: 14,
+                          color: colorScheme.onSurfaceVariant,
+                        ),
                       ),
                     ],
                   ],

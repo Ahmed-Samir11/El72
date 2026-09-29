@@ -8,10 +8,7 @@ class AlertsRepository {
     try {
       final response = await _apiClient.dio.post(
         '/alerts',
-        data: {
-          'target_url': targetUrl,
-          'target_price': targetPrice,
-        },
+        data: {'target_url': targetUrl, 'target_price': targetPrice},
       );
 
       if (response.statusCode != 200) {

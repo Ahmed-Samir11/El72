@@ -31,16 +31,21 @@ class AsyncStateView<T> extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return value.when(
-      loading: () => loading ??
-          const Center(child: CircularProgressIndicator()),
-      error: (error, stackTrace) => errorBuilder?.call(error, stackTrace) ??
+      loading: () =>
+          loading ?? const Center(child: CircularProgressIndicator()),
+      error: (error, stackTrace) =>
+          errorBuilder?.call(error, stackTrace) ??
           Center(
             child: Padding(
               padding: const EdgeInsets.all(24),
               child: Text(
-                AppLocalizations.of(context).genericLoadError(errorMessage(error)),
+                AppLocalizations.of(
+                  context,
+                ).genericLoadError(errorMessage(error)),
                 textAlign: TextAlign.center,
-                style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
               ),
             ),
           ),

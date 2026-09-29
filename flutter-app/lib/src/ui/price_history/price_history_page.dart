@@ -164,16 +164,17 @@ class _SummaryRow extends StatelessWidget {
     final lowest = prices.reduce(math.min);
     final highest = prices.reduce(math.max);
     final change = current - prices.first;
-    final changePct = prices.first == 0
-        ? 0.0
-        : (change / prices.first) * 100;
+    final changePct = prices.first == 0 ? 0.0 : (change / prices.first) * 100;
 
     return Row(
       children: [
         Expanded(
           child: _Stat(
             label: AppLocalizations.of(context).statCurrent,
-            value: formatPrice(current, locale: Localizations.localeOf(context)),
+            value: formatPrice(
+              current,
+              locale: Localizations.localeOf(context),
+            ),
             color: context.appTokens.onSurface,
           ),
         ),
@@ -187,15 +188,17 @@ class _SummaryRow extends StatelessWidget {
         Expanded(
           child: _Stat(
             label: AppLocalizations.of(context).statHigh90d,
-            value: formatPrice(highest, locale: Localizations.localeOf(context)),
+            value: formatPrice(
+              highest,
+              locale: Localizations.localeOf(context),
+            ),
             color: context.appTokens.priceUp,
           ),
         ),
         Expanded(
           child: _Stat(
             label: AppLocalizations.of(context).statChange,
-            value:
-                '${change >= 0 ? '+' : ''}${changePct.toStringAsFixed(1)}%',
+            value: '${change >= 0 ? '+' : ''}${changePct.toStringAsFixed(1)}%',
             color: change >= 0
                 ? context.appTokens.priceUp
                 : context.appTokens.priceDown,
@@ -211,11 +214,7 @@ class _Stat extends StatelessWidget {
   final String value;
   final Color color;
 
-  const _Stat({
-    required this.label,
-    required this.value,
-    required this.color,
-  });
+  const _Stat({required this.label, required this.value, required this.color});
 
   @override
   Widget build(BuildContext context) {
@@ -224,10 +223,7 @@ class _Stat extends StatelessWidget {
       children: [
         Text(
           label,
-          style: const TextStyle(
-            fontSize: 12,
-            color: AppColors.textSecondary,
-          ),
+          style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
         ),
         const SizedBox(height: 4),
         Text(
@@ -251,8 +247,7 @@ class _EmptyView extends StatelessWidget {
     return Center(
       child: Text(
         AppLocalizations.of(context).noPriceHistory,
-        style: TextStyle(
-            color: Theme.of(context).colorScheme.onSurfaceVariant),
+        style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
       ),
     );
   }
@@ -271,8 +266,9 @@ class _ErrorView extends StatelessWidget {
         child: Text(
           AppLocalizations.of(context).failedToLoadPriceHistory(message),
           textAlign: TextAlign.center,
-          style:
-              TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
+          style: TextStyle(
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
         ),
       ),
     );

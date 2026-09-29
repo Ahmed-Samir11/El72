@@ -17,13 +17,16 @@ class PlatformStats {
 
   factory PlatformStats.fromJson(Map<String, dynamic> json) {
     return PlatformStats(
-      totalTrackers: (json['total_trackers'] as num?)?.toInt() ??
+      totalTrackers:
+          (json['total_trackers'] as num?)?.toInt() ??
           (json['totalTrackers'] as num?)?.toInt() ??
           0,
-      dealsToday: (json['deals_today'] as num?)?.toInt() ??
+      dealsToday:
+          (json['deals_today'] as num?)?.toInt() ??
           (json['dealsToday'] as num?)?.toInt() ??
           0,
-      totalSavings: (json['total_savings'] as num?)?.toDouble() ??
+      totalSavings:
+          (json['total_savings'] as num?)?.toDouble() ??
           (json['totalSavings'] as num?)?.toDouble() ??
           0.0,
     );

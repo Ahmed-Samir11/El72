@@ -27,7 +27,8 @@ class PricePoint {
       time: time is DateTime
           ? time
           : DateTime.tryParse(time.toString()) ?? DateTime.now(),
-      priceLocal: (json['price_local'] as num?)?.toDouble() ??
+      priceLocal:
+          (json['price_local'] as num?)?.toDouble() ??
           (json['price'] as num?)?.toDouble() ??
           0.0,
       priceUsd: (json['price_usd'] as num?)?.toDouble() ?? 0.0,

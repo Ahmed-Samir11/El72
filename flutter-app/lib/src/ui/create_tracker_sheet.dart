@@ -77,7 +77,9 @@ class _CreateTrackerSheetState extends ConsumerState<CreateTrackerSheet> {
                   Navigator.pop(context); // Close the sheet
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                      content: Text(AppLocalizations.of(context).trackerCreated),
+                      content: Text(
+                        AppLocalizations.of(context).trackerCreated,
+                      ),
                       backgroundColor: context.appTokens.success,
                       duration: const Duration(seconds: 3),
                     ),
@@ -87,7 +89,11 @@ class _CreateTrackerSheetState extends ConsumerState<CreateTrackerSheet> {
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                      content: Text(AppLocalizations.of(context).errorPrefix(errorMessage(e))),
+                      content: Text(
+                        AppLocalizations.of(
+                          context,
+                        ).errorPrefix(errorMessage(e)),
+                      ),
                       backgroundColor: context.appTokens.error,
                     ),
                   );
