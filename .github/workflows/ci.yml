@@ -3,6 +3,8 @@ name: CI
 on:
   push:
     branches: [ main, master ]
+    # v* tags trigger the signed App Bundle build + GitHub Release publish.
+    tags: ['v*']
   pull_request:
     branches: [ main, master ]
 
@@ -97,3 +99,189 @@ jobs:
           else
             echo "No notifier package.json"
           fi
+  # MS4: Flutter quality gate + signed App Bundle on PRs to main and v* tags.
+  flutter-ci:
+    name: Flutter - analyze, test, signed bundle
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # actions:write is required by actions/upload-artifact for the signed
+      # AAB; everything else stays read-only.
+      actions: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history: the PR-build versionCode is a commit count, which
+          # requires more than the default shallow checkout.
+          fetch-depth: 0
+
+      # Pinned to the exact Flutter version verified by this repo's tests.
+      # Bump deliberately (see docs/release-checklist.md).
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.38.5
+          cache: true
+
+      - name: Verify Android platform 35 is available
+        run: |
+          if ! ls "$ANDROID_HOME/platforms"/android-35 >/dev/null 2>&1; then
+            echo "Android platform 35 missing from the runner image." >&2
+            exit 1
+          fi
+
+      - name: Flutter setup
+        run: |
+          cd flutter-app
+          flutter --version
+          flutter pub get
+
+      - name: Analyze (fail on any issue)
+        run: cd flutter-app && flutter analyze
+
+      - name: Format check
+        run: cd flutter-app && dart format --set-exit-if-changed lib test
+
+      - name: Test
+        run: cd flutter-app && flutter test
+
+      # --- Signed App Bundle: PRs to main + v* tags only ---
+      - name: Prepare release signing
+        id: signing
+        if: (github.event_name == 'pull_request' && github.base_ref == 'main') || startsWith(github.ref, 'refs/tags/v')
+        env:
+          KEY_STORE: ${{ secrets.KEY_STORE }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_ALIAS_PASSWORD: ${{ secrets.KEY_ALIAS_PASSWORD }}
+        run: |
+          set -euo pipefail
+          # Fail fast if any signing secret is missing: a debug-signed AAB
+          # must never be uploaded or published as a release artifact.
+          for v in KEY_STORE KEYSTORE_PASSWORD KEY_ALIAS KEY_ALIAS_PASSWORD; do
+            if [ -z "${!v}" ]; then
+              echo "Signing secret $v is not set - skipping signed build."
+              echo "signed=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+          mkdir -p "$RUNNER_TEMP/keystore"
+          echo "$KEY_STORE" | base64 -d > "$RUNNER_TEMP/keystore/release.keystore"
+          # Validate the decoded keystore (and that the key alias exists)
+          # against the secret password before any build: a stale/mismatched
+          # KEYSTORE_PASSWORD must fail here, not deep inside Gradle.
+          keytool -list \
+            -keystore "$RUNNER_TEMP/keystore/release.keystore" \
+            -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" >/dev/null
+          # Values come from the step environment (not argv); the file is
+          # gitignored and deleted with the ephemeral runner.
+          {
+            echo "storeFile=$RUNNER_TEMP/keystore/release.keystore"
+            echo "storePassword=$KEYSTORE_PASSWORD"
+            echo "keyAlias=$KEY_ALIAS"
+            echo "keyPassword=$KEY_ALIAS_PASSWORD"
+          } > flutter-app/android/key.properties
+          chmod 600 "$RUNNER_TEMP/keystore/release.keystore" \
+            flutter-app/android/key.properties
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Build signed App Bundle
+        if: steps.signing.outputs.signed == 'true'
+        env:
+          PROD_API_BASE_URL: ${{ secrets.PROD_API_BASE_URL }}
+          RELEASE_VERSION_CODE: ${{ secrets.RELEASE_VERSION_CODE }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$PROD_API_BASE_URL" =~ ^https://[a-zA-Z0-9.-]+(:[0-9]+)?(/.*)?$ ]]; then
+            echo "PROD_API_BASE_URL is not a valid HTTPS URL with a host." >&2
+            exit 1
+          fi
+          cd flutter-app
+          # versionCode policy (MS4):
+          # - v* tag releases: owner-controlled RELEASE_VERSION_CODE secret,
+          #   strictly increasing across releases (Play requirement).
+          # - PR builds: commit count, informational only - PR artifacts are
+          #   never submitted to Play.
+          if [ -n "$GITHUB_REF_NAME" ] && [[ "$GITHUB_REF_NAME" == v* ]]; then
+            if [ -z "$RELEASE_VERSION_CODE" ]; then
+              echo "v* tag releases require the RELEASE_VERSION_CODE secret." >&2
+              exit 1
+            fi
+            case "$RELEASE_VERSION_CODE" in
+              ''|*[!0-9]*) echo "RELEASE_VERSION_CODE must be a positive integer." >&2; exit 1 ;;
+            esac
+            if [ "$RELEASE_VERSION_CODE" -lt 1 ]; then
+              echo "RELEASE_VERSION_CODE must be >= 1." >&2
+              exit 1
+            fi
+            VERSION_CODE="$RELEASE_VERSION_CODE"
+          else
+            VERSION_CODE=$(git rev-list --count HEAD)
+          fi
+          # VERSION_CODE is passed to the flutter build (and inherited by
+          # Gradle, which reads it via System.getenv("VERSION_CODE") in
+          # android/app/build.gradle.kts) as an explicit environment
+          # variable on the command.
+          echo "Building release AAB (versionCode=$VERSION_CODE)"
+          VERSION_CODE="$VERSION_CODE" \
+            flutter build appbundle --release \
+            --dart-define=API_BASE_URL="$PROD_API_BASE_URL"
+
+      - name: Verify the AAB certificate and versionCode
+        if: steps.signing.outputs.signed == 'true'
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          RELEASE_VERSION_CODE: ${{ secrets.RELEASE_VERSION_CODE }}
+        run: |
+          set -euo pipefail
+          AAB=flutter-app/build/app/outputs/flutter-release/app-release.aab
+          # apksigner ships in the SDK build-tools, not on PATH.
+          BUILD_TOOLS=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)
+          APKSIGNER="$BUILD_TOOLS"apksigner
+          [ -x "$APKSIGNER" ] || { echo "apksigner not found in $BUILD_TOOLS" >&2; exit 1; }
+          # scripts/verify-release-aab.py asserts:
+          #   1. the AAB certificate SHA256 matches the release keystore,
+          #   2. the AAB versionCode matches RELEASE_VERSION_CODE (when set).
+          python3 ../scripts/verify-release-aab.py \
+            --keystore "$RUNNER_TEMP/keystore/release.keystore" \
+            --storepass "$KEYSTORE_PASSWORD" \
+            --alias "$KEY_ALIAS" \
+            --apksigner "$APKSIGNER" \
+            --aab "$AAB" \
+            --intended-version-code "$RELEASE_VERSION_CODE"
+
+      - name: Upload App Bundle artifact
+        if: steps.signing.outputs.signed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: elhaq-appbundle-${{ github.sha }}
+          path: flutter-app/build/app/outputs/flutter-release/app-release.aab
+
+      # Publishing happens in the publish-release job below so this job's
+      # permissions stay read-only.
+
+  # MS4: publishes the signed AAB as a GitHub Release for v* tags. Separate
+  # job so only it holds contents:write.
+  publish-release:
+    name: Publish release (v* tags)
+    needs: flutter-ci
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      # actions:read is required by actions/download-artifact.
+      actions: read
+    steps:
+      # If flutter-ci skipped signing (secrets missing), no artifact exists
+      # and this download fails deliberately: a v* tag must never publish an
+      # unsigned release.
+      - uses: actions/download-artifact@v4
+        with:
+          name: elhaq-appbundle-${{ github.sha }}
+          path: release/
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*.aab
