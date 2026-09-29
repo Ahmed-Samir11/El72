@@ -14,7 +14,11 @@ def test_cross_store_comparison_returns_market_position_and_ranking():
     assert result["spread"] == 5500
     assert result["spread_percent"] == pytest.approx(0.0692, abs=0.0001)
     assert result["market_position"] == "meaningful_spread"
-    assert [row["store_id"] for row in result["ranking"]] == ["noon", "amazon_eg", "jumia_eg"]
+    assert [row["store_id"] for row in result["ranking"]] == [
+        "noon",
+        "amazon_eg",
+        "jumia_eg",
+    ]
     assert result["ranking"][0]["rank"] == 1
     assert result["ranking"][0]["is_cheapest"] is True
 

@@ -1,13 +1,12 @@
 """Expanded tests for store scrapers."""
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 from playwright.async_api import Error as PlaywrightError
 
 from services.scraper.store_scrapers import (
     AmazonEgyptScraper,
-    BaseScraper,
     ElBadrGroupScraper,
     JumiaScraper,
     NoonScraper,
@@ -153,8 +152,6 @@ async def test_base_scrape_success_search_and_failures(page):
     scraper.rate_limit_delay = 0
 
     page.goto = AsyncMock()
-    with pytest.MonkeyPatch.context() as mp:
-        pass
 
     scraper.extract_price = AsyncMock(return_value=10.0)
     scraper.extract_stock_status = AsyncMock(return_value=True)

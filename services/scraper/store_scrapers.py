@@ -5,20 +5,21 @@ standardized output format.
 """
 
 import asyncio
-import hashlib
 import logging
 import re
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Dict, Optional, Any
-from playwright.async_api import Page, Error as PlaywrightError
+from typing import Any, Dict, Optional
+
+from playwright.async_api import Error as PlaywrightError
+from playwright.async_api import Page
 
 logger = logging.getLogger(__name__)
 
 
 class ScrapeResult:
     """Standardized scrape result across all stores."""
-    
+
     def __init__(
         self,
         store: str,
@@ -30,7 +31,7 @@ class ScrapeResult:
         timestamp: Optional[datetime] = None,
         title: Optional[str] = None,
         image_url: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
     ):
         self.store = store
         self.canonical_product_id = canonical_product_id
@@ -55,30 +56,30 @@ class ScrapeResult:
             "timestamp": self.timestamp.isoformat(),
             "title": self.title,
             "image_url": self.image_url,
-            "metadata": self.metadata
+            "metadata": self.metadata,
         }
 
 
 class BaseScraper(ABC):
     """Abstract base class for store scrapers.
-    
+
     Each store implementation must:
     1. Implement extract_price, extract_stock_status, extract_title
     2. Define store_id class attribute
     3. Handle store-specific rate limits
     """
-    
+
     store_id: str = "base"
-    
+
     def __init__(self, rate_limit_delay: float = 1.0):
         """Initialize scraper with rate limiting.
-        
+
         Args:
             rate_limit_delay: Minimum seconds between requests to this store
         """
         self.rate_limit_delay = rate_limit_delay
         self._last_request_time = 0.0
-        
+
     async def _enforce_rate_limit(self):
         """Enforce rate limiting between requests."""
         now = asyncio.get_event_loop().time()
@@ -86,49 +87,49 @@ class BaseScraper(ABC):
         if elapsed < self.rate_limit_delay:
             await asyncio.sleep(self.rate_limit_delay - elapsed)
         self._last_request_time = asyncio.get_event_loop().time()
-    
+
     @abstractmethod
     async def extract_price(self, page: Page) -> Optional[float]:
         """Extract price from the page.
-        
+
         Returns:
             Price as float or None if not found
         """
         pass
-    
+
     @abstractmethod
     async def extract_stock_status(self, page: Page) -> bool:
         """Check if product is in stock.
-        
+
         Returns:
             True if in stock, False otherwise
         """
         pass
-    
+
     async def extract_title(self, page: Page) -> Optional[str]:
         """Extract product title (optional, implemented by subclasses)."""
         return None
-    
+
     async def extract_image_url(self, page: Page) -> Optional[str]:
         """Extract product image URL (optional)."""
         return None
-    
+
     async def search_product(self, page: Page, product_name: str) -> Optional[str]:
         """Search for a product and return the product page URL.
-        
+
         Args:
             page: Playwright page instance
             product_name: Product name/query to search
-            
+
         Returns:
             Product URL or None if not found
         """
         # Default implementation; stores should override
         return None
-    
+
     def parse_price_text(self, text: str) -> Optional[float]:
         """Generic price parsing utility.
-        
+
         Handles formats like:
         - EGP 1,200.00
         - 1,200.00 EGP
@@ -147,25 +148,22 @@ class BaseScraper(ABC):
             return float(cleaned)
         except ValueError:
             return None
-    
+
     async def scrape(
-        self,
-        page: Page,
-        url: str,
-        canonical_product_id: str
+        self, page: Page, url: str, canonical_product_id: str
     ) -> Optional[ScrapeResult]:
         """Execute scraping for a product URL.
-        
+
         Args:
             page: Playwright page instance
             url: Product URL to scrape (or product name to search for)
             canonical_product_id: Unified product identifier
-            
+
         Returns:
             ScrapeResult or None if scraping failed
         """
         await self._enforce_rate_limit()
-        
+
         try:
             # If url looks like a search query (no http/https), perform search
             actual_url = url
@@ -176,20 +174,20 @@ class BaseScraper(ABC):
                     return None
                 actual_url = search_result
                 logger.info(f"Found product on {self.store_id}: {actual_url}")
-            
+
             # Navigate to URL with timeout
             await page.goto(actual_url, timeout=20000)
-            
+
             # Extract data
             price = await self.extract_price(page)
             in_stock = await self.extract_stock_status(page)
             title = await self.extract_title(page)
             image_url = await self.extract_image_url(page)
-            
+
             if price is None:
                 logger.warning(f"Failed to extract price from {actual_url}")
                 return None
-            
+
             return ScrapeResult(
                 store=self.store_id,
                 canonical_product_id=canonical_product_id,
@@ -198,16 +196,16 @@ class BaseScraper(ABC):
                 in_stock=in_stock,
                 url=actual_url,
                 title=title,
-                image_url=image_url
+                image_url=image_url,
             )
-            
+
         except PlaywrightError as e:
             logger.error(f"Playwright error scraping {url}: {e}")
             return None
         except Exception as e:
             logger.exception(f"Unexpected error scraping {url}: {e}")
             return None
-    
+
     @abstractmethod
     def get_default_currency(self) -> str:
         """Return the default currency for this store (e.g., 'EGP', 'USD')."""
@@ -216,12 +214,12 @@ class BaseScraper(ABC):
 
 class AmazonEgyptScraper(BaseScraper):
     """Scraper for Amazon Egypt (amazon.eg)."""
-    
+
     store_id = "amazon_eg"
-    
+
     def __init__(self):
         super().__init__(rate_limit_delay=2.0)  # Conservative rate limit
-    
+
     async def extract_price(self, page: Page) -> Optional[float]:
         """Extract price using Amazon's selectors."""
         selectors = [
@@ -229,9 +227,9 @@ class AmazonEgyptScraper(BaseScraper):
             "#priceblock_ourprice",
             "#priceblock_dealprice",
             "span.a-price span.a-offscreen",
-            ".a-price .a-offscreen"
+            ".a-price .a-offscreen",
         ]
-        
+
         for selector in selectors:
             try:
                 element = await page.query_selector(selector)
@@ -242,30 +240,33 @@ class AmazonEgyptScraper(BaseScraper):
                         return price
             except Exception:
                 continue
-        
+
         return None
-    
+
     async def extract_stock_status(self, page: Page) -> bool:
         """Check stock status on Amazon."""
         out_of_stock_indicators = [
             "#availability span.a-color-price",
             "#availability span.a-color-state",
             "text='Currently unavailable'",
-            "text='Out of stock'"
+            "text='Out of stock'",
         ]
-        
+
         for selector in out_of_stock_indicators:
             try:
                 element = await page.query_selector(selector)
                 if element:
                     text = await element.inner_text()
-                    if any(phrase in text.lower() for phrase in ["unavailable", "out of stock", "currently out"]):
+                    if any(
+                        phrase in text.lower()
+                        for phrase in ["unavailable", "out of stock", "currently out"]
+                    ):
                         return False
             except Exception:
                 continue
-        
+
         return True
-    
+
     async def extract_title(self, page: Page) -> Optional[str]:
         """Extract product title."""
         selectors = ["#productTitle", "#title", "span#productTitle"]
@@ -277,7 +278,7 @@ class AmazonEgyptScraper(BaseScraper):
             except Exception:
                 continue
         return None
-    
+
     async def extract_image_url(self, page: Page) -> Optional[str]:
         """Extract main product image."""
         try:
@@ -287,14 +288,14 @@ class AmazonEgyptScraper(BaseScraper):
         except Exception:
             pass
         return None
-    
+
     async def search_product(self, page: Page, product_name: str) -> Optional[str]:
         """Search for a product on Amazon Egypt and return first result URL."""
         try:
             search_url = f"https://www.amazon.eg/s?k={'+'.join(product_name.split())}"
             await page.goto(search_url, timeout=20000)
             await page.wait_for_timeout(2000)  # Wait for JS to load
-            
+
             # Amazon uses .s-asin for result items with product links
             first_result = await page.query_selector(".s-asin a[href*='/dp/']")
             if first_result:
@@ -310,27 +311,23 @@ class AmazonEgyptScraper(BaseScraper):
         except Exception as e:
             logger.warning(f"Amazon Egypt search failed for '{product_name}': {e}")
         return None
-    
+
     def get_default_currency(self) -> str:
         return "EGP"
 
 
 class NoonScraper(BaseScraper):
     """Scraper for Noon.com (Egypt and UAE)."""
-    
+
     store_id = "noon"
-    
+
     def __init__(self):
         super().__init__(rate_limit_delay=1.5)
-    
+
     async def extract_price(self, page: Page) -> Optional[float]:
         """Extract price from Noon."""
-        selectors = [
-            "div.priceNow",
-            "span.sellingPrice",
-            "[data-qa='product-price']"
-        ]
-        
+        selectors = ["div.priceNow", "span.sellingPrice", "[data-qa='product-price']"]
+
         for selector in selectors:
             try:
                 element = await page.query_selector(selector)
@@ -341,9 +338,9 @@ class NoonScraper(BaseScraper):
                         return price
             except Exception:
                 continue
-        
+
         return None
-    
+
     async def extract_stock_status(self, page: Page) -> bool:
         """Check if product is in stock on Noon."""
         try:
@@ -351,13 +348,13 @@ class NoonScraper(BaseScraper):
             out_of_stock = await page.query_selector("text=/out of stock/i")
             if out_of_stock:
                 return False
-            
+
             # Check for "Add to Cart" button presence (indicates in stock)
             add_to_cart = await page.query_selector("button[data-qa='add-to-cart']")
             return add_to_cart is not None
         except Exception:
             return True  # Default to in stock if check fails
-    
+
     async def extract_title(self, page: Page) -> Optional[str]:
         """Extract product title from Noon."""
         selectors = ["h1.productTitle", "[data-qa='product-name']"]
@@ -369,14 +366,14 @@ class NoonScraper(BaseScraper):
             except Exception:
                 continue
         return None
-    
+
     async def search_product(self, page: Page, product_name: str) -> Optional[str]:
         """Search for a product on Noon and return first result URL."""
         try:
             search_url = f"https://www.noon.com/egypt-en/search?q={'+'.join(product_name.split())}"
             await page.goto(search_url, timeout=20000)
             await page.wait_for_timeout(2000)  # Wait for JS to load results
-            
+
             # Noon uses a[href*='/p/'] for product links in search results
             first_result = await page.query_selector("a[href*='/p/']")
             if first_result:
@@ -389,27 +386,27 @@ class NoonScraper(BaseScraper):
         except Exception as e:
             logger.warning(f"Noon search failed for '{product_name}': {e}")
         return None
-    
+
     def get_default_currency(self) -> str:
         return "EGP"  # Default, but should be detected from page
 
 
 class JumiaScraper(BaseScraper):
     """Scraper for Jumia Egypt."""
-    
+
     store_id = "jumia"
-    
+
     def __init__(self):
         super().__init__(rate_limit_delay=1.5)
-    
+
     async def extract_price(self, page: Page) -> Optional[float]:
         """Extract price from Jumia."""
         selectors = [
             "span.-tal",  # Jumia's price class
             "[data-qa='product-price']",
-            ".prc"
+            ".prc",
         ]
-        
+
         for selector in selectors:
             try:
                 element = await page.query_selector(selector)
@@ -420,9 +417,9 @@ class JumiaScraper(BaseScraper):
                         return price
             except Exception:
                 continue
-        
+
         return None
-    
+
     async def extract_stock_status(self, page: Page) -> bool:
         """Check stock status on Jumia."""
         try:
@@ -430,13 +427,13 @@ class JumiaScraper(BaseScraper):
             out_of_stock = await page.query_selector("text=/out of stock/i")
             if out_of_stock:
                 return False
-            
+
             # Check for add to cart button
             add_to_cart = await page.query_selector("button.add")
             return add_to_cart is not None
         except Exception:
             return True
-    
+
     async def extract_title(self, page: Page) -> Optional[str]:
         """Extract product title."""
         selectors = ["h1.-fs20", "h1.title"]
@@ -448,17 +445,19 @@ class JumiaScraper(BaseScraper):
             except Exception:
                 continue
         return None
-    
+
     def get_default_currency(self) -> str:
         return "EGP"
-    
+
     async def search_product(self, page: Page, product_name: str) -> Optional[str]:
         """Search for a product on Jumia and return first result URL."""
         try:
-            search_url = f"https://www.jumia.com.eg/catalog/?q={'+'.join(product_name.split())}"
+            search_url = (
+                f"https://www.jumia.com.eg/catalog/?q={'+'.join(product_name.split())}"
+            )
             await page.goto(search_url, timeout=20000)
             await page.wait_for_timeout(2000)  # Wait for JS to load results
-            
+
             # Jumia uses a[href*='/p/'] for product links in search results
             first_result = await page.query_selector("a[href*='/p/']")
             if first_result:
@@ -475,20 +474,20 @@ class JumiaScraper(BaseScraper):
 
 class ScraperFactory:
     """Factory for creating store-specific scrapers."""
-    
+
     _scrapers = {
         "amazon_eg": AmazonEgyptScraper,
         "noon": NoonScraper,
         "jumia": JumiaScraper,
     }
-    
+
     @classmethod
     def get_scraper(cls, store_id: str) -> Optional[BaseScraper]:
         """Get scraper instance for a store.
-        
+
         Args:
             store_id: Store identifier (e.g., 'amazon_eg')
-            
+
         Returns:
             Scraper instance or None if store not supported
         """
@@ -497,11 +496,11 @@ class ScraperFactory:
             return scraper_class()
         logger.warning(f"No scraper found for store: {store_id}")
         return None
-    
+
     @classmethod
     def register_scraper(cls, store_id: str, scraper_class: type):
         """Register a new scraper for a store.
-        
+
         Args:
             store_id: Store identifier
             scraper_class: Scraper class (must inherit from BaseScraper)
@@ -510,7 +509,7 @@ class ScraperFactory:
             raise ValueError("Scraper class must inherit from BaseScraper")
         cls._scrapers[store_id] = scraper_class
         logger.info(f"Registered scraper for store: {store_id}")
-    
+
     @classmethod
     def list_supported_stores(cls) -> list:
         """Get list of supported store IDs."""
@@ -618,16 +617,20 @@ class ElBadrGroupScraper(BaseScraper):
 
     def get_default_currency(self) -> str:
         return "EGP"
-    
+
     async def search_product(self, page: Page, product_name: str) -> Optional[str]:
-        """Search for a product on ElBadrGroup and return the best matching result URL."""
+        """Search for a product on ElBadrGroup.
+
+        Return the best matching result URL.
+        """
         try:
             # Use the correct search URL format for ElBadrGroup
             search_url = f"https://elbadrgroupeg.store/index.php?route=product/search&search={'+'.join(product_name.split())}"
             await page.goto(search_url, timeout=20000)
             await page.wait_for_timeout(2000)  # Wait for JS to load results
 
-            # Gather all product links then pick the best text match rather than the first one
+            # Gather all product links, then pick the best text match
+            # rather than the first one
             links = await page.query_selector_all(".name a[href]")
             if links:
                 target_tokens = [t for t in product_name.lower().split() if t]
@@ -637,9 +640,14 @@ class ElBadrGroupScraper(BaseScraper):
                     h = (href or "").lower()
                     # Score by overlap of provided tokens in either text or URL
                     token_hits = sum(1 for tok in target_tokens if tok in t or tok in h)
-                    # Favor longer token matches (e.g., model strings) to reduce false positives
-                    length_bonus = sum(len(tok) for tok in target_tokens if tok in t or tok in h) / 50.0
-                    # Small bonus if the full product name (or most of it) appears as a substring
+                    # Favor longer token matches (e.g., model strings)
+                    # to reduce false positives
+                    length_bonus = (
+                        sum(len(tok) for tok in target_tokens if tok in t or tok in h)
+                        / 50.0
+                    )
+                    # Small bonus if the full product name (or most of it)
+                    # appears as a substring
                     phrase = " ".join(target_tokens)
                     phrase_bonus = 1 if phrase and phrase in t else 0
                     return token_hits + length_bonus + phrase_bonus
@@ -647,7 +655,7 @@ class ElBadrGroupScraper(BaseScraper):
                 best_link = None
                 best_score = -1
                 for link in links:
-                    text = (await link.inner_text() or "")
+                    text = await link.inner_text() or ""
                     href = await link.get_attribute("href")
                     s = score(text, href or "")
                     if s > best_score:

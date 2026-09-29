@@ -15,7 +15,8 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from services.api.dependencies import get_current_user, get_db
-from services.api.models import Base as ApiBase, User
+from services.api.models import Base as ApiBase
+from services.api.models import User
 from services.api.tracked_items_api import (
     StoreMapping,
     TrackedItemCreate,
@@ -243,9 +244,17 @@ def test_update_target_price_success_and_errors(client):
     session.add(item)
     session.commit()
 
-    assert api.patch(f"/tracked-items/{item.id}/target-price?target_price=50").status_code == 200
-    assert api.patch(f"/tracked-items/{item.id}/target-price?target_price=0").status_code == 400
-    assert api.patch("/tracked-items/999/target-price?target_price=10").status_code == 404
+    assert (
+        api.patch(f"/tracked-items/{item.id}/target-price?target_price=50").status_code
+        == 200
+    )
+    assert (
+        api.patch(f"/tracked-items/{item.id}/target-price?target_price=0").status_code
+        == 400
+    )
+    assert (
+        api.patch("/tracked-items/999/target-price?target_price=10").status_code == 404
+    )
 
 
 def test_toggle_and_delete_tracked_item(client):
@@ -294,9 +303,15 @@ def test_create_tracked_item_from_url(client, monkeypatch):
     api, session, user = client
     # Mock fetch_price_sync to simulate a successful price fetch
     from services.api.price_fetcher import FetchedPrice
+
     monkeypatch.setattr(
         "services.api.tracked_items_api.fetch_price_sync",
-        lambda url: FetchedPrice(price_local=1500.0, currency="EGP", title="Sample Item", image_url="http://img.com/a.jpg"),
+        lambda url: FetchedPrice(
+            price_local=1500.0,
+            currency="EGP",
+            title="Sample Item",
+            image_url="http://img.com/a.jpg",
+        ),
     )
 
     resp = api.post(
@@ -311,7 +326,9 @@ def test_create_tracked_item_from_url(client, monkeypatch):
 
 def test_persist_fetched_price_retry_logic(db_session, monkeypatch):
     session, user = db_session
-    item = TrackedItem(user_id=user.id, canonical_product_id="retry-test-item", is_active=True)
+    item = TrackedItem(
+        user_id=user.id, canonical_product_id="retry-test-item", is_active=True
+    )
     session.add(item)
     session.commit()
 
@@ -323,7 +340,12 @@ def test_persist_fetched_price_retry_logic(db_session, monkeypatch):
         attempts += 1
         if attempts < 2:
             return None  # Fail first attempt
-        return FetchedPrice(price_local=250.0, currency="EGP", title="Test Item", image_url="https://img.com/b.jpg")
+        return FetchedPrice(
+            price_local=250.0,
+            currency="EGP",
+            title="Test Item",
+            image_url="https://img.com/b.jpg",
+        )
 
     monkeypatch.setattr("services.api.tracked_items_api.fetch_price_sync", mock_fetch)
     monkeypatch.setattr("services.api.tracked_items_api._FETCH_MAX_RETRIES", 3)
@@ -333,21 +355,30 @@ def test_persist_fetched_price_retry_logic(db_session, monkeypatch):
     monkeypatch.setattr("services.api.tracked_items_api.SessionLocal", lambda: session)
 
     from services.api.tracked_items_api import _persist_fetched_price
+
     item_id = item.id  # persist closes the session; use the scalar afterwards
-    _persist_fetched_price(item_id, "amazon_eg", "https://amazon.eg/dp/123", "retry-test-item")
+    _persist_fetched_price(
+        item_id, "amazon_eg", "https://amazon.eg/dp/123", "retry-test-item"
+    )
 
     assert attempts == 2
 
     # Successful fetch must persist to the price tables.
-    price = session.query(CurrentPrice).filter(
-        CurrentPrice.tracked_item_id == item_id,
-        CurrentPrice.store_id == "amazon_eg",
-    ).first()
+    price = (
+        session.query(CurrentPrice)
+        .filter(
+            CurrentPrice.tracked_item_id == item_id,
+            CurrentPrice.store_id == "amazon_eg",
+        )
+        .first()
+    )
     assert price is not None
     assert float(price.price_local) == 250.0
-    lowest = session.query(LowestPrice).filter(
-        LowestPrice.tracked_item_id == item_id
-    ).first()
+    lowest = (
+        session.query(LowestPrice)
+        .filter(LowestPrice.tracked_item_id == item_id)
+        .first()
+    )
     assert lowest is not None
     assert lowest.store_id == "amazon_eg"
 
@@ -355,7 +386,9 @@ def test_persist_fetched_price_retry_logic(db_session, monkeypatch):
 def test_persist_fetched_price_retry_exhaustion(db_session, monkeypatch):
     """When every fetch attempt fails, no price rows are written."""
     session, user = db_session
-    item = TrackedItem(user_id=user.id, canonical_product_id="exhaust-test-item", is_active=True)
+    item = TrackedItem(
+        user_id=user.id, canonical_product_id="exhaust-test-item", is_active=True
+    )
     session.add(item)
     session.commit()
 
@@ -368,21 +401,32 @@ def test_persist_fetched_price_retry_exhaustion(db_session, monkeypatch):
     monkeypatch.setattr("services.api.tracked_items_api.SessionLocal", lambda: session)
 
     from services.api.tracked_items_api import _persist_fetched_price
-    item_id = item.id
-    _persist_fetched_price(item_id, "amazon_eg", "https://amazon.eg/dp/456", "exhaust-test-item")
 
-    assert session.query(CurrentPrice).filter(
-        CurrentPrice.tracked_item_id == item_id
-    ).count() == 0
-    assert session.query(LowestPrice).filter(
-        LowestPrice.tracked_item_id == item_id
-    ).count() == 0
+    item_id = item.id
+    _persist_fetched_price(
+        item_id, "amazon_eg", "https://amazon.eg/dp/456", "exhaust-test-item"
+    )
+
+    assert (
+        session.query(CurrentPrice)
+        .filter(CurrentPrice.tracked_item_id == item_id)
+        .count()
+        == 0
+    )
+    assert (
+        session.query(LowestPrice)
+        .filter(LowestPrice.tracked_item_id == item_id)
+        .count()
+        == 0
+    )
 
 
 def test_persist_fetched_price_handles_fetch_exception(db_session, monkeypatch):
     """A raising fetcher must not crash the background task or write rows."""
     session, user = db_session
-    item = TrackedItem(user_id=user.id, canonical_product_id="exc-test-item", is_active=True)
+    item = TrackedItem(
+        user_id=user.id, canonical_product_id="exc-test-item", is_active=True
+    )
     session.add(item)
     session.commit()
 
@@ -395,28 +439,32 @@ def test_persist_fetched_price_handles_fetch_exception(db_session, monkeypatch):
     monkeypatch.setattr("services.api.tracked_items_api.SessionLocal", lambda: session)
 
     from services.api.tracked_items_api import _persist_fetched_price
-    item_id = item.id
-    _persist_fetched_price(item_id, "amazon_eg", "https://amazon.eg/dp/789", "exc-test-item")
 
-    assert session.query(CurrentPrice).filter(
-        CurrentPrice.tracked_item_id == item_id
-    ).count() == 0
+    item_id = item.id
+    _persist_fetched_price(
+        item_id, "amazon_eg", "https://amazon.eg/dp/789", "exc-test-item"
+    )
+
+    assert (
+        session.query(CurrentPrice)
+        .filter(CurrentPrice.tracked_item_id == item_id)
+        .count()
+        == 0
+    )
 
 
 def test_create_access_token_default_expiry_is_7_days():
     """MVP has no refresh flow, so the default access token must outlive a session."""
-    from jose import jwt
-    from services.api.dependencies import ALGORITHM, SECRET_KEY, create_access_token
-
     import time
+
+    from jose import jwt
+
+    from services.api.dependencies import ALGORITHM, SECRET_KEY, create_access_token
 
     token = create_access_token({"sub": "user-1"})
     payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
     lifetime = payload["exp"] - time.time()
     assert 7 * 24 * 3600 - 5 <= lifetime <= 7 * 24 * 3600 + 5
-
-
-
 
 
 def test_invalid_item_id_returns_422_on_all_routes(client):
@@ -426,11 +474,17 @@ def test_invalid_item_id_returns_422_on_all_routes(client):
     bad = "not-a-valid-id"
     assert api.get(f"/tracked-items/{bad}").status_code == 422
     assert api.patch(f"/tracked-items/{bad}/toggle").status_code == 422
-    assert api.patch(f"/tracked-items/{bad}/target-price?target_price=10").status_code == 422
-    assert api.post(
-        f"/tracked-items/{bad}/stores",
-        json={"store_id": "amazon_eg", "store_url": "https://amazon.eg/x"},
-    ).status_code == 422
+    assert (
+        api.patch(f"/tracked-items/{bad}/target-price?target_price=10").status_code
+        == 422
+    )
+    assert (
+        api.post(
+            f"/tracked-items/{bad}/stores",
+            json={"store_id": "amazon_eg", "store_url": "https://amazon.eg/x"},
+        ).status_code
+        == 422
+    )
     assert api.delete(f"/tracked-items/{bad}").status_code == 422
     assert api.post(f"/tracked-items/{bad}/refresh").status_code == 422
 
@@ -439,15 +493,22 @@ def test_refresh_tracked_item_price(client, db_session, monkeypatch):
     """Refresh triggers a background fetch and throttles rapid re-runs even
     when no price has ever been persisted (the fetch-failure spam path)."""
     # TestClient executes background tasks inline; keep them off the network.
-    monkeypatch.setattr("services.api.tracked_items_api.fetch_price_sync", lambda url: None)
+    monkeypatch.setattr(
+        "services.api.tracked_items_api.fetch_price_sync", lambda url: None
+    )
     monkeypatch.setattr("services.api.tracked_items_api._refresh_attempts", {})
     api, session, user = client
-    item = TrackedItem(user_id=user.id, canonical_product_id="refresh-item", is_active=True)
+    item = TrackedItem(
+        user_id=user.id, canonical_product_id="refresh-item", is_active=True
+    )
     session.add(item)
     session.commit()  # item.id is populated only after the insert
-    store = TrackedItemStore(tracked_item_id=item.id, store_id="amazon_eg",
-                             store_sku="SKU1",
-                             store_url="https://amazon.eg/p/1")
+    store = TrackedItemStore(
+        tracked_item_id=item.id,
+        store_id="amazon_eg",
+        store_sku="SKU1",
+        store_url="https://amazon.eg/p/1",
+    )
     session.add(store)
     session.commit()
 
@@ -466,7 +527,9 @@ def test_refresh_tracked_item_price_404_and_400(client, db_session):
     api, session, user = client
     assert api.post("/tracked-items/999/refresh").status_code == 404
 
-    item = TrackedItem(user_id=user.id, canonical_product_id="no-stores-item", is_active=True)
+    item = TrackedItem(
+        user_id=user.id, canonical_product_id="no-stores-item", is_active=True
+    )
     session.add(item)
     session.commit()
     assert api.post(f"/tracked-items/{item.id}/refresh").status_code == 400

@@ -1,15 +1,15 @@
-import os
 import json
 import logging
+import os
 from datetime import datetime
 from uuid import UUID
 
-from fastapi import FastAPI, HTTPException, Request, Depends
+from fastapi import Depends, FastAPI, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.orm import Session, sessionmaker
 
-from services.billing.models import Base, PaymentLog
+from services.billing.models import PaymentLog
 from services.common.paymob import verify_paymob_hmac
 
 logger = logging.getLogger(__name__)
@@ -18,9 +18,7 @@ logger = logging.getLogger(__name__)
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./billing.db")
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 PAYMOB_HMAC_SECRET = os.getenv("PAYMOB_HMAC_SECRET", "")
-PAYMOB_SIGNATURE_HEADER = os.getenv(
-    "PAYMOB_SIGNATURE_HEADER", "X-Paymob-Signature"
-)
+PAYMOB_SIGNATURE_HEADER = os.getenv("PAYMOB_SIGNATURE_HEADER", "X-Paymob-Signature")
 PAYMOB_CHECKOUT_URL = os.getenv("PAYMOB_CHECKOUT_URL", "")
 
 PACKAGE_CREDITS = {"standard": 10, "premium": 30}
@@ -31,6 +29,7 @@ engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 app = FastAPI(title="Elhaq Billing")
+
 
 # Pydantic models
 class PaymentWebhook(BaseModel):
@@ -48,6 +47,7 @@ class PurchaseRequest(BaseModel):
     user_id: str
     tier: str
 
+
 # Dependency
 def get_db():
     db = SessionLocal()
@@ -55,6 +55,7 @@ def get_db():
         yield db
     finally:
         db.close()
+
 
 def verify_paymob_webhook(request: Request, body: bytes) -> bool:
     """Validate a Paymob webhook against the raw request body."""
@@ -70,13 +71,16 @@ def create_purchase(request: PurchaseRequest) -> dict:
     if request.tier not in PACKAGE_CREDITS:
         raise HTTPException(status_code=400, detail="Invalid package")
     if not PAYMOB_CHECKOUT_URL:
-        raise HTTPException(status_code=503, detail="Payment provider is not configured")
+        raise HTTPException(
+            status_code=503, detail="Payment provider is not configured"
+        )
     return {
         "tier": request.tier,
         "credits": PACKAGE_CREDITS[request.tier],
         "amount_egp": PACKAGE_PRICES[request.tier],
         "checkout_url": PAYMOB_CHECKOUT_URL,
     }
+
 
 @app.post("/webhook/paymob")
 async def paymob_webhook(request: Request, db: Session = Depends(get_db)):
@@ -99,7 +103,9 @@ async def paymob_webhook(request: Request, db: Session = Depends(get_db)):
         if data.tier not in PACKAGE_CREDITS:
             raise HTTPException(status_code=400, detail="Invalid package")
         if data.amount != PACKAGE_PRICES[data.tier]:
-            raise HTTPException(status_code=400, detail="Payment amount does not match package")
+            raise HTTPException(
+                status_code=400, detail="Payment amount does not match package"
+            )
         existing = db.execute(
             text("SELECT 1 FROM payment_logs WHERE paymob_order_id = :order_id"),
             {"order_id": data.order_id},
@@ -115,28 +121,24 @@ async def paymob_webhook(request: Request, db: Session = Depends(get_db)):
             currency=data.currency,
             status=data.status,
             tier=data.tier,
-            created_at=datetime.utcnow()
+            created_at=datetime.utcnow(),
         )
         db.add(payment_log)
         db.execute(
-            text(
-                """
+            text("""
                 INSERT INTO user_credits (user_id, balance, updated_at)
                 VALUES (:user_id, :credits, CURRENT_TIMESTAMP)
                 ON CONFLICT (user_id) DO UPDATE
                 SET balance = user_credits.balance + EXCLUDED.balance,
                     updated_at = CURRENT_TIMESTAMP
-                """
-            ),
+                """),
             {"user_id": str(data.user_id), "credits": PACKAGE_CREDITS[data.tier]},
         )
         db.execute(
-            text(
-                """
+            text("""
                 INSERT INTO credit_transactions (user_id, amount, reason, created_at)
                 VALUES (:user_id, :credits, :reason, CURRENT_TIMESTAMP)
-                """
-            ),
+                """),
             {
                 "user_id": str(data.user_id),
                 "credits": PACKAGE_CREDITS[data.tier],
@@ -150,6 +152,7 @@ async def paymob_webhook(request: Request, db: Session = Depends(get_db)):
         )
 
     return {"status": "processed"}
+
 
 @app.get("/pricing")
 def get_dynamic_pricing():

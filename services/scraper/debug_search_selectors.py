@@ -2,7 +2,9 @@
 
 import asyncio
 import os
+
 from playwright.async_api import async_playwright
+
 
 async def debug_search_selectors():
     stores = {
@@ -11,26 +13,28 @@ async def debug_search_selectors():
         "noon": "https://www.noon.com/egypt-en/search?q=ASUS+PRIME+RTX+5070+Ti",
         "jumia": "https://www.jumia.com.eg/catalog/?q=ASUS+PRIME+RTX+5070+Ti",
     }
-    
+
     os.makedirs("search_debug", exist_ok=True)
-    
+
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
-        
+
         for store_id, search_url in stores.items():
             print(f"\nDEBUGGING: {store_id}")
             print(f"URL: {search_url}")
-            
+
             page = await browser.new_page()
             try:
                 await page.goto(search_url, timeout=30000)
                 await page.wait_for_timeout(3000)
-                
+
                 # Save HTML for inspection
                 html = await page.content()
-                with open(f"search_debug/{store_id}_search.html", "w", encoding="utf-8") as f:
+                with open(
+                    f"search_debug/{store_id}_search.html", "w", encoding="utf-8"
+                ) as f:
                     f.write(html)
-                
+
                 # Test selectors
                 test_selectors = {
                     "amazon_eg": [
@@ -58,9 +62,9 @@ async def debug_search_selectors():
                         "h2 a",
                     ],
                 }
-                
+
                 selectors = test_selectors.get(store_id, ["a", "h2", "h3"])
-                print(f"Testing selectors:")
+                print("Testing selectors:")
                 for selector in selectors:
                     try:
                         element = await page.query_selector(selector)
@@ -72,16 +76,17 @@ async def debug_search_selectors():
                             print(f"    Href: {href[:60]}")
                         else:
                             print(f"  NO: {selector}")
-                    except Exception as e:
+                    except Exception:
                         print(f"  ERR: {selector}")
-                        
+
             except Exception as e:
                 print(f"ERROR: {e}")
             finally:
                 await page.close()
-        
+
         await browser.close()
-    
+
     print("\nHTML files saved to search_debug/")
+
 
 asyncio.run(debug_search_selectors())

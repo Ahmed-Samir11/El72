@@ -52,7 +52,9 @@ def _ensure_row(db: Session, user: User) -> UserCredit:
     return credit
 
 
-def deduct(db: Session, user: User, amount: int = 1, reason: str = "tracker_created") -> int:
+def deduct(
+    db: Session, user: User, amount: int = 1, reason: str = "tracker_created"
+) -> int:
     """Deduct ``amount`` credits; raise 402 if the balance is insufficient.
 
     Must run in the same session/transaction as the operation it guards, so a

@@ -1,7 +1,8 @@
 """
 WhatsApp Notification Service for El72
 
-Consumes notifications from Redis Streams and sends WhatsApp messages via Facebook Graph API.
+Consumes notifications from Redis Streams and sends WhatsApp messages
+via Facebook Graph API.
 Listens to: stream:confirmed_deals
 Consumer Group: cg_whatsapp
 Queries database for all users with alerts for the SKU and sends to all of them.
@@ -11,13 +12,13 @@ import asyncio
 import json
 import os
 import sys
-from typing import Dict, Any, List, Tuple, Union
+from typing import Any, Dict, List, Tuple, Union
 
-import redis.asyncio as aioredis
 import httpx
 import psycopg2
-from psycopg2.extras import RealDictCursor
+import redis.asyncio as aioredis
 from loguru import logger
+from psycopg2.extras import RealDictCursor
 
 # Configuration from environment
 REDIS_URL = os.getenv("REDIS_URL", "redis://127.0.0.1:6379")
@@ -26,7 +27,9 @@ CONSUMER_GROUP = os.getenv("CONSUMER_GROUP", "cg_whatsapp")
 CONSUMER_NAME = os.getenv("CONSUMER_NAME", "whatsapp-1")
 
 # Database Configuration
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://elhaq:elhaq_pass@postgres:5432/elhaq")
+DATABASE_URL = os.getenv(
+    "DATABASE_URL", "postgresql://elhaq:elhaq_pass@postgres:5432/elhaq"
+)
 
 # WhatsApp Business API Configuration
 ACCESS_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN", "")
@@ -82,7 +85,9 @@ def get_subscribers_for_sku(sku: str) -> List[Subscriber]:
 
         # Build the subscriber id list from the single source of truth so the
         # set is never duplicated inline in SQL.
-        subscriber_ids = ", ".join(str(uid) for uid in sorted(EGYPTIAN_WHATSAPP_USER_IDS))
+        subscriber_ids = ", ".join(
+            str(uid) for uid in sorted(EGYPTIAN_WHATSAPP_USER_IDS)
+        )
         with conn.cursor(cursor_factory=RealDictCursor) as cursor:
             query_with_name = f"""
                 SELECT DISTINCT
@@ -110,7 +115,8 @@ def get_subscribers_for_sku(sku: str) -> List[Subscriber]:
                 ]
             except Exception:
                 query_without_name = f"""
-                    SELECT DISTINCT u.id, u.phone, COALESCE(u.preferred_language, 'en') AS preferred_language
+                    SELECT DISTINCT u.id, u.phone,
+                    COALESCE(u.preferred_language, 'en') AS preferred_language
                     FROM alerts a
                     JOIN users u ON a.user_id = u.id
                     WHERE a.active_status = TRUE
@@ -138,7 +144,9 @@ async def ensure_consumer_group():
         await redis_client.xgroup_create(
             name=STREAM_NAME, groupname=CONSUMER_GROUP, id="0", mkstream=True
         )
-        logger.info(f"Created consumer group '{CONSUMER_GROUP}' on stream '{STREAM_NAME}'")
+        logger.info(
+            f"Created consumer group '{CONSUMER_GROUP}' on stream '{STREAM_NAME}'"
+        )
     except aioredis.ResponseError as e:
         if "BUSYGROUP" in str(e):
             logger.info(f"Consumer group '{CONSUMER_GROUP}' already exists")
@@ -147,7 +155,10 @@ async def ensure_consumer_group():
 
 
 def normalize_phone(phone: str) -> str:
-    """Normalize to E.164 with leading '+' (required for reliable Cloud API delivery)."""
+    """Normalize a phone number to E.164 format with a leading '+'.
+
+    This is required for reliable WhatsApp Cloud API delivery.
+    """
     phone = (phone or "").strip().replace(" ", "").replace("-", "")
     if not phone:
         return phone
@@ -166,7 +177,7 @@ def mask_phone(phone: str) -> str:
 
 async def send_whatsapp_message(phone: str, message_body: str) -> bool:
     """Send WhatsApp message via Facebook Graph API (legacy free-form text).
-    
+
     Prefer send_whatsapp_price_alert for real delivery on the Cloud API test number.
     """
     if MOCK_MODE:
@@ -174,39 +185,45 @@ async def send_whatsapp_message(phone: str, message_body: str) -> bool:
         return True
 
     if not ACCESS_TOKEN or not PHONE_NUMBER_ID:
-        logger.error("WhatsApp credentials not configured. Set WHATSAPP_ACCESS_TOKEN and WHATSAPP_PHONE_NUMBER_ID")
+        logger.error(
+            "WhatsApp credentials not configured. Set WHATSAPP_ACCESS_TOKEN "
+            "and WHATSAPP_PHONE_NUMBER_ID"
+        )
         return False
 
     phone = normalize_phone(phone)
-    url = f"https://graph.facebook.com/{WHATSAPP_API_VERSION}/{PHONE_NUMBER_ID}/messages"
-    
+    url = (
+        f"https://graph.facebook.com/{WHATSAPP_API_VERSION}/{PHONE_NUMBER_ID}/messages"
+    )
+
     headers = {
         "Authorization": f"Bearer {ACCESS_TOKEN}",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
     }
-    
+
     payload = {
         "messaging_product": "whatsapp",
         "recipient_type": "individual",
         "to": phone,
         "type": "text",
-        "text": {
-            "preview_url": False,
-            "body": message_body
-        }
+        "text": {"preview_url": False, "body": message_body},
     }
 
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.post(url, headers=headers, json=payload)
-            
+
             if response.status_code == 200:
-                logger.info(f"WhatsApp message sent to {mask_phone(phone)}: {response.json()}")
+                logger.info(
+                    f"WhatsApp message sent to {mask_phone(phone)}: {response.json()}"
+                )
                 return True
             else:
-                logger.error(f"WhatsApp API error [{response.status_code}]: {response.text}")
+                logger.error(
+                    f"WhatsApp API error [{response.status_code}]: {response.text}"
+                )
                 return False
-                
+
     except Exception as e:
         logger.error(f"Failed to send WhatsApp message: {e}", exc_info=True)
         return False
@@ -223,11 +240,16 @@ async def send_whatsapp_price_alert(
         return True
 
     if not ACCESS_TOKEN or not PHONE_NUMBER_ID:
-        logger.error("WhatsApp credentials not configured. Set WHATSAPP_ACCESS_TOKEN and WHATSAPP_PHONE_NUMBER_ID")
+        logger.error(
+            "WhatsApp credentials not configured. Set WHATSAPP_ACCESS_TOKEN "
+            "and WHATSAPP_PHONE_NUMBER_ID"
+        )
         return False
 
     phone = normalize_phone(phone)
-    url = f"https://graph.facebook.com/{WHATSAPP_API_VERSION}/{PHONE_NUMBER_ID}/messages"
+    url = (
+        f"https://graph.facebook.com/{WHATSAPP_API_VERSION}/{PHONE_NUMBER_ID}/messages"
+    )
     headers = {
         "Authorization": f"Bearer {ACCESS_TOKEN}",
         "Content-Type": "application/json",
@@ -264,7 +286,7 @@ async def send_whatsapp_price_alert(
 
 def format_price_alert(payload: Dict[str, Any], language: str = "en") -> str:
     """Format price alert message.
-    
+
     Expected payload fields:
     - sku: Product identifier
     - product_title: Product name (optional)
@@ -280,9 +302,9 @@ def format_price_alert(payload: Dict[str, Any], language: str = "en") -> str:
     original_price = payload.get("original_price")
     discount = payload.get("discount_percent")
     url = payload.get("url")
-    store = payload.get("store", "")
-    
+
     product_label = product_title or sku
+
     def format_price(value: Any) -> str:
         try:
             return f"{float(value):,.2f} جنيه"
@@ -315,13 +337,13 @@ def format_price_alert(payload: Dict[str, Any], language: str = "en") -> str:
 
 async def process_message(message_id: str, fields: Dict[bytes, bytes]):
     """Process a single notification message from Redis Stream.
-    
+
     Queries database for all users with alerts for this SKU and sends to all of them.
     """
     try:
         # Parse payload - handle both wrapped and unwrapped formats
         payload_bytes = fields.get(b"payload") or fields.get("payload")
-        
+
         if payload_bytes:
             # Wrapped format: {"payload": json_string}
             payload = json.loads(payload_bytes)
@@ -339,7 +361,7 @@ async def process_message(message_id: str, fields: Dict[bytes, bytes]):
             logger.debug(
                 f"Unwrapped message {message_id} fields: {sorted(payload.keys())}"
             )
-        
+
         # Extract SKU from payload
         sku = payload.get("sku")
         if not sku:
@@ -347,10 +369,10 @@ async def process_message(message_id: str, fields: Dict[bytes, bytes]):
             await redis_client.xack(STREAM_NAME, CONSUMER_GROUP, message_id)
             return
             return
-        
+
         # Check if user_phone is directly in payload (from scraper)
         user_phone = payload.get("user_phone")
-        
+
         if user_phone:
             logger.info(f"Using user_phone from payload: {mask_phone(user_phone)}")
             user_id = payload.get("user_id", 0)
@@ -358,28 +380,34 @@ async def process_message(message_id: str, fields: Dict[bytes, bytes]):
                 user_id = int(user_id)
             except (TypeError, ValueError):
                 user_id = 0
-            subscribers = [
-                (
-                    user_id,
-                    user_phone,
-                    payload.get("preferred_language", "en"),
-                    payload.get("name") or "Customer",
-                )
-            ] if user_id in EGYPTIAN_WHATSAPP_USER_IDS else []
+            subscribers = (
+                [
+                    (
+                        user_id,
+                        user_phone,
+                        payload.get("preferred_language", "en"),
+                        payload.get("name") or "Customer",
+                    )
+                ]
+                if user_id in EGYPTIAN_WHATSAPP_USER_IDS
+                else []
+            )
         else:
             subscribers = get_subscribers_for_sku(sku)
-        
+
         if not subscribers:
             logger.info(f"No subscribers found for SKU: {sku}")
             await redis_client.xack(STREAM_NAME, CONSUMER_GROUP, message_id)
             return
-        
+
         # Prepare tasks for concurrent sending
         async def send_to_subscriber(subscriber: Subscriber):
             """Send message to a single subscriber with deduplication check."""
             user_id, phone, *rest = subscriber
             language = rest[0] if len(rest) >= 1 else "en"
-            subscriber_name = rest[1] if len(rest) >= 2 else payload.get("name") or "Customer"
+            subscriber_name = (
+                rest[1] if len(rest) >= 2 else payload.get("name") or "Customer"
+            )
             dedup_key = f"alert_sent:{user_id}:{sku}"
 
             if await redis_client.exists(dedup_key):
@@ -391,38 +419,47 @@ async def process_message(message_id: str, fields: Dict[bytes, bytes]):
             recipient_payload["name"] = subscriber_name
             recipient_payload["preferred_language"] = language
 
-            success = await send_whatsapp_price_alert(phone_clean, recipient_payload, language)
+            success = await send_whatsapp_price_alert(
+                phone_clean, recipient_payload, language
+            )
 
             if success:
                 await redis_client.setex(dedup_key, 86400, "1")
                 logger.info(f"Sent alert to user {user_id} ({mask_phone(phone_clean)})")
                 return True
-            logger.error(f"Failed to send alert to user {user_id} ({mask_phone(phone_clean)})")
+            logger.error(
+                f"Failed to send alert to user {user_id} ({mask_phone(phone_clean)})"
+            )
             return False
-        
+
         # Send to all subscribers concurrently
         tasks = [send_to_subscriber(subscriber) for subscriber in subscribers]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        for subscriber, result in zip(subscribers, results):
+        for subscriber, result in zip(subscribers, results, strict=True):
             if isinstance(result, Exception):
                 user_id = subscriber[0]
-                logger.opt(exception=(type(result), result, result.__traceback__)).error(
-                    f"Subscriber send task raised exception for user {user_id}: {result}"
+                logger.opt(
+                    exception=(type(result), result, result.__traceback__)
+                ).error(
+                    f"Subscriber send task raised exception "
+                    f"for user {user_id}: {result}"
                 )
         # Count results
         success_count = sum(1 for r in results if r is True)
-        failed_count = sum(
-            1 for r in results if r is False or isinstance(r, Exception)
-        )
+        failed_count = sum(1 for r in results if r is False or isinstance(r, Exception))
         skipped_count = sum(1 for r in results if r is None)
-        
+
         # Log summary
-        logger.info(f"Message {message_id} processed: {success_count} sent, {failed_count} failed, {skipped_count} skipped (duplicates), {len(subscribers)} total subscribers")
-        
+        logger.info(
+            f"Message {message_id} processed: {success_count} sent, "
+            f"{failed_count} failed, {skipped_count} skipped (duplicates), "
+            f"{len(subscribers)} total subscribers"
+        )
+
         # Always ACK the message after processing all subscribers
         await redis_client.xack(STREAM_NAME, CONSUMER_GROUP, message_id)
-            
+
     except Exception as e:
         logger.error(f"Error processing message {message_id}: {e}", exc_info=True)
         # Do not ACK on error - allow retry
@@ -430,12 +467,14 @@ async def process_message(message_id: str, fields: Dict[bytes, bytes]):
 
 async def consume_loop():
     """Main consumer loop - reads from Redis Stream and processes notifications."""
-    logger.info(f"Starting WhatsApp consumer: {CONSUMER_NAME} in group {CONSUMER_GROUP}")
+    logger.info(
+        f"Starting WhatsApp consumer: {CONSUMER_NAME} in group {CONSUMER_GROUP}"
+    )
     logger.info(f"Listening to stream: {STREAM_NAME}")
     logger.info(f"Mock mode: {MOCK_MODE}")
-    
+
     await ensure_consumer_group()
-    
+
     while True:
         try:
             # Read up to 10 messages, block for 5 seconds
@@ -446,14 +485,14 @@ async def consume_loop():
                 count=10,
                 block=5000,
             )
-            
+
             if not messages:
                 continue
-            
-            for stream_name, message_list in messages:
+
+            for _, message_list in messages:
                 for message_id, fields in message_list:
                     await process_message(message_id, fields)
-                    
+
         except asyncio.CancelledError:
             logger.info("Consumer loop cancelled, shutting down...")
             break
@@ -465,9 +504,9 @@ async def consume_loop():
 async def main():
     """Initialize Redis connection, test database, and start consumer loop."""
     global redis_client, db_conn
-    
+
     logger.info("Initializing WhatsApp Notification Service...")
-    
+
     # Test database connection
     try:
         db_conn = get_db_connection()
@@ -475,21 +514,17 @@ async def main():
     except Exception as e:
         logger.error(f"Failed to connect to database: {e}")
         sys.exit(1)
-    
+
     # Connect to Redis
-    redis_client = aioredis.from_url(
-        REDIS_URL, 
-        encoding="utf-8", 
-        decode_responses=True
-    )
-    
+    redis_client = aioredis.from_url(REDIS_URL, encoding="utf-8", decode_responses=True)
+
     try:
         await redis_client.ping()
         logger.info(f"Connected to Redis at {REDIS_URL}")
     except Exception as e:
         logger.error(f"Failed to connect to Redis: {e}")
         sys.exit(1)
-    
+
     try:
         await consume_loop()
     finally:
@@ -501,7 +536,7 @@ async def main():
 
 if __name__ == "__main__":
     logger.add(sys.stderr, format="{time} {level} {message}", level="INFO")
-    
+
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
