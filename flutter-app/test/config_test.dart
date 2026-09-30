@@ -30,6 +30,25 @@ void main() {
     );
 
     test(
+      'isProductionEndpoint requires HTTPS and rejects the emulator URL',
+      () {
+        expect(
+          AppConfig.isProductionEndpoint('https://api.example.com'),
+          isTrue,
+        );
+        expect(
+          AppConfig.isProductionEndpoint('http://api.example.com'),
+          isFalse,
+        );
+        expect(AppConfig.isProductionEndpoint('http://10.0.2.2:8000'), isFalse);
+        expect(
+          AppConfig.isProductionEndpoint('https://10.0.2.2:8000'),
+          isFalse,
+        );
+      },
+    );
+
+    test(
       'initialize() completes in a non-release build with the default URL',
       () async {
         // Under `flutter test` kReleaseMode is false, so the release guard is a

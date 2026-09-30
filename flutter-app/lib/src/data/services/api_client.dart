@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../config.dart';
@@ -19,6 +20,7 @@ class ApiClient {
 
   /// Test-only constructor that injects an in-memory [storage] so the 401 flow
   /// can be exercised without the secure-storage platform plugin.
+  @visibleForTesting
   factory ApiClient.withStorage(FlutterSecureStorage storage) =>
       ApiClient._internal(storage: storage);
 
@@ -45,7 +47,17 @@ class ApiClient {
           // 401 means the stored token is expired or invalid. Clear it and
           // notify the app so it can send the user back to login. `error` is
           // already a DioException in this callback.
-          if (error.response?.statusCode == 401) {
+          //
+          // Skip the credential endpoints themselves: a 401 on /auth/login or
+          // /auth/register just means bad credentials, which those screens
+          // handle directly — firing sign-out there would be a no-op at best
+          // and could clobber a freshly-entered login. (Other /auth/* calls,
+          // e.g. /auth/me, DO mean an expired token and must sign out.)
+          final path = error.requestOptions.uri.path;
+          final isCredentialEndpoint =
+              path.startsWith('/auth/login') ||
+              path.startsWith('/auth/register');
+          if (error.response?.statusCode == 401 && !isCredentialEndpoint) {
             await _storage.delete(key: 'access_token');
             final callback = onUnauthorized;
             if (callback != null) {
