@@ -6,13 +6,24 @@ import '../config.dart';
 class ApiClient {
   static final ApiClient _instance = ApiClient._internal();
   late final Dio _dio;
-  final FlutterSecureStorage _storage = const FlutterSecureStorage();
+  final FlutterSecureStorage _storage;
+
+  /// Fired when the API answers 401 (expired/invalid token). The app wires
+  /// this to route back to the login screen. There is no refresh endpoint on
+  /// the backend, so clearing the token and re-authenticating is the only path.
+  static Future<void> Function()? onUnauthorized;
 
   factory ApiClient() {
     return _instance;
   }
 
-  ApiClient._internal() {
+  /// Test-only constructor that injects an in-memory [storage] so the 401 flow
+  /// can be exercised without the secure-storage platform plugin.
+  factory ApiClient.withStorage(FlutterSecureStorage storage) =>
+      ApiClient._internal(storage: storage);
+
+  ApiClient._internal({FlutterSecureStorage? storage})
+    : _storage = storage ?? const FlutterSecureStorage() {
     _dio = Dio(
       BaseOptions(
         baseUrl: AppConfig.apiBaseUrl,
@@ -30,8 +41,17 @@ class ApiClient {
           }
           return handler.next(options);
         },
-        onError: (error, handler) {
-          // Handle errors globally if needed
+        onError: (error, handler) async {
+          // 401 means the stored token is expired or invalid. Clear it and
+          // notify the app so it can send the user back to login. `error` is
+          // already a DioException in this callback.
+          if (error.response?.statusCode == 401) {
+            await _storage.delete(key: 'access_token');
+            final callback = onUnauthorized;
+            if (callback != null) {
+              await callback();
+            }
+          }
           return handler.next(error);
         },
       ),

@@ -205,3 +205,35 @@ Total: **~2.5–3 weeks** single developer, MS5 parallelizable with MS2.
 - [ ] Release build hits a real HTTPS endpoint; startup guard active; 401 → clean re-login.
 - [ ] Crash reporting live; privacy policy + data-safety form + EN/AR listing complete in `docs/play-store/`.
 - [ ] Physical-device smoke test passed on 3 device classes; store submission ready.
+
+---
+
+## 9. MS5 Kickoff — Production Runtime Readiness (in progress)
+
+**Started:** after MS4 merged (PR #17). **Scope:** WS5 — prod API config + startup guard, 401 auth flow, crash reporting, notifications decision, demo-mode default.
+
+### Tasks
+1. **API config + startup guard** — a release build must fail fast if `API_BASE_URL` is the emulator default (`http://10.0.2.2:8000`). Emulator default stays for dev; the prod URL is injected via `--dart-define` in CI.
+2. **Auth resilience** — 401 interceptor → clear stored token → route to login. Verify current `api_client.dart` behavior first (does the backend offer a refresh path, or is re-login the only option?).
+3. **Crash reporting** — add Firebase Crashlytics (or Sentry) + minimal init in `main.dart`; also required for an honest data-safety declaration.
+4. **Notifications decision** — in v1 or deferred? Gates the `POST_NOTIFICATIONS` permission and `flutter_local_notifications`.
+5. **Demo mode** — keep as a clearly-labeled profile setting; make live mode the default first-run path.
+
+### ⚠️ Human intervention / decisions needed BEFORE full implementation
+These block parts of MS5 and need owner input:
+
+| # | Item | Why it needs a human | Status |
+|---|------|----------------------|--------|
+| H1 | **Production API base URL** (real HTTPS endpoint) | Not finalized (see Risks). Needed for the CI release build's `--dart-define=API_BASE_URL=<prod>` and to verify the startup guard + 401 flow against a live backend. | ⏳ pending owner/backend |
+| H2 | **Crash-reporting provider + config** | Requires creating a Firebase project + `google-services.json` (or a Sentry account + DSN). Cannot be generated in-repo. | ⏳ pending owner |
+| H3 | **Notifications in v1?** | Explicit owner decision. Plan recommendation: defer to v1.1 and remove `POST_NOTIFICATIONS` now. | ⏳ pending owner |
+
+### Can proceed WITHOUT human input (independent)
+- Startup guard logic — checks the known emulator-default value; no prod URL required to write it.
+- 401 → clear-token → login flow — code-only; verify against current `api_client.dart`.
+- Demo-mode default-path UX — code-only.
+
+### Blocked on human input
+- CI release build wiring the real prod `API_BASE_URL` (needs **H1**).
+- Crash-reporting init with a real config (needs **H2**).
+- Final permission set / notifications scope (needs **H3**).
