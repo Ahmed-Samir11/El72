@@ -38,7 +38,7 @@ android {
     namespace = "com.elhaq.tracker"
     // Pinned explicitly (WS3): compileSdk == targetSdk so the SDK levels are
     // deterministic and never depend on the Flutter template defaults.
-    compileSdk = 35
+    compileSdk = 36
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
