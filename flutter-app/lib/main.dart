@@ -9,6 +9,7 @@ import 'src/routing/app_router.dart';
 import 'src/core/styles/app_theme.dart';
 import 'src/data/config.dart';
 import 'src/data/services/api_client.dart';
+import 'src/data/services/unauthorized_handler.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -25,14 +26,13 @@ Future<void> main() async {
   }
   // 401 resilience (MS5): when the API reports an expired/invalid token, clear
   // it and route back to login. The backend has no refresh endpoint, so
-  // re-login is the only path. Wired through a navigator key owned by the app.
+  // re-login is the only path. Wired through a navigator key owned by the app;
+  // the handler dedupes concurrent 401s and swallows navigation errors.
   final navigatorKey = GlobalKey<NavigatorState>();
-  ApiClient.onUnauthorized = () async {
-    navigatorKey.currentState?.pushNamedAndRemoveUntil(
-      AppRoutes.login,
-      (route) => false,
-    );
-  };
+  ApiClient.onUnauthorized = buildUnauthorizedHandler(
+    navigatorKey,
+    loginRoute: AppRoutes.login,
+  );
   runApp(
     ProviderScope(
       child: ElhaqApp(

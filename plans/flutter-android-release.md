@@ -213,11 +213,11 @@ Total: **~2.5–3 weeks** single developer, MS5 parallelizable with MS2.
 **Started:** after MS4 merged (PR #17). **Scope:** WS5 — prod API config + startup guard, 401 auth flow, crash reporting, notifications decision, demo-mode default.
 
 ### Tasks
-1. **API config + startup guard** — a release build must fail fast if `API_BASE_URL` is the emulator default (`http://10.0.2.2:8000`). Emulator default stays for dev; the prod URL is injected via `--dart-define` in CI.
-2. **Auth resilience** — 401 interceptor → clear stored token → route to login. Verify current `api_client.dart` behavior first (does the backend offer a refresh path, or is re-login the only option?).
-3. **Crash reporting** — add Firebase Crashlytics (or Sentry) + minimal init in `main.dart`; also required for an honest data-safety declaration.
-4. **Notifications decision** — in v1 or deferred? Gates the `POST_NOTIFICATIONS` permission and `flutter_local_notifications`.
-5. **Demo mode** — keep as a clearly-labeled profile setting; make live mode the default first-run path.
+1. **API config + startup guard** — ✅ **Done** (PR #19): release builds fail fast if `API_BASE_URL` is not a production HTTPS endpoint (emulator default, cleartext HTTP, or malformed URL all rejected via `AppConfig.validateApiBaseUrlForRelease` + `isProductionEndpoint`). Prod URL still injected via `--dart-define` in CI once H1 lands.
+2. **Auth resilience** — ✅ **Done** (PR #19): 401 interceptor clears the stored token, then routes to login fire-and-forget via `buildUnauthorizedHandler` (dedupes concurrent 401s, swallows navigation errors, skips credential endpoints even behind a path-prefixed base URL). Backend has no refresh endpoint, so re-login is the path.
+3. **Crash reporting** — ⏳ Blocked on H2 (provider + config).
+4. **Notifications decision** — ⏳ Blocked on H3 (owner decision).
+5. **Demo mode** — ✅ **Done** (PR #19): defaults to live mode, persisted in SharedPreferences, locked by tests.
 
 ### ⚠️ Human intervention / decisions needed BEFORE full implementation
 These block parts of MS5 and need owner input:

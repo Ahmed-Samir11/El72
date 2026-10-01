@@ -96,6 +96,9 @@ void main() {
         ),
       ),
     );
+    // The callback runs fire-and-forget after the token is deleted; flush the
+    // microtask queue so any delayed invocation has landed before asserting.
+    await pumpEventQueue();
 
     expect(unauthorizedCalled, isTrue);
     expect(await storage.read(key: 'access_token'), isNull);
@@ -149,4 +152,123 @@ void main() {
     expect(unauthorizedCalled, isFalse);
     expect(await storage.read(key: 'access_token'), 'stale-token');
   });
+
+  test('a 401 on the register endpoint does not fire onUnauthorized', () async {
+    final storage = _FakeSecureStorage();
+    await storage.write(key: 'access_token', value: 'stale-token');
+
+    var unauthorizedCalled = false;
+    ApiClient.onUnauthorized = () async {
+      unauthorizedCalled = true;
+    };
+    addTearDown(() => ApiClient.onUnauthorized = null);
+
+    final client = ApiClient.withStorage(storage);
+    client.dio.httpClientAdapter = _StatusAdapter(401);
+
+    await expectLater(
+      client.dio.post('/auth/register', data: {}),
+      throwsA(isA<DioException>()),
+    );
+    await pumpEventQueue();
+
+    expect(unauthorizedCalled, isFalse);
+    expect(await storage.read(key: 'access_token'), 'stale-token');
+  });
+
+  group('with a path-prefixed base URL', () {
+    // When API_BASE_URL carries a path prefix (e.g. a reverse proxy at
+    // /api), the absolute request paths become /api/auth/... — the
+    // credential-endpoint skip must still match.
+    final String baseUrl = 'https://api.example.com/api';
+
+    test(
+      'a 401 on /auth/me fires onUnauthorized and clears the token',
+      () async {
+        final storage = _FakeSecureStorage();
+        await storage.write(key: 'access_token', value: 'expired-token');
+
+        var unauthorizedCalled = false;
+        ApiClient.onUnauthorized = () async {
+          unauthorizedCalled = true;
+        };
+        addTearDown(() => ApiClient.onUnauthorized = null);
+
+        final client = ApiClient.withStorage(storage, baseUrl: baseUrl);
+        client.dio.httpClientAdapter = _StatusAdapter(401);
+
+        await expectLater(
+          client.dio.get('/auth/me'),
+          throwsA(
+            isA<DioException>().having(
+              (e) => e.response?.statusCode,
+              'statusCode',
+              401,
+            ),
+          ),
+        );
+        await pumpEventQueue();
+
+        expect(unauthorizedCalled, isTrue);
+        expect(await storage.read(key: 'access_token'), isNull);
+      },
+    );
+
+    test('a 401 on /auth/login still does not fire onUnauthorized', () async {
+      final storage = _FakeSecureStorage();
+      await storage.write(key: 'access_token', value: 'stale-token');
+
+      var unauthorizedCalled = false;
+      ApiClient.onUnauthorized = () async {
+        unauthorizedCalled = true;
+      };
+      addTearDown(() => ApiClient.onUnauthorized = null);
+
+      final client = ApiClient.withStorage(storage, baseUrl: baseUrl);
+      client.dio.httpClientAdapter = _StatusAdapter(401);
+
+      await expectLater(
+        client.dio.post('/auth/login', data: {}),
+        throwsA(isA<DioException>()),
+      );
+      await pumpEventQueue();
+
+      expect(unauthorizedCalled, isFalse);
+      expect(await storage.read(key: 'access_token'), 'stale-token');
+    });
+  });
+
+  test(
+    'a throwing onUnauthorized handler does not mask the Dio error',
+    () async {
+      final storage = _FakeSecureStorage();
+      await storage.write(key: 'access_token', value: 'expired-token');
+
+      ApiClient.onUnauthorized = () async {
+        throw StateError('broken navigation handler');
+      };
+      addTearDown(() => ApiClient.onUnauthorized = null);
+
+      final client = ApiClient.withStorage(storage);
+      client.dio.httpClientAdapter = _StatusAdapter(401);
+
+      // The original 401 must still reach the caller, and the handler failure
+      // must be swallowed (not an unhandled async error — flutter_test would
+      // fail this test if one escaped into the zone).
+      await expectLater(
+        client.dio.get('/auth/me'),
+        throwsA(
+          isA<DioException>().having(
+            (e) => e.response?.statusCode,
+            'statusCode',
+            401,
+          ),
+        ),
+      );
+      await pumpEventQueue();
+
+      // Token deletion (security-critical) still happened.
+      expect(await storage.read(key: 'access_token'), isNull);
+    },
+  );
 }

@@ -48,6 +48,77 @@ void main() {
       },
     );
 
+    test('isProductionEndpoint rejects malformed HTTPS URLs with no host', () {
+      expect(AppConfig.isProductionEndpoint('https://'), isFalse);
+      expect(AppConfig.isProductionEndpoint('https:/'), isFalse);
+      expect(AppConfig.isProductionEndpoint('not a url at all'), isFalse);
+    });
+
+    group('validateApiBaseUrlForRelease', () {
+      test('throws in release mode for the emulator default URL', () {
+        expect(
+          () => AppConfig.validateApiBaseUrlForRelease(
+            'http://10.0.2.2:8000',
+            isRelease: true,
+          ),
+          throwsA(
+            isA<StateError>().having(
+              (e) => e.message,
+              'message',
+              contains('emulator API base URL'),
+            ),
+          ),
+        );
+      });
+
+      test('throws in release mode for a cleartext http URL', () {
+        expect(
+          () => AppConfig.validateApiBaseUrlForRelease(
+            'http://api.example.com',
+            isRelease: true,
+          ),
+          throwsA(isA<StateError>()),
+        );
+      });
+
+      test('throws in release mode for a malformed HTTPS URL (empty host)', () {
+        expect(
+          () => AppConfig.validateApiBaseUrlForRelease(
+            'https://',
+            isRelease: true,
+          ),
+          throwsA(isA<StateError>()),
+        );
+      });
+
+      test('passes in release mode for a valid production HTTPS URL', () {
+        expect(
+          () => AppConfig.validateApiBaseUrlForRelease(
+            'https://api.example.com',
+            isRelease: true,
+          ),
+          returnsNormally,
+        );
+      });
+
+      test('never throws in debug/profile mode, even for the emulator URL', () {
+        expect(
+          () => AppConfig.validateApiBaseUrlForRelease(
+            'http://10.0.2.2:8000',
+            isRelease: false,
+          ),
+          returnsNormally,
+        );
+        expect(
+          () => AppConfig.validateApiBaseUrlForRelease(
+            'https://',
+            isRelease: false,
+          ),
+          returnsNormally,
+        );
+      });
+    });
+
     test(
       'initialize() completes in a non-release build with the default URL',
       () async {

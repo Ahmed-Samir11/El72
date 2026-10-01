@@ -43,12 +43,20 @@ class AppConfig {
     }
   }
 
-  /// True if [url] is a production-grade endpoint: HTTPS and not the dev-only
-  /// emulator loopback address. A release build must point at such a URL —
-  /// cleartext (`http://`) endpoints are rejected because Android blocks
-  /// cleartext traffic by default and a release must be tamper-resistant.
-  static bool isProductionEndpoint(String url) =>
-      url.startsWith('https://') && !isEmulatorDefaultUrl(url);
+  /// True if [url] is a production-grade endpoint: HTTPS, with a non-empty
+  /// host, and not the dev-only emulator loopback address. A release build must
+  /// point at such a URL — cleartext (`http://`) endpoints are rejected because
+  /// Android blocks cleartext traffic by default and a release must be
+  /// tamper-resistant.
+  static bool isProductionEndpoint(String url) {
+    if (!url.startsWith('https://')) return false;
+    if (isEmulatorDefaultUrl(url)) return false;
+    try {
+      return Uri.parse(url).host.isNotEmpty;
+    } catch (_) {
+      return false;
+    }
+  }
 
   static Future<void> initialize() async {
     _preferences = await SharedPreferences.getInstance();
@@ -57,30 +65,49 @@ class AppConfig {
     _failFastOnEmulatorEndpointInRelease();
   }
 
-  /// In a release build the API base URL must be a real production endpoint:
-  /// HTTPS, and not the dev-only emulator loopback address. If it is not, the
-  /// build was not given a proper production `--dart-define`, so we throw at
-  /// startup rather than ship an app that points at nothing or leaks traffic
-  /// in cleartext. Debug and profile builds keep the emulator default for
-  /// local development, so this never fires there.
-  static void _failFastOnEmulatorEndpointInRelease() {
-    if (!kReleaseMode) return;
-    if (isEmulatorDefaultUrl(apiBaseUrl)) {
+  /// Pure, directly unit-testable validation of [url] as a release-build API
+  /// base URL (the [kReleaseMode] check lives in the caller so this function
+  /// can be exercised under `flutter test`, where kReleaseMode is always
+  /// false).
+  ///
+  /// Throws a [StateError] with an actionable message when [isRelease] is
+  /// true and [url] is not a production endpoint (see
+  /// [isProductionEndpoint]): the dev-only emulator loopback URL, cleartext
+  /// (`http://`) endpoints, and malformed URLs such as `https://` with an
+  /// empty host are all rejected. Debug and profile builds always pass.
+  static void validateApiBaseUrlForRelease(
+    String url, {
+    required bool isRelease,
+  }) {
+    if (!isRelease) return;
+    if (isProductionEndpoint(url)) return;
+    // Distinguish the two failure modes for a clear, actionable message.
+    if (isEmulatorDefaultUrl(url)) {
       throw StateError(
         'Release build is configured with the emulator API base URL '
-        "'$apiBaseUrl'. Rebuild with a production HTTPS endpoint via "
+        "'$url'. Rebuild with a production HTTPS endpoint via "
         '--dart-define=API_BASE_URL=https://<prod-host> (see '
         '.github/workflows/ci.yml).',
       );
     }
-    if (!apiBaseUrl.startsWith('https://')) {
-      throw StateError(
-        'Release build API base URL "$apiBaseUrl" is not HTTPS. A release '
-        'must use a production HTTPS endpoint; rebuild with '
-        '--dart-define=API_BASE_URL=https://<prod-host> (see '
-        '.github/workflows/ci.yml).',
-      );
-    }
+    throw StateError(
+      'Release build API base URL "$url" is not a valid production '
+      'HTTPS endpoint (HTTPS is required, the host must be non-empty, and '
+      'the dev-only emulator address is not allowed). Rebuild with '
+      '--dart-define=API_BASE_URL=https://<prod-host> (see '
+      '.github/workflows/ci.yml).',
+    );
+  }
+
+  /// In a release build the API base URL must be a real production endpoint:
+  /// HTTPS, with a non-empty host, and not the dev-only emulator loopback
+  /// address. If it is not, the build was not given a proper production
+  /// `--dart-define`, so we throw at startup rather than ship an app that
+  /// points at nothing or leaks traffic in cleartext. Debug and profile
+  /// builds keep the emulator default for local development, so this never
+  /// fires there.
+  static void _failFastOnEmulatorEndpointInRelease() {
+    validateApiBaseUrlForRelease(apiBaseUrl, isRelease: kReleaseMode);
   }
 
   static Future<void> setDemoMode(bool enabled) async {
