@@ -28,6 +28,15 @@ class TrackedItem {
   final DateTime? createdAt;
   final DateTime? updatedAt;
 
+  /// Backend fetch status for this tracker's store mapping(s):
+  /// `null` (never fetched / in flight), `ok`, `no_price_found`, `blocked`,
+  /// or `fetch_failed`. Drives the card's actionable "failed" states so a
+  /// bad link is not mistaken for an endless fetch.
+  final String? fetchStatus;
+
+  /// Short reason for a non-`ok` [fetchStatus] (log-safe, not user-facing).
+  final String? fetchError;
+
   const TrackedItem({
     required this.id,
     required this.canonicalProductId,
@@ -37,6 +46,8 @@ class TrackedItem {
     this.lowestPrice,
     this.createdAt,
     this.updatedAt,
+    this.fetchStatus,
+    this.fetchError,
   });
 
   /// Human-friendly label derived from the canonical id.
@@ -62,6 +73,8 @@ class TrackedItem {
           : null,
       createdAt: _parseDate(json['created_at']),
       updatedAt: _parseDate(json['updated_at']),
+      fetchStatus: json['fetch_status'] as String?,
+      fetchError: json['fetch_error'] as String?,
     );
   }
 }

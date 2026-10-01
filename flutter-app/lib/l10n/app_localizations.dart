@@ -488,6 +488,18 @@ abstract class AppLocalizations {
   /// **'Fetching live price...'**
   String get fetchingPrice;
 
+  /// No description provided for @priceFetchFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t fetch the price - tap to retry.'**
+  String get priceFetchFailed;
+
+  /// No description provided for @notAProductPage.
+  ///
+  /// In en, this message translates to:
+  /// **'This page doesn\'t look like a product - check the link.'**
+  String get notAProductPage;
+
   /// No description provided for @genericLoadError.
   ///
   /// In en, this message translates to:

@@ -47,4 +47,11 @@ class TrackedItemsRepository {
       throw Exception(detail ?? 'Failed to create tracker');
     }
   }
+
+  /// Re-trigger the backend price fetch for a tracker (used when the initial
+  /// fetch failed or the link may have been wrong). Throws [DioException] on
+  /// HTTP errors, including the 429 throttle (refresh tried < 1 min ago).
+  Future<void> refreshPrice(int itemId) async {
+    await _apiClient.dio.post('/tracked-items/$itemId/refresh');
+  }
 }

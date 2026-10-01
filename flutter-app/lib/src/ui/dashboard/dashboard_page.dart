@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:dio/dio.dart';
 
 import '../../../l10n/app_localizations.dart';
 import '../../core/format/error_message.dart';
@@ -104,6 +105,7 @@ class _TrackersTab extends ConsumerWidget {
                       targetPrice: item.targetPrice ?? 0.0,
                       hasPrice: lowest != null && lowest.priceLocal > 0,
                       isActive: item.isActive,
+                      fetchStatus: item.fetchStatus,
                       onTap: () {
                         Navigator.push(
                           context,
@@ -114,6 +116,21 @@ class _TrackersTab extends ConsumerWidget {
                             ),
                           ),
                         );
+                      },
+                      // Retryable fetch failure: re-trigger the backend fetch
+                      // (the server resets the status to "fetching"), then
+                      // reload so the card shows the spinner again.
+                      onRetry: () async {
+                        try {
+                          await ref
+                              .read(trackedItemsRepositoryProvider)
+                              .refreshPrice(item.id);
+                        } on DioException catch (_) {
+                          // Throttled (429) or offline: keep the failure
+                          // state; the user can retry later.
+                          return;
+                        }
+                        ref.invalidate(trackedItemsProvider);
                       },
                     );
                   },

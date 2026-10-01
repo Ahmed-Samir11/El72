@@ -1,9 +1,16 @@
-"""Lightweight on-demand price fetcher.
+"""On-demand price fetcher.
 
-Visits a single product URL with headless Chromium and extracts the price,
-currency, title and image. This is the local/dev path that lets a freshly
-created tracker get a real price without the full Redis/Postgres monitor
-pipeline.
+Visits a single product URL and extracts the price, currency, title and
+image. Tries a plain HTTP fetch first (fast, no browser), then falls back
+to headless Chromium for JS-rendered or bot-protected pages.
+
+Every outcome is **classified** (see ``FetchResult.status``) so callers —
+and ultimately the app — can tell "no price found (not a product page?)"
+apart from "bot-blocked / server down" from "network failure", instead of
+treating all failures as one silent timeout.
+
+Extraction strategy is deterministic (JSON-LD → meta → store markup →
+visible text); there is intentionally no LLM/agent involved.
 """
 
 from __future__ import annotations
@@ -12,12 +19,35 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Tuple
+from urllib.parse import urljoin
 
 logger = logging.getLogger(__name__)
 
 # 1 EGP = 0.032 USD (approximate; matches services.scraper.price_processor).
 EGP_TO_USD = 0.032
+
+# Fetch statuses — persisted to tracked_item_stores.last_fetch_status.
+FETCH_OK = "ok"
+FETCH_NO_PRICE = "no_price_found"
+FETCH_BLOCKED = "blocked"
+FETCH_FAILED = "fetch_failed"
+
+# Server-side block/unavailability: Cloudflare challenge codes plus the
+# origin-error range (520-524) plus standard 5xx availability errors.
+_BLOCKED_HTTP_CODES = {
+    "403",
+    "429",
+    "500",
+    "502",
+    "503",
+    "504",
+    "520",
+    "521",
+    "522",
+    "523",
+    "524",
+}
 
 
 @dataclass
@@ -29,6 +59,20 @@ class FetchedPrice:
     in_stock: bool = True
 
 
+@dataclass
+class FetchResult:
+    """Classified outcome of a price fetch.
+
+    ``status`` is one of FETCH_OK / FETCH_NO_PRICE / FETCH_BLOCKED /
+    FETCH_FAILED; ``reason`` is a short, log-safe explanation for non-OK
+    results; ``price`` is set only when ``status == FETCH_OK``.
+    """
+
+    status: str
+    reason: str = ""
+    price: Optional[FetchedPrice] = None
+
+
 def _to_usd(price: float, currency: str) -> float:
     return (
         round(price * EGP_TO_USD, 4) if currency.upper() == "EGP" else round(price, 4)
@@ -36,8 +80,7 @@ def _to_usd(price: float, currency: str) -> float:
 
 
 def _parse_jsonld(html: str) -> list:
-    """Extract all parseable JSON-LD objects (dicts or lists of dicts) from the page."""
-    """Return the parsed JSON-LD objects embedded in the page."""
+    """Return the parsed JSON-LD objects (dicts) embedded in the page."""
     blocks = re.findall(
         r'<script[^>]*application/ld\+json[^>]*>(.*?)</script>',
         html,
@@ -77,24 +120,42 @@ def _type_is_product(types) -> bool:
 def _jsonld_product(html: str, objs: Optional[list] = None) -> Optional[dict]:
     """Return the schema.org ``Product`` JSON-LD object, if present.
 
-    Looks at top-level objects **and** entries nested in ``@graph`` (a
-    common layout), matching ``@type`` as a plain name or URI. Pass
-    pre-parsed ``objs`` to avoid re-parsing the page.
+    Scans top-level objects, entries nested in ``@graph`` (one extra
+    nesting level), and ``mainEntity`` references (the Bootstrap-schema
+    layout). Matches ``@type`` as a plain name or URI. Pass pre-parsed
+    ``objs`` to avoid re-parsing the page.
     """
     if objs is None:
         objs = _parse_jsonld(html)
     candidates: list = []
     for obj in objs:
         candidates.append(obj)
+        _add_main_entity(candidates, obj)
         graph = obj.get("@graph")
         if isinstance(graph, list):
-            candidates.extend(g for g in graph if isinstance(g, dict))
+            for g in graph:
+                if not isinstance(g, dict):
+                    continue
+                candidates.append(g)
+                _add_main_entity(candidates, g)
+                sub = g.get("@graph")
+                if isinstance(sub, list):
+                    candidates.extend(d for d in sub if isinstance(d, dict))
     for obj in candidates:
         t = obj.get("@type")
         types = t if isinstance(t, list) else [t]
         if _type_is_product(types):
             return obj
     return None
+
+
+def _add_main_entity(candidates: list, obj: dict) -> None:
+    """Append ``mainEntity`` (dict or list of dicts) from [obj] to [candidates]."""
+    me = obj.get("mainEntity")
+    if isinstance(me, dict):
+        candidates.append(me)
+    elif isinstance(me, list):
+        candidates.extend(d for d in me if isinstance(d, dict))
 
 
 def _parse_amount(raw) -> Optional[float]:
@@ -134,15 +195,171 @@ def _first_image_url(image) -> Optional[str]:
     return None
 
 
+def _absolutize(url: Optional[str], page_url: str) -> Optional[str]:
+    """Resolve [url] to an absolute HTTPS/HTTP URL against [page_url].
+
+    Handles relative paths (``/cdn/shop/x.jpg``), protocol-relative URLs
+    (``//cdn.shop/x.jpg``) and upgrades ``http://`` assets to ``https://``
+    when the page itself was served over HTTPS (Android blocks cleartext).
+    Returns ``None`` for missing/blank input; returns the URL unchanged if
+    [page_url] is empty (e.g. in unit tests).
+    """
+    if not url:
+        return None
+    url = url.strip()
+    if not url:
+        return None
+    if url.startswith("//"):
+        scheme = "https:" if page_url.startswith("https") else "http:"
+        url = scheme + url
+    elif not url.lower().startswith(("http://", "https://")):
+        if page_url:
+            url = urljoin(page_url, url)
+    if page_url.startswith("https") and url.startswith("http://"):
+        url = "https://" + url[len("http://") :]
+    return url or None
+
+
+_OG_IMAGE_PROPS = (
+    "og:image:secure_url",
+    "og:image",
+    "twitter:image",
+    "twitter:image:src",
+)
+
+_IMG_SKIP_HINTS = (
+    "logo",
+    "icon",
+    "flag",
+    "sprite",
+    "spacer",
+    "pixel",
+    "badge",
+    "avatar",
+    ".svg",
+    "data:",
+)
+
+
+def _extract_image_from_meta(html: str, page_url: str) -> Optional[str]:
+    """First usable image from OG/Twitter meta tags, absolutized."""
+    for prop in _OG_IMAGE_PROPS:
+        value = _extract_meta(html, prop)
+        if value:
+            return _absolutize(value, page_url)
+    return None
+
+
+def _extract_image_from_imgs(html: str, page_url: str) -> Optional[str]:
+    """First plausible product image from ``<img>`` tags, absolutized.
+
+    Last-resort fallback: skips obvious non-product assets (logos, icons,
+    flags, sprites, inline data-URIs, SVGs) by URL heuristics.
+    """
+    for tag in re.findall(r"<img[^>]+>", html, re.IGNORECASE):
+        m = re.search(r'\bsrc=["\']([^"\']+)["\']', tag, re.IGNORECASE)
+        if not m:
+            continue
+        url = m.group(1).strip()
+        if not url:
+            continue
+        low = url.lower()
+        if low.startswith("data:") or any(h in low for h in _IMG_SKIP_HINTS):
+            continue
+        return _absolutize(url, page_url)
+    return None
+
+
+def _extract_woocommerce_price(html: str) -> Tuple[Optional[float], Optional[str]]:
+    """(price, currency) from WooCommerce price markup, else (None, None).
+
+    WooCommerce renders the price as::
+
+        <span class="woocommerce-Price-amount amount">
+          <bdi><span class="woocommerce-Price-currencySymbol">EGP </span>1,299.00</bdi>
+        </span>
+
+    which the visible-text regex misses when the currency marker is not
+    textually adjacent to the amount. On sale pages (``<del>`` old +
+    ``<ins>`` new) the *last* occurrence holds the current price, so the
+    last parseable match wins.
+    """
+    result: Tuple[Optional[float], Optional[str]] = (None, None)
+    for m in re.finditer(r'class="woocommerce-Price-amount[^"]*"[^>]*>', html):
+        # The amount follows the currency-symbol span inside <bdi>; a bounded
+        # window avoids reaching into unrelated markup.
+        window = html[m.end() : m.end() + 300]
+        sym = re.search(r'woocommerce-Price-currencySymbol[^>]*>([^<]+)<', window)
+        after = window[sym.end() :] if sym else window
+        num = re.search(r"(\d[\d,]*(?:\.\d+)?)", after)
+        if not num:
+            continue
+        price = _parse_amount(num.group(1))
+        currency = "EGP"
+        if sym:
+            s = sym.group(1).strip()
+            if s.upper() in ("USD", "$"):
+                currency = "USD"
+            else:
+                tok = re.search(r"[A-Za-z]{3}", s)
+                if tok:
+                    currency = tok.group(0).upper()
+        if price is not None:
+            result = (price, currency)
+    return result
+
+
+def _jsonld_offer_price(
+    prod: dict,
+) -> Tuple[Optional[float], Optional[str], Optional[str], Optional[str]]:
+    """(price, currency, title, image) from a Product JSON-LD node.
+
+    The first parseable price candidate wins (top-level ``price`` before
+    offers): a missing/zero/negative top-level price must not shadow a valid
+    offer price.
+    """
+    currency = prod.get("priceCurrency")
+    if not isinstance(currency, str):
+        currency = None
+    title = prod.get("name")
+    if not isinstance(title, str):
+        title = None
+    image_url = _first_image_url(prod.get("image"))
+
+    offers = prod.get("offers")
+    if isinstance(offers, dict):
+        offers = [offers]
+    elif not isinstance(offers, list):
+        offers = []
+    price_candidates: list = [prod.get("price")]
+    for offer in offers:
+        if not isinstance(offer, dict):
+            continue
+        if offer.get("price") is not None:
+            price_candidates.append(offer["price"])
+        if currency is None and isinstance(offer.get("priceCurrency"), str):
+            currency = offer["priceCurrency"]
+
+    price = next(
+        (v for v in map(_parse_amount, price_candidates) if v is not None),
+        None,
+    )
+    return price, currency, title, image_url
+
+
 def _extract_from_html(
-    html: str,
+    html: str, page_url: str = ""
 ) -> Optional[tuple[float, str, Optional[str], Optional[str]]]:
     """Best-effort extraction of ``(price, currency, title, image_url)``.
 
-    Parses the embedded JSON-LD **once** per page and tries, in order:
+    Tries, in order:
     1. The schema.org ``Product``/``Offer`` JSON-LD values (authoritative).
-    2. OpenGraph / product meta tags.
-    3. A regex over visible text for an EGP amount.
+    2. OpenGraph / product meta price tags.
+    3. WooCommerce price markup.
+    4. A regex over visible text for an EGP amount.
+
+    Image cascade: JSON-LD ``image`` → OG/Twitter meta → ``<img>`` scan.
+    All image URLs are resolved to absolute (see :func:`_absolutize`).
 
     Returns ``(price, currency, title, image_url)`` or ``None`` if no price
     could be determined.
@@ -157,33 +374,7 @@ def _extract_from_html(
 
     # 1. schema.org Product/Offer JSON-LD.
     if prod is not None:
-        raw_price: object = prod.get("price")
-        if isinstance(prod.get("priceCurrency"), str):
-            currency = prod["priceCurrency"]
-        if isinstance(prod.get("name"), str):
-            title = prod["name"]
-        image_url = _first_image_url(prod.get("image"))
-
-        offers = prod.get("offers")
-        if isinstance(offers, dict):
-            offers = [offers]
-        elif not isinstance(offers, list):
-            offers = []
-        price_candidates: list = [raw_price]
-        for offer in offers:
-            if not isinstance(offer, dict):
-                continue
-            if offer.get("price") is not None:
-                price_candidates.append(offer["price"])
-            if currency is None and isinstance(offer.get("priceCurrency"), str):
-                currency = offer["priceCurrency"]
-
-        # First parseable candidate wins; a missing/zero/negative top-level
-        # price must not shadow a valid offer price.
-        price = next(
-            (v for v in map(_parse_amount, price_candidates) if v is not None),
-            None,
-        )
+        price, currency, title, image_url = _jsonld_offer_price(prod)
 
     if price is None:
         # 2. Meta tags.
@@ -196,7 +387,15 @@ def _extract_from_html(
             price = _parse_amount(meta.group(1))
 
     if price is None:
-        # 3. Visible-text fallback: a number followed by an EGP marker.
+        # 3. WooCommerce markup.
+        woocommerce_price, woocommerce_currency = _extract_woocommerce_price(html)
+        if woocommerce_price is not None:
+            price = woocommerce_price
+            if currency is None:
+                currency = woocommerce_currency
+
+    if price is None:
+        # 4. Visible-text fallback: a number followed by an EGP marker.
         text = re.sub(r"<[^>]+>", " ", html)
         m = re.search(
             r"(\d+(?:,\d{3})*(?:\.\d{1,2})?)\s*(?:EGP|ج\.م|جنيه|£|pound)",
@@ -209,11 +408,18 @@ def _extract_from_html(
     if price is None:
         return None
 
-    # Title/image meta fallbacks (JSON-LD takes precedence).
+    # Title fallback (JSON-LD takes precedence).
     if title is None:
         title = _extract_meta(html, "og:title")
+
+    # Image fallbacks (JSON-LD takes precedence), then normalize whatever we
+    # found to an absolute URL the app can load directly.
     if image_url is None:
-        image_url = _extract_meta(html, "og:image")
+        image_url = _extract_image_from_meta(html, page_url)
+    if image_url is None:
+        image_url = _extract_image_from_imgs(html, page_url)
+    if image_url is not None and page_url:
+        image_url = _absolutize(image_url, page_url)
 
     # The app targets the Egyptian market; pages that omit priceCurrency
     # are assumed to quote EGP.
@@ -232,6 +438,29 @@ def _extract_meta(html: str, prop: str) -> Optional[str]:
     return m.group(1) if m else None
 
 
+def _looks_like_bot_wall(html: str) -> bool:
+    """Heuristic: a very small page with none of the usual product markers.
+
+    Cloudflare challenge/5xx landing pages and thin bot-walls are typically
+    well under 50 KB and contain no JSON-LD, no price markup and no EGP
+    markers. A real (even minimal) product page almost always carries at
+    least one of them.
+    """
+    if len(html) > 50_000:
+        return False
+    low = html.lower()
+    markers = (
+        "ld+json",
+        "og:price",
+        "woocommerce-price",
+        "product",
+        "price",
+        "egp",
+        "جنيه",
+    )
+    return not any(marker in low for marker in markers)
+
+
 _HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -242,21 +471,55 @@ _HEADERS = {
 }
 
 
-def _fetch_html_requests(url: str, timeout: int = 30) -> Optional[str]:
-    """Fetch page HTML with a standard browser User-Agent. ``None`` on any failure."""
-    """Fetch page HTML with ``requests`` (no browser required)."""
+def _url_candidates(url: str) -> list:
+    """Fetch-order candidates for [url].
+
+    For non-secure ``http://`` links the HTTPS upgrade is tried **first**
+    (many stores redirect or block cleartext); the original URL is the
+    fallback.
+    """
+    if url.startswith("http://"):
+        return [url.replace("http://", "https://", 1), url]
+    return [url]
+
+
+def _fetch_html_requests(
+    url: str, timeout: int = 30
+) -> Tuple[Optional[str], Optional[str]]:
+    """Fetch page HTML with a standard browser User-Agent.
+
+    Returns ``(html, None)`` on success or ``(None, reason)`` on any
+    failure — the reason is a short log-safe string such as ``"HTTP 521"``.
+    """
     try:
         import requests
     except ImportError:
-        return None
+        return None, "requests not installed"
     try:
         r = requests.get(url, headers=_HEADERS, timeout=timeout)
-        if r.status_code == 200:
-            return r.text
-        logger.warning("HTTP %s fetching %s", r.status_code, url)
     except Exception as exc:  # noqa: BLE001
         logger.warning("requests fetch failed for %s: %s", url, exc)
-    return None
+        return None, f"request error: {type(exc).__name__}"
+    if r.status_code == 200:
+        return r.text, None
+    logger.warning("HTTP %s fetching %s", r.status_code, url)
+    return None, f"HTTP {r.status_code}"
+
+
+# JS predicate for Playwright: true once a price indicator is in the DOM.
+# JS stores render prices late; waiting for this (capped at 8s) is more
+# reliable than a blind sleep and no longer when static content suffices.
+_PRICE_INDICATOR_JS = """
+() => {
+  return document.querySelector(
+    'script[type="application/ld+json"], '
+    '.woocommerce-Price-amount, '
+    '[class*="price"], '
+    'meta[property="og:price:amount"], '
+    'meta[property="product:price:amount"]'
+  ) !== null;
+}
+"""
 
 
 def _fetch_html_playwright(url: str, timeout_ms: int = 25000) -> Optional[str]:
@@ -277,8 +540,10 @@ def _fetch_html_playwright(url: str, timeout_ms: int = 25000) -> Optional[str]:
                 context = browser.new_context(user_agent=_HEADERS["User-Agent"])
                 page = context.new_page()
                 page.goto(url, timeout=timeout_ms, wait_until="domcontentloaded")
+                # Wait (capped) for a price indicator instead of a blind
+                # sleep; non-fatal when the page is static or blocked.
                 try:
-                    page.wait_for_timeout(3000)
+                    page.wait_for_function(_PRICE_INDICATOR_JS, timeout=8000)
                 except Exception:
                     pass
                 html = page.content()
@@ -288,40 +553,60 @@ def _fetch_html_playwright(url: str, timeout_ms: int = 25000) -> Optional[str]:
         return html
     except Exception as exc:  # noqa: BLE001
         logger.warning("Playwright fetch failed for %s: %s", url, exc)
-    return None
+        return None
 
 
-def fetch_price(url: str) -> Optional[FetchedPrice]:
-    """Fetch ``url`` and extract a price. Returns ``None`` on failure.
+def fetch_price(url: str) -> FetchResult:
+    """Fetch ``url`` and extract a price, classified (see :class:`FetchResult`).
 
     Tries a plain HTTP fetch first (fast, no browser); falls back to
-    headless Chromium for JS-rendered pages.
+    headless Chromium for JS-rendered pages. Non-secure ``http://`` URLs
+    are attempted over HTTPS first.
     """
     logger.info("Starting price fetch for %s", url)
-    html = _fetch_html_requests(url)
-    found = _extract_from_html(html) if html else None
+    candidates = _url_candidates(url)
 
+    html: Optional[str] = None
+    fetched_url: Optional[str] = None
+    last_reason: Optional[str] = None
+
+    for cand in candidates:
+        html, reason = _fetch_html_requests(cand)
+        if html is not None:
+            fetched_url = cand
+            break
+        last_reason = reason
+
+    if html is None:
+        for cand in candidates:
+            html = _fetch_html_playwright(cand)
+            if html is not None:
+                fetched_url = cand
+                break
+
+    if html is None:
+        reason = last_reason or "could not fetch page"
+        if last_reason and last_reason.startswith("HTTP "):
+            code = last_reason.split(" ", 1)[1]
+            if code in _BLOCKED_HTTP_CODES:
+                logger.warning("Blocked (HTTP %s) fetching %s", code, url)
+                return FetchResult(FETCH_BLOCKED, f"HTTP {code} from server")
+        logger.warning("Fetch failed for %s: %s", url, reason)
+        return FetchResult(FETCH_FAILED, reason)
+
+    found = _extract_from_html(html, fetched_url or url)
     if found is None:
-        logger.info(
-            "Requests fetch yielded no price for %s; "
-            "trying Playwright browser fallback",
-            url,
+        if _looks_like_bot_wall(html):
+            logger.warning("Bot wall suspected for %s", url)
+            return FetchResult(
+                FETCH_BLOCKED, "page looks bot-blocked (no product content)"
+            )
+        logger.warning("No price found in HTML for %s", url)
+        return FetchResult(
+            FETCH_NO_PRICE, "no price found on page — link may not be a product page"
         )
-        html_pw = _fetch_html_playwright(url)
-        if html_pw:
-            html = html_pw
-            found = _extract_from_html(html)
-
-    if not html:
-        logger.warning("Could not fetch HTML for %s via requests or Playwright", url)
-        return None
-
-    if not found:
-        logger.warning("No price found in HTML content for %s", url)
-        return None
 
     price, currency, title, image_url = found
-
     logger.info(
         "Price fetch succeeded for %s: price=%s %s, title=%s, image_url=%s",
         url,
@@ -330,18 +615,26 @@ def fetch_price(url: str) -> Optional[FetchedPrice]:
         title,
         image_url,
     )
-    return FetchedPrice(
-        price_local=price,
-        currency=currency,
-        title=title,
-        image_url=image_url,
+    return FetchResult(
+        FETCH_OK,
+        "",
+        FetchedPrice(
+            price_local=price,
+            currency=currency,
+            title=title,
+            image_url=image_url,
+        ),
     )
 
 
-def fetch_price_sync(url: str) -> Optional[FetchedPrice]:
-    """Blocking fetch for use in FastAPI background tasks."""
+def fetch_price_sync(url: str) -> FetchResult:
+    """Blocking fetch for use in FastAPI background tasks.
+
+    Always returns a classified :class:`FetchResult` (never raises, never
+    ``None``) so the caller can persist a meaningful status.
+    """
     try:
         return fetch_price(url)
     except Exception as exc:  # noqa: BLE001
         logger.exception("Price fetch failed for %s: %s", url, exc)
-        return None
+        return FetchResult(FETCH_FAILED, f"unexpected error: {type(exc).__name__}")

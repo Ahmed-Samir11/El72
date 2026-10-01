@@ -225,6 +225,13 @@ class AppLocalizationsEn extends AppLocalizations {
   String get fetchingPrice => 'Fetching live price...';
 
   @override
+  String get priceFetchFailed => 'Couldn\'t fetch the price - tap to retry.';
+
+  @override
+  String get notAProductPage =>
+      'This page doesn\'t look like a product - check the link.';
+
+  @override
   String genericLoadError(String error) {
     return 'Failed to load.\n$error';
   }

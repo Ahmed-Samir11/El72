@@ -2,7 +2,7 @@
 
 **Branch:** `fix/tracker-price-image-extraction` (off `main`)
 **Date:** 2026-10-02
-**Status:** Ready for implementation
+**Status:** Phase 1 implemented — PR open for review
 
 ---
 

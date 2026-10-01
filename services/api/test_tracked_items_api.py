@@ -302,15 +302,19 @@ def test_add_store_mapping_success_and_duplicate(client):
 def test_create_tracked_item_from_url(client, monkeypatch):
     api, session, user = client
     # Mock fetch_price_sync to simulate a successful price fetch
-    from services.api.price_fetcher import FetchedPrice
+    from services.api.price_fetcher import FETCH_OK, FetchedPrice, FetchResult
 
     monkeypatch.setattr(
         "services.api.tracked_items_api.fetch_price_sync",
-        lambda url: FetchedPrice(
-            price_local=1500.0,
-            currency="EGP",
-            title="Sample Item",
-            image_url="http://img.com/a.jpg",
+        lambda url: FetchResult(
+            FETCH_OK,
+            "",
+            FetchedPrice(
+                price_local=1500.0,
+                currency="EGP",
+                title="Sample Item",
+                image_url="http://img.com/a.jpg",
+            ),
         ),
     )
 
@@ -331,20 +335,38 @@ def test_persist_fetched_price_retry_logic(db_session, monkeypatch):
     )
     session.add(item)
     session.commit()
+    session.add(
+        TrackedItemStore(
+            tracked_item_id=item.id,
+            store_id="amazon_eg",
+            store_sku="SKU1",
+            store_url="https://amazon.eg/dp/123",
+        )
+    )
+    session.commit()
 
     attempts = 0
-    from services.api.price_fetcher import FetchedPrice
+    from services.api.price_fetcher import (
+        FETCH_FAILED,
+        FETCH_OK,
+        FetchedPrice,
+        FetchResult,
+    )
 
     def mock_fetch(url):
         nonlocal attempts
         attempts += 1
         if attempts < 2:
-            return None  # Fail first attempt
-        return FetchedPrice(
-            price_local=250.0,
-            currency="EGP",
-            title="Test Item",
-            image_url="https://img.com/b.jpg",
+            return FetchResult(FETCH_FAILED, "simulated failure")
+        return FetchResult(
+            FETCH_OK,
+            "",
+            FetchedPrice(
+                price_local=250.0,
+                currency="EGP",
+                title="Test Item",
+                image_url="https://img.com/b.jpg",
+            ),
         )
 
     monkeypatch.setattr("services.api.tracked_items_api.fetch_price_sync", mock_fetch)
@@ -381,6 +403,20 @@ def test_persist_fetched_price_retry_logic(db_session, monkeypatch):
     )
     assert lowest is not None
     assert lowest.store_id == "amazon_eg"
+    # The image captured with the price travels with the price rows.
+    assert price.image_url == "https://img.com/b.jpg"
+    assert lowest.image_url == "https://img.com/b.jpg"
+    # The store mapping records the successful fetch.
+    store_row = (
+        session.query(TrackedItemStore)
+        .filter(
+            TrackedItemStore.tracked_item_id == item_id,
+            TrackedItemStore.store_id == "amazon_eg",
+        )
+        .first()
+    )
+    assert store_row.last_fetch_status == "ok"
+    assert store_row.last_fetch_error is None
 
 
 def test_persist_fetched_price_retry_exhaustion(db_session, monkeypatch):
@@ -391,10 +427,21 @@ def test_persist_fetched_price_retry_exhaustion(db_session, monkeypatch):
     )
     session.add(item)
     session.commit()
+    session.add(
+        TrackedItemStore(
+            tracked_item_id=item.id,
+            store_id="amazon_eg",
+            store_sku="SKU1",
+            store_url="https://amazon.eg/dp/456",
+        )
+    )
+    session.commit()
+
+    from services.api.price_fetcher import FETCH_FAILED, FetchResult
 
     monkeypatch.setattr(
         "services.api.tracked_items_api.fetch_price_sync",
-        lambda url: None,
+        lambda url: FetchResult(FETCH_FAILED, "HTTP 503"),
     )
     monkeypatch.setattr("services.api.tracked_items_api._FETCH_MAX_RETRIES", 3)
     monkeypatch.setattr("time.sleep", lambda secs: None)
@@ -419,6 +466,150 @@ def test_persist_fetched_price_retry_exhaustion(db_session, monkeypatch):
         .count()
         == 0
     )
+    # The failure is recorded on the store mapping (visible to the app).
+    store_row = (
+        session.query(TrackedItemStore)
+        .filter(
+            TrackedItemStore.tracked_item_id == item_id,
+            TrackedItemStore.store_id == "amazon_eg",
+        )
+        .first()
+    )
+    assert store_row.last_fetch_status == "fetch_failed"
+    assert store_row.last_fetch_error == "HTTP 503"
+
+
+def test_persist_fetched_price_no_price_found_fails_fast(db_session, monkeypatch):
+    """A definitive no_price_found (e.g. a portfolio link) must not be
+    retried and must be recorded on the store mapping."""
+    session, user = db_session
+    item = TrackedItem(
+        user_id=user.id, canonical_product_id="noprice-test-item", is_active=True
+    )
+    session.add(item)
+    session.commit()
+    session.add(
+        TrackedItemStore(
+            tracked_item_id=item.id,
+            store_id="unknown",
+            store_sku="portfolio",
+            store_url="https://example.com/my-portfolio",
+        )
+    )
+    session.commit()
+
+    attempts = 0
+    from services.api.price_fetcher import FETCH_NO_PRICE, FetchResult
+
+    def mock_fetch(url):
+        nonlocal attempts
+        attempts += 1
+        return FetchResult(
+            FETCH_NO_PRICE, "no price found on page — link may not be a product page"
+        )
+
+    monkeypatch.setattr("services.api.tracked_items_api.fetch_price_sync", mock_fetch)
+    monkeypatch.setattr("services.api.tracked_items_api._FETCH_MAX_RETRIES", 3)
+    monkeypatch.setattr("time.sleep", lambda secs: None)
+    monkeypatch.setattr("services.api.tracked_items_api.SessionLocal", lambda: session)
+
+    from services.api.tracked_items_api import _persist_fetched_price
+
+    item_id = item.id
+    _persist_fetched_price(
+        item_id, "unknown", "https://example.com/my-portfolio", "noprice-test-item"
+    )
+
+    # No retry for a definitive "no price on page".
+    assert attempts == 1
+    assert (
+        session.query(CurrentPrice)
+        .filter(CurrentPrice.tracked_item_id == item_id)
+        .count()
+        == 0
+    )
+    store_row = (
+        session.query(TrackedItemStore)
+        .filter(
+            TrackedItemStore.tracked_item_id == item_id,
+            TrackedItemStore.store_id == "unknown",
+        )
+        .first()
+    )
+    assert store_row.last_fetch_status == "no_price_found"
+    assert "product" in store_row.last_fetch_error
+
+
+def test_list_tracked_items_exposes_fetch_status(client, db_session):
+    """GET /tracked-items surfaces the aggregated fetch status so the app can
+    distinguish fetching / failed / not-a-product-page."""
+    api, session, user = client
+
+    def make_item(canonical, status, error):
+        item = TrackedItem(
+            user_id=user.id, canonical_product_id=canonical, is_active=True
+        )
+        session.add(item)
+        session.commit()
+        session.refresh(item)
+        store = TrackedItemStore(
+            tracked_item_id=item.id,
+            store_id="amazon_eg",
+            store_sku="S",
+            store_url="https://amazon.eg/dp/S",
+            last_fetch_status=status,
+            last_fetch_error=error,
+        )
+        session.add(store)
+        session.commit()
+        return item
+
+    make_item("bad-link-item", "no_price_found", "no price found on page")
+    make_item("blocked-item", "blocked", "HTTP 521 from server")
+    make_item("fresh-item", None, None)  # never fetched yet
+
+    resp = api.get("/tracked-items")
+    assert resp.status_code == 200
+    by_id = {row["canonical_product_id"]: row for row in resp.json()}
+
+    assert by_id["bad-link-item"]["fetch_status"] == "no_price_found"
+    assert by_id["bad-link-item"]["fetch_error"] == "no price found on page"
+    assert by_id["blocked-item"]["fetch_status"] == "blocked"
+    assert by_id["blocked-item"]["fetch_error"] == "HTTP 521 from server"
+    # No status yet (fetch in flight) -> reported ok / no error; the UI keeps
+    # its "fetching" state when lowest_price is still absent.
+    assert by_id["fresh-item"]["fetch_status"] == "ok"
+    assert by_id["fresh-item"]["fetch_error"] is None
+
+
+def test_list_tracked_items_lowest_price_image_from_row(client, db_session):
+    """The list endpoint serves the image persisted on the lowest-price row
+    (no dependency on the best-effort price_history lookup)."""
+    api, session, user = client
+    item = TrackedItem(
+        user_id=user.id, canonical_product_id="image-item", is_active=True
+    )
+    session.add(item)
+    session.commit()
+    session.refresh(item)
+    lowest = LowestPrice(
+        tracked_item_id=item.id,
+        store_id="compumarts_eg",
+        price_usd=345.6,
+        price_local=10800.0,
+        currency="EGP",
+        url="https://www.compumarts.com/lenovo-r27qe-monitor",
+        image_url="https://www.compumarts.com/cdn/shop/files/monitor.jpg",
+    )
+    session.add(lowest)
+    session.commit()
+
+    resp = api.get("/tracked-items")
+    assert resp.status_code == 200
+    row = resp.json()[0]
+    assert row["lowest_price"]["image_url"] == (
+        "https://www.compumarts.com/cdn/shop/files/monitor.jpg"
+    )
 
 
 def test_persist_fetched_price_handles_fetch_exception(db_session, monkeypatch):
@@ -428,6 +619,15 @@ def test_persist_fetched_price_handles_fetch_exception(db_session, monkeypatch):
         user_id=user.id, canonical_product_id="exc-test-item", is_active=True
     )
     session.add(item)
+    session.commit()
+    session.add(
+        TrackedItemStore(
+            tracked_item_id=item.id,
+            store_id="amazon_eg",
+            store_sku="SKU1",
+            store_url="https://amazon.eg/dp/789",
+        )
+    )
     session.commit()
 
     def boom(url):
@@ -451,6 +651,17 @@ def test_persist_fetched_price_handles_fetch_exception(db_session, monkeypatch):
         .count()
         == 0
     )
+    # The unexpected error is surfaced as fetch_failed on the store mapping.
+    store_row = (
+        session.query(TrackedItemStore)
+        .filter(
+            TrackedItemStore.tracked_item_id == item_id,
+            TrackedItemStore.store_id == "amazon_eg",
+        )
+        .first()
+    )
+    assert store_row.last_fetch_status == "fetch_failed"
+    assert "RuntimeError" in (store_row.last_fetch_error or "")
 
 
 def test_create_access_token_default_expiry_is_7_days():
@@ -493,8 +704,11 @@ def test_refresh_tracked_item_price(client, db_session, monkeypatch):
     """Refresh triggers a background fetch and throttles rapid re-runs even
     when no price has ever been persisted (the fetch-failure spam path)."""
     # TestClient executes background tasks inline; keep them off the network.
+    from services.api.price_fetcher import FETCH_FAILED, FetchResult
+
     monkeypatch.setattr(
-        "services.api.tracked_items_api.fetch_price_sync", lambda url: None
+        "services.api.tracked_items_api.fetch_price_sync",
+        lambda url: FetchResult(FETCH_FAILED, "simulated failure"),
     )
     monkeypatch.setattr("services.api.tracked_items_api._refresh_attempts", {})
     api, session, user = client

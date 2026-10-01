@@ -125,6 +125,10 @@
 
   "fetchingPrice": "جارٍ جلب السعر المباشر...",
 
+  "priceFetchFailed": "تعذّر جلب السعر - اضغط للمحاولة مرة أخرى.",
+
+  "notAProductPage": "هذه الصفحة لا تبدو كصفحة منتج - تحقق من الرابط.",
+
   "genericLoadError": "فشل في التحميل.\n{error}",
   "@genericLoadError": {
     "placeholders": {

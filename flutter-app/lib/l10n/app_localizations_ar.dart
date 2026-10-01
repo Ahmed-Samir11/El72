@@ -225,6 +225,13 @@ class AppLocalizationsAr extends AppLocalizations {
   String get fetchingPrice => 'جارٍ جلب السعر المباشر...';
 
   @override
+  String get priceFetchFailed => 'تعذّر جلب السعر - اضغط للمحاولة مرة أخرى.';
+
+  @override
+  String get notAProductPage =>
+      'هذه الصفحة لا تبدو كصفحة منتج - تحقق من الرابط.';
+
+  @override
   String genericLoadError(String error) {
     return 'فشل في التحميل.\n$error';
   }
