@@ -1,116 +1,202 @@
-"""Manual payment endpoints (bridge flow, pre-Paymob).
+"""Payment router — manual payment bridge (pre-Paymob).
 
-User-facing:
-  POST /payment/manual          → Create a pending order
-  GET  /payment/manual/{id}     → Check own order status
+Implements the manual payment flow from plans/paymob-integration.md:
+- POST /payment/manual — user submits "I've paid" (creates pending order)
+- GET /payment/manual/{order_ref} — owner-only status lookup
+- POST /admin/login — separate admin credential (not a user tier)
+- GET /admin/payments — admin list (masked phone numbers by default)
+- GET /admin/payments/{order_ref}/contact — audited full-contact reveal
+- POST /admin/payments/{order_ref}/approve — idempotent, concurrency-safe
+- POST /admin/payments/{order_ref}/reject — with reason, audited
 
-Admin:
-  GET  /admin/payments          → List payments (filterable)
-  POST /admin/payments/{id}/approve  → Approve (grants credits)
-  POST /admin/payments/{id}/reject    → Reject (notifies user)
+Security properties:
+- Package pricing is server-determined from an allowlist (no client amounts).
+- Admin endpoints require a separate admin credential (JWT with
+  sub="admin:<username>"), never a user tier.
+- Approve/reject use an atomic compare-and-swap status update so concurrent
+  requests can only grant credits once.
+- Every admin action is written to the append-only payment_audit_log table.
 """
-
-from __future__ import annotations
 
 import logging
 import secrets
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.security import HTTPAuthorizationCredentials
+from jose import JWTError, jwt
 from pydantic import BaseModel
+from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from services.api.credits import grant
-from services.api.dependencies import get_current_user, get_db
-from services.api.manual_payment_models import ManualPayment
+from services.api.admin_models import Admin
+from services.api.credits import get_balance, grant
+from services.api.dependencies import (
+    ALGORITHM,
+    SECRET_KEY,
+    create_access_token,
+    get_current_user,
+    get_db,
+    pwd_context,
+    security,
+)
+from services.api.manual_payment_models import ManualPayment, PaymentAuditLog
 from services.api.models import User
+from services.api.routers.auth import Token
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["Payment"])
+router = APIRouter()
 
-# Package pricing (must match billing service)
-PACKAGE_PRICES: dict[str, float] = {
+# Package pricing (server-determined — clients never send amounts)
+PACKAGE_PRICING = {
     "standard": 30.0,
     "premium": 90.0,
 }
-PACKAGE_CREDITS: dict[str, int] = {
+
+CREDITS_BY_PACKAGE = {
     "standard": 10,
     "premium": 30,
 }
 
-# Rate limiting: max pending orders per user per day
 MAX_PENDING_PER_DAY = 3
 
 
 def _utcnow() -> datetime:
-    """Naive UTC now (matches the codebase's naive-UTC datetime convention)."""
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    """Timezone-aware UTC now."""
+    return datetime.now(timezone.utc)
 
 
 def _generate_order_ref() -> str:
     """Generate a unique, unguessable order reference.
 
-    Format: ELH-{YYYYMMDD}-{random_hex_5}
+    Format: ELH-{YYYYMMDD}-{random_hex_6}
     """
     date_part = _utcnow().strftime("%Y%m%d")
     random_part = secrets.token_hex(3)  # 6 hex chars
     return f"ELH-{date_part}-{random_part}"
 
 
+def _mask_phone(phone: str) -> str:
+    """Mask a phone number for admin list views (keep prefix + last 2)."""
+    if len(phone) <= 5:
+        return phone[:2] + "****"
+    return phone[:3] + "*" * (len(phone) - 5) + phone[-2:]
+
+
+def _audit_entry(
+    db: Session,
+    admin: Admin,
+    target_user_id: str,
+    order_ref: str,
+    action: str,
+    request: Request,
+) -> None:
+    """Append an audit entry (no UPDATE/DELETE path exists for this table)."""
+    client_ip = request.client.host if request.client else None
+    db.add(
+        PaymentAuditLog(
+            action=action,
+            actor_id=str(admin.id),
+            target_user_id=target_user_id,
+            order_ref=order_ref,
+            client_ip=client_ip,
+        )
+    )
+
+
+def _get_admin_payment(db: Session, order_ref: str) -> ManualPayment:
+    payment = (
+        db.query(ManualPayment).filter(ManualPayment.order_ref == order_ref).first()
+    )
+    if payment is None:
+        raise HTTPException(status_code=404, detail="Payment not found")
+    return payment
+
+
+# ---------------------------------------------------------------------------
+# Admin authentication (separate credential, not a user tier)
+# ---------------------------------------------------------------------------
+
+
+class AdminLogin(BaseModel):
+    username: str
+    password: str
+
+
+def get_current_admin(
+    token: HTTPAuthorizationCredentials = Depends(security),
+    db: Session = Depends(get_db),
+):
+    """Validate an admin JWT (sub='admin:<username>') against the admins table."""
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate admin credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token.credentials, SECRET_KEY, algorithms=[ALGORITHM])
+        sub = payload.get("sub", "")
+    except JWTError:
+        raise credentials_exception from None
+    if not sub.startswith("admin:"):
+        raise credentials_exception
+    admin = db.query(Admin).filter(Admin.username == sub[len("admin:") :]).first()
+    if admin is None:
+        raise credentials_exception
+    return admin
+
+
+@router.post("/admin/login", response_model=Token)
+def admin_login(body: AdminLogin, db: Session = Depends(get_db)):
+    """Login with a separate admin credential (not a user account)."""
+    admin = db.query(Admin).filter(Admin.username == body.username).first()
+    if not admin or not pwd_context.verify(body.password, admin.password_hash):
+        raise HTTPException(status_code=401, detail="Invalid admin credentials")
+    access_token = create_access_token(data={"sub": f"admin:{admin.username}"})
+    return {"access_token": access_token, "token_type": "bearer"}
+
+
+# ---------------------------------------------------------------------------
+# User endpoints
+# ---------------------------------------------------------------------------
+
+
 class ManualPaymentCreate(BaseModel):
-    package: str
+    package: str  # "standard" | "premium"
 
 
-class ManualPaymentResponse(BaseModel):
-    order_id: str
-    order_ref: str
-    package: str
-    amount_egp: float
-    status: str
-    created_at: str
-
-
-class AdminPaymentResponse(BaseModel):
-    order_id: str
-    order_ref: str
-    user_phone: str
-    package: str
-    amount_egp: float
-    status: str
-    created_at: str
-
-
-class RejectRequest(BaseModel):
-    reason: str = "Payment not received"
-
-
-@router.post("/payment/manual", response_model=ManualPaymentResponse)
+@router.post("/payment/manual", response_model=dict)
 def create_manual_payment(
     body: ManualPaymentCreate,
-    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     """Create a pending manual payment order.
 
-    Security:
-    - Rate limited: max 3 pending per user per day
-    - Package validated against allowlist
-    - Amount is server-determined (not user-supplied)
+    Pricing is server-determined from the package allowlist — the client
+    never sends an amount. Rate-limited to 3 pending orders per day.
     """
-    # Validate package
-    if body.package not in PACKAGE_PRICES:
+    # Validate package (server-side allowlist)
+    if body.package not in PACKAGE_PRICING:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid package. Must be one of: {list(PACKAGE_PRICES.keys())}",
+            status_code=400, detail="Invalid package. Available: standard, premium"
         )
+
+    amount = PACKAGE_PRICING[body.package]
+
+    # Lock the user row to serialize this user's pending-order creation
+    # (makes the per-day rate limit concurrency-safe).
+    db.execute(select(User).where(User.id == user.id).with_for_update())
 
     # Rate limit: check pending orders today
     today_start = _utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
     pending_count = (
         db.query(ManualPayment)
         .filter(
-            ManualPayment.user_id == current_user.id,
+            ManualPayment.user_id == user.id,
             ManualPayment.status == "pending",
             ManualPayment.created_at >= today_start,
         )
@@ -118,235 +204,279 @@ def create_manual_payment(
     )
     if pending_count >= MAX_PENDING_PER_DAY:
         raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Too many pending payments today. Please try again tomorrow.",
+            status_code=429,
+            detail="Rate limit: maximum 3 pending manual payments per day",
         )
 
-    # Create order
-    order_ref = _generate_order_ref()
-    payment = ManualPayment(
-        order_ref=order_ref,
-        user_id=current_user.id,
-        package=body.package,
-        amount_egp=PACKAGE_PRICES[body.package],
-        status="pending",
-    )
-    db.add(payment)
-    db.commit()
-    db.refresh(payment)
+    # Create the payment with a retry on order_ref collision.
+    for _attempt in range(3):
+        order_ref = _generate_order_ref()
+        payment = ManualPayment(
+            order_ref=order_ref,
+            user_id=user.id,
+            package=body.package,
+            amount_egp=amount,
+            status="pending",
+        )
+        db.add(payment)
+        try:
+            db.commit()
+            break
+        except IntegrityError:
+            db.rollback()
+    else:
+        raise HTTPException(
+            status_code=500, detail="Could not allocate an order reference"
+        )
 
-    logger.info(
-        "Manual payment created",
-        extra={
-            "order_ref": order_ref,
-            "user_id": str(current_user.id),
-            "package": body.package,
-        },
-    )
-
-    return ManualPaymentResponse(
-        order_id=str(payment.id),
-        order_ref=payment.order_ref,
-        package=payment.package,
-        amount_egp=float(payment.amount_egp),
-        status=payment.status,
-        created_at=payment.created_at.isoformat(),
-    )
+    return {
+        "id": str(payment.id),
+        "order_ref": payment.order_ref,
+        "package": payment.package,
+        "amount_egp": float(payment.amount_egp),
+        "status": payment.status,
+        "created_at": payment.created_at.isoformat(),
+    }
 
 
-@router.get("/payment/manual/{order_id}", response_model=ManualPaymentResponse)
+@router.get("/payment/manual/{order_ref}", response_model=dict)
 def get_manual_payment(
-    order_id: int,
-    current_user: User = Depends(get_current_user),
+    order_ref: str,
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
-    """Get a manual payment order (owner only).
-
-    Security: user can only access their own orders.
-    """
+    """Get manual payment status (owner only)."""
     payment = (
         db.query(ManualPayment)
-        .filter(ManualPayment.id == order_id, ManualPayment.user_id == current_user.id)
+        .filter(
+            ManualPayment.order_ref == order_ref,
+            ManualPayment.user_id == user.id,
+        )
         .first()
     )
     if payment is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Payment not found"
-        )
+        # 404 (not 403) to avoid leaking that an order exists for someone else.
+        raise HTTPException(status_code=404, detail="Payment not found")
 
-    return ManualPaymentResponse(
-        order_id=str(payment.id),
-        order_ref=payment.order_ref,
-        package=payment.package,
-        amount_egp=float(payment.amount_egp),
-        status=payment.status,
-        created_at=payment.created_at.isoformat(),
-    )
-
-
-# --- Admin endpoints ---
+    return {
+        "id": str(payment.id),
+        "order_ref": payment.order_ref,
+        "package": payment.package,
+        "amount_egp": float(payment.amount_egp),
+        "status": payment.status,
+        "reject_reason": payment.reject_reason,
+        "created_at": payment.created_at.isoformat(),
+        "resolved_at": payment.resolved_at.isoformat() if payment.resolved_at else None,
+    }
 
 
-def _get_admin_user(
-    current_user: User = Depends(get_current_user),
-) -> User:
-    """Admin authorization: user must have admin tier.
+# ---------------------------------------------------------------------------
+# Admin endpoints (separate admin credential)
+# ---------------------------------------------------------------------------
 
-    For v0, admin is identified by tier == "admin". In production,
-    this will be replaced with a separate admin token system.
-    """
-    if current_user.tier != "admin":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin access required",
-        )
-    return current_user
+
+class AdminPaymentResponse(BaseModel):
+    id: str
+    order_ref: str
+    user_phone_masked: str
+    package: str
+    amount_egp: float
+    status: str
+    reject_reason: Optional[str] = None
+    created_at: str
+    resolved_at: Optional[str] = None
 
 
 @router.get("/admin/payments", response_model=list[AdminPaymentResponse])
-def list_admin_payments(
-    status_filter: str | None = Query(None, alias="status"),
-    date_from: str | None = Query(None, alias="date_from"),
-    date_to: str | None = Query(None, alias="date_to"),
-    admin: User = Depends(_get_admin_user),
+def list_manual_payments(
     db: Session = Depends(get_db),
+    admin: Admin = Depends(get_current_admin),
+    status_filter: Optional[str] = None,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
 ):
-    """List payments for admin (filterable)."""
-    query = db.query(ManualPayment).join(User, ManualPayment.user_id == User.id)
+    """List manual payments for admins (phone numbers masked by default).
 
+    Invalid date filter values are rejected by FastAPI with a 422.
+    """
+    query = db.query(ManualPayment, User).join(User, ManualPayment.user_id == User.id)
     if status_filter:
         query = query.filter(ManualPayment.status == status_filter)
-    if date_from:
+    if date_from is not None:
         query = query.filter(
-            ManualPayment.created_at >= datetime.fromisoformat(date_from)
+            ManualPayment.created_at
+            >= datetime.combine(date_from, datetime.min.time(), tzinfo=timezone.utc)
         )
-    if date_to:
+    if date_to is not None:
         query = query.filter(
-            ManualPayment.created_at <= datetime.fromisoformat(date_to)
+            ManualPayment.created_at
+            <= datetime.combine(date_to, datetime.max.time(), tzinfo=timezone.utc)
         )
 
     payments = query.order_by(ManualPayment.created_at.desc()).limit(100).all()
 
     return [
-        AdminPaymentResponse(
-            order_id=str(p.id),
-            order_ref=p.order_ref,
-            user_phone=p.user.phone if p.user else "unknown",
-            package=p.package,
-            amount_egp=float(p.amount_egp),
-            status=p.status,
-            created_at=p.created_at.isoformat(),
-        )
-        for p in payments
+        {
+            "id": str(p.id),
+            "order_ref": p.order_ref,
+            "user_phone_masked": _mask_phone(user.phone),
+            "package": p.package,
+            "amount_egp": float(p.amount_egp),
+            "status": p.status,
+            "reject_reason": p.reject_reason,
+            "created_at": p.created_at.isoformat(),
+            "resolved_at": p.resolved_at.isoformat() if p.resolved_at else None,
+        }
+        for p, user in payments
     ]
 
 
-@router.post("/admin/payments/{order_id}/approve")
-def approve_payment(
-    order_id: int,
-    admin: User = Depends(_get_admin_user),
+@router.get("/admin/payments/{order_ref}/contact", response_model=dict)
+def reveal_payment_contact(
+    request: Request,
+    order_ref: str,
     db: Session = Depends(get_db),
+    admin: Admin = Depends(get_current_admin),
 ):
-    """Approve a manual payment. Grants credits.
-
-    Security:
-    - Idempotent: approving an already-approved payment is a no-op
-    - Atomic: credit grant + status update in same transaction
-    - Audited: logged with admin id
-    """
-    payment = db.query(ManualPayment).filter(ManualPayment.id == order_id).first()
-    if payment is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Payment not found"
-        )
-
-    # Idempotency: already approved
-    if payment.status == "approved":
-        return {"status": "approved", "message": "Already approved (idempotent)"}
-
-    if payment.status == "rejected":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot approve a rejected payment",
-        )
-
-    # Get user
+    """Reveal the full phone number for one payment (audited action)."""
+    payment = _get_admin_payment(db, order_ref)
     user = db.query(User).filter(User.id == payment.user_id).first()
     if user is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="User not found"
-        )
-
-    # Grant credits (atomic with status update)
-    credits_to_grant = PACKAGE_CREDITS.get(payment.package, 0)
-    if credits_to_grant <= 0:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Unknown package: {payment.package}",
-        )
-
-    grant(db, user, credits_to_grant, reason=f"manual_{payment.package}")
-    payment.status = "approved"
-    payment.resolved_at = _utcnow()
-    payment.resolved_by = admin.id
-    db.commit()
-
-    logger.info(
-        "Manual payment approved",
-        extra={
-            "order_ref": payment.order_ref,
-            "user_id": str(user.id),
-            "admin_id": str(admin.id),
-            "credits_granted": credits_to_grant,
-        },
+        raise HTTPException(status_code=404, detail="User not found")
+    _audit_entry(
+        db, admin, payment.user_id, payment.order_ref, "reveal_contact", request
     )
+    db.commit()
+    return {
+        "order_ref": payment.order_ref,
+        "user_phone": user.phone,
+    }
 
-    return {"status": "approved", "credits_granted": credits_to_grant}
+
+class RejectBody(BaseModel):
+    reason: str
 
 
-@router.post("/admin/payments/{order_id}/reject")
-def reject_payment(
-    order_id: int,
-    body: RejectRequest,
-    admin: User = Depends(_get_admin_user),
+@router.post("/admin/payments/{order_ref}/approve", response_model=dict)
+def approve_manual_payment(
+    request: Request,
+    order_ref: str,
     db: Session = Depends(get_db),
+    admin: Admin = Depends(get_current_admin),
 ):
-    """Reject a manual payment.
+    """Approve a pending manual payment and grant credits.
 
-    Security:
-    - Idempotent: rejecting an already-rejected payment is a no-op
-    - Reason required (logged)
+    Concurrency-safe: the pending->approved transition is an atomic
+    compare-and-swap; only the winning request grants credits. The status
+    update, credit grant, and audit entry commit as one transaction.
     """
-    payment = db.query(ManualPayment).filter(ManualPayment.id == order_id).first()
-    if payment is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Payment not found"
-        )
-
-    # Idempotency
-    if payment.status == "rejected":
-        return {"status": "rejected", "message": "Already rejected (idempotent)"}
-
+    payment = _get_admin_payment(db, order_ref)
     if payment.status == "approved":
+        # Idempotent: already approved.
+        return {
+            "id": str(payment.id),
+            "order_ref": payment.order_ref,
+            "status": "approved",
+            "message": "Payment already approved (idempotent)",
+        }
+    if payment.status != "pending":
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot reject an approved payment",
+            status_code=400,
+            detail=f"Cannot approve payment in '{payment.status}' state",
         )
 
-    payment.status = "rejected"
-    payment.reject_reason = body.reason
-    payment.resolved_at = _utcnow()
-    payment.resolved_by = admin.id
+    user = db.query(User).filter(User.id == payment.user_id).first()
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Atomically claim the pending -> approved transition.
+    result = db.execute(
+        update(ManualPayment)
+        .where(
+            ManualPayment.id == payment.id,
+            ManualPayment.status == "pending",
+        )
+        .values(
+            status="approved",
+            resolved_at=_utcnow(),
+            resolved_by=str(admin.id),
+        )
+    )
+    if result.rowcount == 0:
+        # Lost the race to a concurrent approve.
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Payment was concurrently resolved")
+
+    # We won the transition: grant credits + audit in the same transaction.
+    credits_to_grant = CREDITS_BY_PACKAGE[payment.package]
+    grant(db, user, credits_to_grant, reason=f"manual_{payment.package}")
+    _audit_entry(db, admin, payment.user_id, payment.order_ref, "approve", request)
     db.commit()
 
     logger.info(
-        "Manual payment rejected",
-        extra={
-            "order_ref": payment.order_ref,
-            "user_id": str(payment.user_id),
-            "admin_id": str(admin.id),
-            "reason": body.reason,
-        },
+        "Approved manual payment %s for user %s (%d credits)",
+        payment.order_ref,
+        user.id,
+        credits_to_grant,
     )
 
-    return {"status": "rejected", "reason": body.reason}
+    return {
+        "id": str(payment.id),
+        "order_ref": payment.order_ref,
+        "status": "approved",
+        "credits_granted": credits_to_grant,
+        "new_balance": get_balance(db, user),
+    }
+
+
+@router.post("/admin/payments/{order_ref}/reject", response_model=dict)
+def reject_manual_payment(
+    request: Request,
+    order_ref: str,
+    body: RejectBody,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(get_current_admin),
+):
+    """Reject a pending manual payment with a reason (audited)."""
+    payment = _get_admin_payment(db, order_ref)
+    if payment.status == "rejected":
+        return {
+            "id": str(payment.id),
+            "order_ref": payment.order_ref,
+            "status": "rejected",
+            "message": "Payment already rejected (idempotent)",
+        }
+    if payment.status != "pending":
+        raise HTTPException(
+            status_code=400, detail=f"Cannot reject payment in '{payment.status}' state"
+        )
+
+    # Atomically claim the pending -> rejected transition.
+    result = db.execute(
+        update(ManualPayment)
+        .where(
+            ManualPayment.id == payment.id,
+            ManualPayment.status == "pending",
+        )
+        .values(
+            status="rejected",
+            reject_reason=body.reason,
+            resolved_at=_utcnow(),
+            resolved_by=str(admin.id),
+        )
+    )
+    if result.rowcount == 0:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Payment was concurrently resolved")
+
+    _audit_entry(db, admin, payment.user_id, payment.order_ref, "reject", request)
+    db.commit()
+
+    logger.info("Rejected manual payment %s: %s", payment.order_ref, body.reason)
+
+    return {
+        "id": str(payment.id),
+        "order_ref": payment.order_ref,
+        "status": "rejected",
+        "reject_reason": body.reason,
+    }

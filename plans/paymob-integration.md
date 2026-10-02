@@ -45,28 +45,43 @@ approves the payment. No payment gateway involved.
 
 ### API Contract
 
+`order_ref` (e.g. `ELH-20250101-a3f2b1`) is the public order identifier in all
+endpoints; the internal UUID `id` is opaque to clients and admins. Admin
+endpoints require a separate admin credential (`POST /admin/login`), never a
+user tier. Every admin action writes an append-only entry to
+`payment_audit_log`.
+
 ```
 POST /payment/manual
   Auth: Bearer token (logged-in user)
-  Body: { "package": "standard" | "premium" }
-  Response: { "order_id": "ELH-20250101-001", "status": "pending" }
+  Body: { "package": "standard" | "premium" }   # pricing is server-determined
+  Response: { "id", "order_ref", "package", "amount_egp", "status": "pending" }
 
-GET /payment/manual/{order_id}
-  Auth: Bearer token (owner only)
-  Response: { "order_id", "package", "amount_egp", "status", "created_at" }
+GET /payment/manual/{order_ref}
+  Auth: Bearer token (owner only; 404 for other users' orders)
+  Response: { "id", "order_ref", "package", "amount_egp", "status", "reject_reason" }
 
-POST /admin/payments/{order_id}/approve
-  Auth: Admin token
-  Response: { "status": "approved" }
+POST /admin/login
+  Body: { "username", "password" }   # separate admin credential
+  Response: { "access_token", "token_type" }
 
-POST /admin/payments/{order_id}/reject
-  Auth: Admin token
+GET /admin/payments?status=pending&date_from=...&date_to=...
+  Auth: Admin token (422 on invalid dates)
+  Response: [ { "id", "order_ref", "user_phone_masked", "package", "amount_egp", "created_at" } ]
+
+GET /admin/payments/{order_ref}/contact
+  Auth: Admin token — audited full-contact reveal
+  Response: { "order_ref", "user_phone" }
+
+POST /admin/payments/{order_ref}/approve
+  Auth: Admin token — idempotent, concurrency-safe (atomic CAS)
+  Effect: pending->approved + credit grant + audit entry in one transaction
+  Response: { "id", "order_ref", "status": "approved", "credits_granted", "new_balance" }
+
+POST /admin/payments/{order_ref}/reject
+  Auth: Admin token — with reason, audited
   Body: { "reason": "..." }
-  Response: { "status": "rejected" }
-
-GET /admin/payments?status=pending
-  Auth: Admin token
-  Response: [ { "order_id", "user_phone", "package", "amount_egp", "created_at" } ]
+  Response: { "id", "order_ref", "status": "rejected", "reject_reason" }
 ```
 
 ### Security Requirements
@@ -74,9 +89,10 @@ GET /admin/payments?status=pending
 | # | Threat | Mitigation |
 |---|--------|-----------|
 | 0.1 | User submits multiple "I've Paid" for same package | Rate limit: max 3 pending orders per user per day. Additional submissions return 429. |
-| 0.2 | Admin endpoint abuse | Admin auth requires separate admin token (not user JWT). IP-allowlisted or TOTP-protected. |
-| 0.3 | Order ID enumeration | Order IDs are sequential but unguessable (include random suffix). User can only query their own orders. |
-| 0.4 | Credit double-grant | Approval is idempotent: `approve` on an already-approved order returns 200 with no side effect. DB constraint: one approved payment per order. |
+| 0.2 | Admin endpoint abuse | Admin auth requires a separate admin credential (not a user tier/JWT): `admins` table + `POST /admin/login`. Admin actions are written to the append-only `payment_audit_log`. |
+| 0.3 | Order ID enumeration | `order_ref` includes a random hex suffix (`secrets.token_hex`). Users can only query their own orders (404 otherwise). |
+| 0.4 | Credit double-grant | Approval is idempotent AND concurrency-safe: pending->approved is an atomic compare-and-swap; only the winning request grants credits, in the same transaction as the audit entry. |
+| 0.5 | PII exposure in admin lists | Phone numbers are masked by default; full contact requires an explicit, audited `reveal_contact` action. |
 | 0.5 | Payment details leakage | IBAN/wallet shown only to authenticated users. Not in public API. Logged access. |
 | 0.6 | No audit trail | Every approve/reject logged with admin ID, timestamp, IP. Immutable log table. |
 

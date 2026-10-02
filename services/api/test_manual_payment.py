@@ -1,369 +1,465 @@
-"""Tests for manual payment endpoints (Feature 0).
+"""Tests for the manual payment flow (pre-Paymob bridge).
 
 Covers:
-- Creating a manual payment order
-- Rate limiting (max 3 pending per day)
-- Package validation
-- Order lookup (owner only)
-- Admin approval (grants credits, idempotent)
-- Admin rejection (idempotent)
-- Admin authorization (non-admin rejected)
+- POST /payment/manual (server-determined pricing, rate limit)
+- GET /payment/manual/{order_ref} (owner only)
+- POST /admin/login (separate admin credential)
+- GET /admin/payments (masked phones, date filters)
+- GET /admin/payments/{order_ref}/contact (audited reveal)
+- POST /admin/payments/{order_ref}/approve (idempotent, concurrency-safe)
+- POST /admin/payments/{order_ref}/reject (reason persisted, audited)
+- payment_audit_log entries for every admin action
 """
 
-from __future__ import annotations
-
-import os
-from datetime import datetime, timezone
-
-os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
-
 import pytest
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from services.api.dependencies import get_current_user, get_db
-from services.api.manual_payment_models import ManualPayment
-from services.api.models import Base as ApiBase
-from services.api.models import User, UserCredit
-from services.api.routers.payment import router as payment_router
+from services.api.admin_models import Admin
+from services.api.dependencies import get_db, get_password_hash
+from services.api.main import app
+from services.api.manual_payment_models import PaymentAuditLog
+from services.api.models import Base
 
-
-def _utcnow() -> datetime:
-    """Naive UTC now (matches the codebase's naive-UTC datetime convention)."""
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+USER_PHONE = "+201098765432"
+OTHER_PHONE = "+201055555555"
 
 
 @pytest.fixture
-def db_session():
-    """Fresh in-memory DB with test users."""
+def client():
+    """Create a test client with a fresh in-memory database."""
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
-    ApiBase.metadata.create_all(bind=engine)
-    ManualPayment.__table__.create(bind=engine, checkfirst=True)
+    Base.metadata.create_all(engine)
+    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-    Session = sessionmaker(bind=engine)
-    session = Session()
-
-    user = User(
-        id=1,
-        phone="+201118302763",
-        name="Test User",
-        preferred_language="en",
-        password_hash="hashed",
-        salt="salt",
-        tier="free",
-    )
-    admin = User(
-        id=2,
-        phone="+201118302764",
-        name="Admin",
-        preferred_language="en",
-        password_hash="hashed",
-        salt="salt",
-        tier="admin",
-    )
-    session.add(user)
-    session.commit()
-    session.add(admin)
-    session.commit()
-    session.refresh(user)
-    session.refresh(admin)
-
-    yield session, user, admin
-    session.close()
-    engine.dispose()
-
-
-@pytest.fixture
-def client(db_session):
-    """Test client with dependency overrides."""
-    session, user, admin = db_session
-
-    app = FastAPI()
-    app.include_router(payment_router)
+    # Seed a separate admin credential (not a user account).
+    with TestingSessionLocal() as db:
+        db.add(
+            Admin(
+                username="admin1",
+                password_hash=get_password_hash("admin-secret"),
+            )
+        )
+        db.commit()
 
     def override_get_db():
-        yield session
-
-    def override_get_current_user():
-        return user
+        db = TestingSessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
 
     app.dependency_overrides[get_db] = override_get_db
-    app.dependency_overrides[get_current_user] = override_get_current_user
-
     with TestClient(app) as c:
-        c._admin = admin
+        c._user_tokens = {}
         yield c
-
     app.dependency_overrides.clear()
 
 
-@pytest.fixture
-def admin_client(db_session):
-    """Test client with admin as current user."""
-    session, user, admin = db_session
-
-    app = FastAPI()
-    app.include_router(payment_router)
-
-    def override_get_db():
-        yield session
-
-    def override_get_current_user():
-        return admin
-
-    app.dependency_overrides[get_db] = override_get_db
-    app.dependency_overrides[get_current_user] = override_get_current_user
-
-    with TestClient(app) as c:
-        c._session = session
-        yield c
-
-    app.dependency_overrides.clear()
+def _auth_headers(token):
+    return {"Authorization": f"Bearer {token}"}
 
 
-# --- User-facing endpoints ---
+def _register_and_login(client, phone, password):
+    reg = client.post("/auth/register", json={"phone": phone, "password": password})
+    assert reg.status_code == 200, f"register failed: {reg.text}"
+    login = client.post("/auth/login", json={"phone": phone, "password": password})
+    assert login.status_code == 200, f"login failed: {login.text}"
+    return login.json()["access_token"]
 
 
-def test_create_manual_payment_success(client):
-    """User can create a manual payment order."""
-    resp = client.post("/payment/manual", json={"package": "standard"})
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["package"] == "standard"
-    assert data["amount_egp"] == 30.0
-    assert data["status"] == "pending"
-    assert data["order_ref"].startswith("ELH-")
+def _user_token(client):
+    """Login as the primary test user (cached per client)."""
+    if "primary" not in client._user_tokens:
+        client._user_tokens["primary"] = _register_and_login(
+            client, USER_PHONE, "testpass123"
+        )
+    return client._user_tokens["primary"]
 
 
-def test_create_manual_payment_premium(client):
-    """Premium package has correct price."""
-    resp = client.post("/payment/manual", json={"package": "premium"})
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["package"] == "premium"
-    assert data["amount_egp"] == 90.0
+def _other_user_token(client):
+    """Login as a second, unrelated user (cached per client)."""
+    if "other" not in client._user_tokens:
+        client._user_tokens["other"] = _register_and_login(
+            client, OTHER_PHONE, "otherpass1"
+        )
+    return client._user_tokens["other"]
 
 
-def test_create_manual_payment_invalid_package(client):
-    """Invalid package is rejected."""
-    resp = client.post("/payment/manual", json={"package": "gold"})
-    assert resp.status_code == 400
-    assert "Invalid package" in resp.json()["detail"]
+def _admin_token(client):
+    """Login with the separate admin credential."""
+    resp = client.post(
+        "/admin/login", json={"username": "admin1", "password": "admin-secret"}
+    )
+    assert resp.status_code == 200, f"admin login failed: {resp.text}"
+    return resp.json()["access_token"]
 
 
-def test_create_manual_payment_rate_limit(client):
-    """Max 3 pending per user per day."""
-    for i in range(3):
+class TestManualPaymentCreate:
+    def test_create_standard_package(self, client):
+        token = _user_token(client)
+        resp = client.post(
+            "/payment/manual",
+            json={"package": "standard"},
+            headers=_auth_headers(token),
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "pending"
+        assert data["package"] == "standard"
+        assert data["amount_egp"] == 30.0
+        assert data["order_ref"].startswith("ELH-")
+        # order_ref must contain a random component beyond the date part.
+        assert len(data["order_ref"]) > len("ELH-YYYYMMDD-")
+
+    def test_create_premium_package(self, client):
+        token = _user_token(client)
+        resp = client.post(
+            "/payment/manual",
+            json={"package": "premium"},
+            headers=_auth_headers(token),
+        )
+        assert resp.status_code == 200
+        assert resp.json()["amount_egp"] == 90.0
+
+    def test_create_invalid_package_400(self, client):
+        token = _user_token(client)
+        resp = client.post(
+            "/payment/manual",
+            json={"package": "gold"},
+            headers=_auth_headers(token),
+        )
+        assert resp.status_code == 400
+
+    def test_create_unauthenticated_401(self, client):
         resp = client.post("/payment/manual", json={"package": "standard"})
-        assert resp.status_code == 200, f"Order {i} should succeed"
+        assert resp.status_code == 401
 
-    # 4th should be rate limited
-    resp = client.post("/payment/manual", json={"package": "standard"})
-    assert resp.status_code == 429
-    assert "Too many pending" in resp.json()["detail"]
-
-
-def test_get_manual_payment_owner(client):
-    """User can view their own order."""
-    resp = client.post("/payment/manual", json={"package": "premium"})
-    order_id = resp.json()["order_id"]
-
-    resp = client.get(f"/payment/manual/{order_id}")
-    assert resp.status_code == 200
-    assert resp.json()["package"] == "premium"
-    assert resp.json()["amount_egp"] == 90.0
-
-
-def test_get_manual_payment_not_found(client):
-    """Non-existent order returns 404."""
-    resp = client.get("/payment/manual/99999")
-    assert resp.status_code == 404
+    def test_rate_limit_three_pending_per_day(self, client):
+        token = _user_token(client)
+        for i in range(3):
+            resp = client.post(
+                "/payment/manual",
+                json={"package": "standard"},
+                headers=_auth_headers(token),
+            )
+            assert resp.status_code == 200, f"attempt {i}: {resp.text}"
+        # The 4th pending order today is rejected.
+        resp = client.post(
+            "/payment/manual",
+            json={"package": "standard"},
+            headers=_auth_headers(token),
+        )
+        assert resp.status_code == 429
 
 
-# --- Admin endpoints ---
+class TestManualPaymentLookup:
+    def test_get_own_payment(self, client):
+        token = _user_token(client)
+        create = client.post(
+            "/payment/manual",
+            json={"package": "standard"},
+            headers=_auth_headers(token),
+        )
+        order_ref = create.json()["order_ref"]
+        resp = client.get(f"/payment/manual/{order_ref}", headers=_auth_headers(token))
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["order_ref"] == order_ref
+        assert data["status"] == "pending"
+
+    def test_get_other_users_payment_404(self, client):
+        """Non-owner lookup returns 404 (no existence leak)."""
+        token = _user_token(client)
+        create = client.post(
+            "/payment/manual",
+            json={"package": "standard"},
+            headers=_auth_headers(token),
+        )
+        order_ref = create.json()["order_ref"]
+
+        other_token = _other_user_token(client)
+        resp = client.get(
+            f"/payment/manual/{order_ref}", headers=_auth_headers(other_token)
+        )
+        assert resp.status_code == 404
+
+    def test_get_nonexistent_404(self, client):
+        token = _user_token(client)
+        resp = client.get(
+            "/payment/manual/ELH-19700101-000000", headers=_auth_headers(token)
+        )
+        assert resp.status_code == 404
 
 
-def test_non_admin_cannot_access_admin_endpoints(client):
-    """Non-admin users get 403 on admin endpoints."""
-    resp = client.get("/admin/payments")
-    assert resp.status_code == 403
+class TestAdminAuth:
+    def test_admin_login_invalid_credentials_401(self, client):
+        resp = client.post(
+            "/admin/login", json={"username": "admin1", "password": "wrong"}
+        )
+        assert resp.status_code == 401
 
-    resp = client.post("/admin/payments/1/approve")
-    assert resp.status_code == 403
+    def test_admin_login_unknown_user_401(self, client):
+        resp = client.post("/admin/login", json={"username": "nobody", "password": "x"})
+        assert resp.status_code == 401
 
-
-def test_admin_list_pending(admin_client):
-    """Admin can list pending payments."""
-    session = admin_client._session
-
-    payment = ManualPayment(
-        order_ref="ELH-20250101-test1",
-        user_id=1,  # regular user
-        package="standard",
-        amount_egp=30.0,
-        status="pending",
-    )
-    session.add(payment)
-    session.commit()
-
-    resp = admin_client.get("/admin/payments?status=pending")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert len(data) == 1
-    assert data[0]["package"] == "standard"
-    assert data[0]["user_phone"] == "+201118302763"
+    def test_user_token_rejected_on_admin_endpoint(self, client):
+        """A user JWT (sub=user_id) must not authorize admin endpoints."""
+        token = _user_token(client)
+        resp = client.get("/admin/payments", headers=_auth_headers(token))
+        assert resp.status_code == 401
 
 
-def test_admin_approve_grants_credits(admin_client):
-    """Admin approval grants credits to the user."""
-    session = admin_client._session
+class TestAdminPayments:
+    def test_list_payments_masked_phone(self, client):
+        user_token = _user_token(client)
+        create = client.post(
+            "/payment/manual",
+            json={"package": "standard"},
+            headers=_auth_headers(user_token),
+        )
+        assert create.status_code == 200
+        order_ref = create.json()["order_ref"]
 
-    payment = ManualPayment(
-        order_ref="ELH-20250101-test2",
-        user_id=1,  # regular user
-        package="standard",
-        amount_egp=30.0,
-        status="pending",
-    )
-    session.add(payment)
-    session.commit()
-    session.refresh(payment)
+        admin_token = _admin_token(client)
+        resp = client.get("/admin/payments", headers=_auth_headers(admin_token))
+        assert resp.status_code == 200
+        payments = resp.json()
+        entry = next(p for p in payments if p["order_ref"] == order_ref)
+        # The full phone number must NOT appear anywhere in the list response.
+        assert USER_PHONE not in resp.text
+        assert "*" in entry["user_phone_masked"]
+        assert entry["user_phone_masked"].startswith("+20")
 
-    # Free tier lazily provisions 3 starting credits, so the balance after a
-    # standard-package grant is 3 + 10.
-    resp = admin_client.post(f"/admin/payments/{payment.id}/approve")
-    assert resp.status_code == 200
-    assert resp.json()["status"] == "approved"
-    assert resp.json()["credits_granted"] == 10
+    def test_list_invalid_date_422(self, client):
+        admin_token = _admin_token(client)
+        resp = client.get(
+            "/admin/payments?date_from=not-a-date",
+            headers=_auth_headers(admin_token),
+        )
+        assert resp.status_code == 422
 
-    # Verify credits were granted
-    credit = session.query(UserCredit).filter(UserCredit.user_id == 1).first()
-    assert credit is not None
-    assert credit.balance == 13
+    def test_list_date_filter(self, client):
+        user_token = _user_token(client)
+        create = client.post(
+            "/payment/manual",
+            json={"package": "standard"},
+            headers=_auth_headers(user_token),
+        )
+        assert create.status_code == 200
+        order_ref = create.json()["order_ref"]
 
+        admin_token = _admin_token(client)
+        # A date window that excludes today should not include the new order.
+        resp = client.get(
+            "/admin/payments?date_from=1970-01-01&date_to=1970-01-02",
+            headers=_auth_headers(admin_token),
+        )
+        assert resp.status_code == 200
+        assert all(p["order_ref"] != order_ref for p in resp.json())
 
-def test_admin_approve_idempotent(admin_client):
-    """Approving twice is a no-op (credits only granted once)."""
-    session = admin_client._session
+    def test_reveal_contact(self, client):
+        user_token = _user_token(client)
+        create = client.post(
+            "/payment/manual",
+            json={"package": "standard"},
+            headers=_auth_headers(user_token),
+        )
+        order_ref = create.json()["order_ref"]
 
-    payment = ManualPayment(
-        order_ref="ELH-20250101-test3",
-        user_id=1,  # regular user
-        package="premium",
-        amount_egp=90.0,
-        status="pending",
-    )
-    session.add(payment)
-    session.commit()
-    session.refresh(payment)
-
-    # First approve
-    resp = admin_client.post(f"/admin/payments/{payment.id}/approve")
-    assert resp.json()["status"] == "approved"
-    assert resp.json()["credits_granted"] == 30
-
-    # Second approve (idempotent)
-    resp = admin_client.post(f"/admin/payments/{payment.id}/approve")
-    assert resp.status_code == 200
-    assert resp.json()["status"] == "approved"
-    assert "idempotent" in resp.json()["message"]
-
-    # Credits should only be granted once (3 free + 30 premium, not 63)
-    credit = session.query(UserCredit).filter(UserCredit.user_id == 1).first()
-    assert credit.balance == 33
-
-
-def test_admin_reject_sets_reason(admin_client):
-    """Admin rejection sets the reason and status."""
-    session = admin_client._session
-
-    payment = ManualPayment(
-        order_ref="ELH-20250101-test4",
-        user_id=1,  # regular user
-        package="standard",
-        amount_egp=30.0,
-        status="pending",
-    )
-    session.add(payment)
-    session.commit()
-    session.refresh(payment)
-
-    resp = admin_client.post(
-        f"/admin/payments/{payment.id}/reject",
-        json={"reason": "No transfer found"},
-    )
-    assert resp.status_code == 200
-    assert resp.json()["status"] == "rejected"
-    assert resp.json()["reason"] == "No transfer found"
-
-    # Verify no credits granted
-    credit = session.query(UserCredit).filter(UserCredit.user_id == 1).first()
-    assert credit is None  # No credit row created
+        admin_token = _admin_token(client)
+        resp = client.get(
+            f"/admin/payments/{order_ref}/contact",
+            headers=_auth_headers(admin_token),
+        )
+        assert resp.status_code == 200
+        assert resp.json()["user_phone"] == USER_PHONE
 
 
-def test_admin_cannot_approve_rejected(admin_client):
-    """Cannot approve a rejected payment."""
-    session = admin_client._session
+class TestApproveReject:
+    def test_approve_grants_credits(self, client):
+        user_token = _user_token(client)
+        create = client.post(
+            "/payment/manual",
+            json={"package": "standard"},
+            headers=_auth_headers(user_token),
+        )
+        order_ref = create.json()["order_ref"]
 
-    payment = ManualPayment(
-        order_ref="ELH-20250101-test5",
-        user_id=1,
-        package="standard",
-        amount_egp=30.0,
-        status="rejected",
-        reject_reason="test",
-        resolved_at=_utcnow(),
-    )
-    session.add(payment)
-    session.commit()
-    session.refresh(payment)
+        admin_token = _admin_token(client)
+        resp = client.post(
+            f"/admin/payments/{order_ref}/approve",
+            headers=_auth_headers(admin_token),
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "approved"
+        assert data["credits_granted"] == 10
+        # Free tier: 3 starting credits + 10 granted = 13.
+        assert data["new_balance"] == 13
 
-    resp = admin_client.post(f"/admin/payments/{payment.id}/approve")
-    assert resp.status_code == 400
-    assert "Cannot approve" in resp.json()["detail"]
+    def test_approve_idempotent_no_double_grant(self, client):
+        user_token = _user_token(client)
+        create = client.post(
+            "/payment/manual",
+            json={"package": "premium"},
+            headers=_auth_headers(user_token),
+        )
+        order_ref = create.json()["order_ref"]
 
+        admin_token = _admin_token(client)
+        first = client.post(
+            f"/admin/payments/{order_ref}/approve",
+            headers=_auth_headers(admin_token),
+        )
+        assert first.status_code == 200
+        # 3 free + 30 premium = 33.
+        assert first.json()["new_balance"] == 33
 
-def test_admin_cannot_reject_approved(admin_client):
-    """Cannot reject an approved payment."""
-    session = admin_client._session
+        second = client.post(
+            f"/admin/payments/{order_ref}/approve",
+            headers=_auth_headers(admin_token),
+        )
+        assert second.status_code == 200
+        assert second.json()["status"] == "approved"
+        # No double grant: idempotent response carries no new balance delta.
+        assert "credits_granted" not in second.json()
 
-    payment = ManualPayment(
-        order_ref="ELH-20250101-test6",
-        user_id=1,
-        package="standard",
-        amount_egp=30.0,
-        status="approved",
-        resolved_at=_utcnow(),
-    )
-    session.add(payment)
-    session.commit()
-    session.refresh(payment)
+    def test_approve_rejected_payment_400(self, client):
+        user_token = _user_token(client)
+        create = client.post(
+            "/payment/manual",
+            json={"package": "standard"},
+            headers=_auth_headers(user_token),
+        )
+        order_ref = create.json()["order_ref"]
 
-    resp = admin_client.post(
-        f"/admin/payments/{payment.id}/reject",
-        json={"reason": "too late"},
-    )
-    assert resp.status_code == 400
-    assert "Cannot reject" in resp.json()["detail"]
+        admin_token = _admin_token(client)
+        reject = client.post(
+            f"/admin/payments/{order_ref}/reject",
+            json={"reason": "no transfer found"},
+            headers=_auth_headers(admin_token),
+        )
+        assert reject.status_code == 200
 
+        approve = client.post(
+            f"/admin/payments/{order_ref}/approve",
+            headers=_auth_headers(admin_token),
+        )
+        assert approve.status_code == 400
 
-def test_admin_approve_not_found(admin_client):
-    """Approving non-existent payment returns 404."""
-    resp = admin_client.post("/admin/payments/99999/approve")
-    assert resp.status_code == 404
+    def test_reject_persists_reason(self, client):
+        user_token = _user_token(client)
+        create = client.post(
+            "/payment/manual",
+            json={"package": "standard"},
+            headers=_auth_headers(user_token),
+        )
+        order_ref = create.json()["order_ref"]
 
+        admin_token = _admin_token(client)
+        resp = client.post(
+            f"/admin/payments/{order_ref}/reject",
+            json={"reason": "amount mismatch"},
+            headers=_auth_headers(admin_token),
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "rejected"
+        assert data["reject_reason"] == "amount mismatch"
 
-def test_admin_reject_not_found(admin_client):
-    """Rejecting non-existent payment returns 404."""
-    resp = admin_client.post(
-        "/admin/payments/99999/reject",
-        json={"reason": "test"},
-    )
-    assert resp.status_code == 404
+        # The reason is visible to the owner.
+        lookup = client.get(
+            f"/payment/manual/{order_ref}", headers=_auth_headers(user_token)
+        )
+        assert lookup.json()["reject_reason"] == "amount mismatch"
+
+    def test_reject_approved_payment_400(self, client):
+        user_token = _user_token(client)
+        create = client.post(
+            "/payment/manual",
+            json={"package": "standard"},
+            headers=_auth_headers(user_token),
+        )
+        order_ref = create.json()["order_ref"]
+
+        admin_token = _admin_token(client)
+        approve = client.post(
+            f"/admin/payments/{order_ref}/approve",
+            headers=_auth_headers(admin_token),
+        )
+        assert approve.status_code == 200
+
+        reject = client.post(
+            f"/admin/payments/{order_ref}/reject",
+            json={"reason": "too late"},
+            headers=_auth_headers(admin_token),
+        )
+        assert reject.status_code == 400
+
+    def test_approve_unknown_order_404(self, client):
+        admin_token = _admin_token(client)
+        resp = client.post(
+            "/admin/payments/ELH-19700101-000000/approve",
+            headers=_auth_headers(admin_token),
+        )
+        assert resp.status_code == 404
+
+    def test_audit_log_entries_created(self, client):
+        """Every admin action (reveal/approve/reject) leaves an audit row."""
+        user_token = _user_token(client)
+        create = client.post(
+            "/payment/manual",
+            json={"package": "premium"},
+            headers=_auth_headers(user_token),
+        )
+        order_ref = create.json()["order_ref"]
+
+        admin_token = _admin_token(client)
+        assert (
+            client.get(
+                f"/admin/payments/{order_ref}/contact",
+                headers=_auth_headers(admin_token),
+            ).status_code
+            == 200
+        )
+        assert (
+            client.post(
+                f"/admin/payments/{order_ref}/approve",
+                headers=_auth_headers(admin_token),
+            ).status_code
+            == 200
+        )
+
+        # A second payment to reject.
+        create2 = client.post(
+            "/payment/manual",
+            json={"package": "standard"},
+            headers=_auth_headers(user_token),
+        )
+        assert (
+            client.post(
+                f"/admin/payments/{create2.json()['order_ref']}/reject",
+                json={"reason": "test"},
+                headers=_auth_headers(admin_token),
+            ).status_code
+            == 200
+        )
+
+        # Verify via the DB through the same overridden dependency.
+        gen = app.dependency_overrides[get_db]()
+        db = next(gen)
+        try:
+            rows = db.query(PaymentAuditLog).all()
+            actions = {r.action for r in rows}
+            assert {"reveal_contact", "approve", "reject"} <= actions
+            refs = {r.order_ref for r in rows}
+            assert order_ref in refs
+        finally:
+            db.close()

@@ -1,55 +1,76 @@
-"""Manual payment models for the bridge flow (pre-Paymob).
+"""Manual payment models — bridge flow before Paymob integration.
 
-Users submit "I've paid" after manually transferring money. An admin
-verifies and approves the payment, which grants credits.
+These tables support the manual payment workflow described in
+plans/paymob-integration.md:
+
+- ManualPayment: a user's "I've paid" submission, pending admin verification
+- PaymentAuditLog: append-only audit trail of admin actions (no UPDATE/DELETE)
 """
-
-from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, DateTime, ForeignKey, Numeric, String, Text
-from sqlalchemy.orm import relationship
+from sqlalchemy import (
+    UUID,
+    Column,
+    DateTime,
+    ForeignKey,
+    Numeric,
+    String,
+    Text,
+)
 
-from services.api.models import Base, DialectIdType
+from services.api.models import Base
 
 
 def _utcnow() -> datetime:
-    """Naive UTC now (matches the codebase's naive-UTC datetime convention)."""
-    return datetime.now(timezone.utc).replace(tzinfo=None)
-
-
-def _new_manual_payment_id(context):
-    """SQLite-safe auto-increment id for manual_payments; UUID on Postgres."""
-    if context.dialect.name == "sqlite":
-        return context.connection.exec_driver_sql(
-            "SELECT COALESCE(MAX(id), 0) + 1 FROM manual_payments"
-        ).scalar_one()
-    return uuid.uuid4()
+    """Timezone-aware UTC now."""
+    return datetime.now(timezone.utc)
 
 
 class ManualPayment(Base):
-    """A pending manual payment order.
-
-    Created when a user taps "I've Paid" in the app. Resolved (approved or
-    rejected) by an admin after verifying the actual transfer.
-    """
-
     __tablename__ = "manual_payments"
 
-    id = Column(DialectIdType(), primary_key=True, default=_new_manual_payment_id)
-    order_ref = Column(String(32), unique=True, nullable=False)  # "ELH-20250101-a3f2b"
+    id = Column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, nullable=False
+    )
+    # Public order identifier (e.g. "ELH-20250101-a3f2b1"). The internal
+    # UUID `id` is opaque; clients and admins interact via order_ref.
+    order_ref = Column(String(32), unique=True, nullable=False, index=True)
     user_id = Column(
-        DialectIdType(), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
     package = Column(String(20), nullable=False)  # "standard" | "premium"
     amount_egp = Column(Numeric(10, 2), nullable=False)
     # status: pending | approved | rejected
     status = Column(String(20), nullable=False, default="pending")
     reject_reason = Column(Text, nullable=True)
-    created_at = Column(DateTime, nullable=False, default=_utcnow)
-    resolved_at = Column(DateTime, nullable=True)
-    resolved_by = Column(DialectIdType(), nullable=True)  # admin user id
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
+    resolved_at = Column(DateTime(timezone=True), nullable=True)
+    resolved_by = Column(
+        String(36), ForeignKey("admins.id", ondelete="SET NULL"), nullable=True
+    )
 
-    user = relationship("User")
+
+class PaymentAuditLog(Base):
+    """Append-only audit trail for admin payment actions.
+
+    No UPDATE or DELETE endpoints exist for this table; entries are
+    insert-only by design.
+    """
+
+    __tablename__ = "payment_audit_log"
+
+    id = Column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, nullable=False
+    )
+    action = Column(String(50), nullable=False)  # approve|reject|reveal_contact
+    actor_id = Column(
+        String(36), ForeignKey("admins.id", ondelete="SET NULL"), nullable=True
+    )
+    target_user_id = Column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    order_ref = Column(String(32), nullable=False, index=True)
+    client_ip = Column(String(45), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
