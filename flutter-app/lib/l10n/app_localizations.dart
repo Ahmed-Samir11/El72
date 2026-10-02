@@ -517,6 +517,36 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Live Deals'**
   String get liveDeals;
+
+  /// Profile tab: remaining tracker credits for the signed-in user.
+  ///
+  /// In en, this message translates to:
+  /// **'You have {count} trackers left'**
+  String creditsRemaining(int count);
+
+  /// Dialog title when tracker creation fails with HTTP 402 (no credits left).
+  ///
+  /// In en, this message translates to:
+  /// **'You\'ve reached your limit'**
+  String get reachedLimitTitle;
+
+  /// Dialog body explaining the credit limit and offering an upgrade.
+  ///
+  /// In en, this message translates to:
+  /// **'Your free plan includes 3 price trackers and you\'ve used them all. Upgrade your plan to keep tracking more products.'**
+  String get reachedLimitBody;
+
+  /// Button label that navigates to the subscription/plans screen.
+  ///
+  /// In en, this message translates to:
+  /// **'Upgrade plan'**
+  String get upgradePlan;
+
+  /// Dismiss action on the credit-limit dialog.
+  ///
+  /// In en, this message translates to:
+  /// **'Not now'**
+  String get notNow;
 }
 
 class _AppLocalizationsDelegate

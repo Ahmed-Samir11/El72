@@ -4,6 +4,20 @@ import '../demo_data.dart';
 import '../models/tracked_item_model.dart';
 import '../services/api_client.dart';
 
+/// Thrown when the backend rejects a tracker creation with HTTP 402
+/// (insufficient credits). Kept distinct from generic errors so the UI can
+/// offer the "upgrade your plan" flow instead of a raw server message.
+class InsufficientCreditsException implements Exception {
+  const InsufficientCreditsException(this.message);
+
+  /// Human-facing detail from the API (kept for logging/tests; the UI shows
+  /// its own localized copy).
+  final String message;
+
+  @override
+  String toString() => 'InsufficientCreditsException($message)';
+}
+
 /// Data source for the user's tracked items (`GET /tracked-items`).
 class TrackedItemsRepository {
   final ApiClient _apiClient = ApiClient();
@@ -44,6 +58,9 @@ class TrackedItemsRepository {
       final detail = response.data is Map
           ? (response.data as Map)['detail']
           : null;
+      if (response.statusCode == 402) {
+        throw InsufficientCreditsException(detail ?? 'Insufficient credits');
+      }
       throw Exception(detail ?? 'Failed to create tracker');
     }
   }

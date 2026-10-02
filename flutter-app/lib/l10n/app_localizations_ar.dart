@@ -242,4 +242,22 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get liveDeals => 'الصفقات الحية';
+
+  @override
+  String creditsRemaining(int count) {
+    return 'لديك $count متتبعات متبقية';
+  }
+
+  @override
+  String get reachedLimitTitle => 'لقد وصلت إلى الحد الأقصى';
+
+  @override
+  String get reachedLimitBody =>
+      'خطة المجانية تشمل 3 متتبعات وقد استخدمتها كلها. قم بالترقية لمواصلة تتبع المزيد من المنتجات.';
+
+  @override
+  String get upgradePlan => 'قم بالترقية';
+
+  @override
+  String get notNow => 'ليس الآن';
 }

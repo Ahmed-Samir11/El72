@@ -5,6 +5,8 @@ import '../../l10n/app_localizations.dart';
 import '../core/format/error_message.dart';
 import '../core/styles/app_theme.dart';
 import '../data/providers.dart';
+import '../data/repositories/tracked_items_repository.dart';
+import 'subscription_screen.dart';
 
 class CreateTrackerSheet extends ConsumerStatefulWidget {
   const CreateTrackerSheet({super.key});
@@ -85,6 +87,37 @@ class _CreateTrackerSheetState extends ConsumerState<CreateTrackerSheet> {
                     ),
                   );
                 }
+              } on InsufficientCreditsException {
+                // Out of credits (HTTP 402): offer the upgrade flow instead
+                // of a raw server message.
+                if (!context.mounted) return;
+                final nav = Navigator.of(context);
+                final l10n = AppLocalizations.of(context);
+                showDialog<void>(
+                  context: context,
+                  builder: (dialogContext) => AlertDialog(
+                    title: Text(l10n.reachedLimitTitle),
+                    content: Text(l10n.reachedLimitBody),
+                    actions: [
+                      TextButton(
+                        onPressed: () {
+                          Navigator.pop(dialogContext);
+                          nav.pop(); // dismiss the tracker sheet
+                          nav.push(
+                            MaterialPageRoute(
+                              builder: (_) => const SubscriptionScreen(),
+                            ),
+                          );
+                        },
+                        child: Text(l10n.upgradePlan),
+                      ),
+                      TextButton(
+                        onPressed: () => Navigator.pop(dialogContext),
+                        child: Text(l10n.notNow),
+                      ),
+                    ],
+                  ),
+                );
               } catch (e) {
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(

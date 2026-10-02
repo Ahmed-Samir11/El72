@@ -242,4 +242,22 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get liveDeals => 'Live Deals';
+
+  @override
+  String creditsRemaining(int count) {
+    return 'You have $count trackers left';
+  }
+
+  @override
+  String get reachedLimitTitle => 'You\'ve reached your limit';
+
+  @override
+  String get reachedLimitBody =>
+      'Your free plan includes 3 price trackers and you\'ve used them all. Upgrade your plan to keep tracking more products.';
+
+  @override
+  String get upgradePlan => 'Upgrade plan';
+
+  @override
+  String get notNow => 'Not now';
 }

@@ -252,6 +252,7 @@ class _ProfileTab extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final isDemo = AppConfig.demoMode;
+    final creditAsync = ref.watch(creditBalanceProvider);
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
@@ -271,7 +272,14 @@ class _ProfileTab extends ConsumerWidget {
           child: ListTile(
             leading: const Icon(Icons.workspace_premium_outlined),
             title: Text(AppLocalizations.of(context).currentPlan),
-            subtitle: Text(AppLocalizations.of(context).freePlan),
+            // Live credit balance; falls back to the static plan name while
+            // loading or on error so the tile never shows a spinner.
+            subtitle: creditAsync.maybeWhen(
+              data: (credits) => Text(
+                AppLocalizations.of(context).creditsRemaining(credits.balance),
+              ),
+              orElse: () => Text(AppLocalizations.of(context).freePlan),
+            ),
             trailing: TextButton(
               onPressed: () => Navigator.push(
                 context,

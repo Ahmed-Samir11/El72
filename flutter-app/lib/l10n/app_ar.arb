@@ -138,5 +138,29 @@
     }
   },
 
-  "liveDeals": "الصفقات الحية"
+  "liveDeals": "الصفقات الحية",
+
+  "creditsRemaining": "لديك {count} متتبعات متبقية",
+  "@creditsRemaining": {
+    "description": "تبويب الملف الشخصي: المتتبعات المتبقية للمستخدم المسجل.",
+    "placeholders": {
+      "count": { "type": "int" }
+    }
+  },
+  "reachedLimitTitle": "لقد وصلت إلى الحد الأقصى",
+  "@reachedLimitTitle": {
+    "description": "عنوان النافذة عند فشل إنشاء المتتبع بسبب نفاد الرصيد (HTTP 402)."
+  },
+  "reachedLimitBody": "خطة المجانية تشمل 3 متتبعات وقد استخدمتها كلها. قم بالترقية لمواصلة تتبع المزيد من المنتجات.",
+  "@reachedLimitBody": {
+    "description": "نص النافذة الذي يشرح حد الرصيد ويقترح الترقية."
+  },
+  "upgradePlan": "قم بالترقية",
+  "@upgradePlan": {
+    "description": "زر الانتقال إلى شاشة خطط الاشتراك."
+  },
+  "notNow": "ليس الآن",
+  "@notNow": {
+    "description": "إجراء إغلاق نافذة نفاد الرصيد."
+  }
 }

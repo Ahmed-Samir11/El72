@@ -1,3 +1,4 @@
+import 'models/credit_balance_model.dart';
 import 'models/deal_model.dart';
 import 'models/platform_stats_model.dart';
 import 'models/price_point_model.dart';
@@ -7,6 +8,12 @@ import 'models/tracked_item_model.dart';
 /// backend is unreachable. Mirrors the JSON shapes the API returns so the UI
 /// renders identically whether data comes from the network or from here.
 class DemoData {
+  /// Demo credit balance: the free tier's starting allowance.
+  static const CreditBalance creditBalance = CreditBalance(
+    balance: 3,
+    tier: 'free',
+  );
+
   static const List<TrackedItem> trackedItems = [
     TrackedItem(
       id: 1,
