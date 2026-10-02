@@ -158,6 +158,9 @@ CREATE TABLE IF NOT EXISTS manual_payments (
     -- SET NULL (not CASCADE): payment history is a financial record and
     -- must survive user deletion for auditing.
     user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    -- Snapshot of the payer's phone at creation time so the row keeps
+    -- forensic attribution even if the user account is later deleted.
+    user_phone VARCHAR(20),
     package VARCHAR(20) NOT NULL
         CHECK (package IN ('standard', 'premium')),
     amount_egp NUMERIC(10, 2) NOT NULL CHECK (amount_egp > 0),
@@ -166,7 +169,9 @@ CREATE TABLE IF NOT EXISTS manual_payments (
     reject_reason TEXT,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     resolved_at TIMESTAMP WITH TIME ZONE,
-    resolved_by VARCHAR(36) REFERENCES admins(id) ON DELETE SET NULL
+    resolved_by VARCHAR(36) REFERENCES admins(id) ON DELETE SET NULL,
+    -- Snapshot of the resolving admin's username (survives admin deletion).
+    resolved_by_username VARCHAR(50)
 );
 
 CREATE INDEX IF NOT EXISTS idx_manual_payments_user_id ON manual_payments(user_id);
@@ -181,9 +186,13 @@ CREATE TABLE IF NOT EXISTS payment_audit_log (
     action VARCHAR(50) NOT NULL
         CHECK (action IN ('approve', 'reject', 'reveal_contact')),
     actor_id VARCHAR(36) REFERENCES admins(id) ON DELETE SET NULL,
+    -- Snapshot of the acting admin's username (survives admin deletion).
+    actor_username VARCHAR(50),
     -- SET NULL (not CASCADE): audit rows are forensic records and must
     -- survive user deletion.
     target_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    -- Snapshot of the target user's phone at action time.
+    target_user_phone VARCHAR(20),
     order_ref VARCHAR(32) NOT NULL,
     client_ip VARCHAR(45),
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()

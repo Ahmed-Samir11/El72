@@ -62,7 +62,7 @@ GET /payment/manual/{order_ref}
   Response: { "id", "order_ref", "package", "amount_egp", "status", "reject_reason" }
 
 POST /admin/login
-  Body: { "username", "password" }   # separate admin credential, rate-limited (5/min)
+  Body: { "username", "password" }   # separate admin credential, rate-limited (20/min per IP)
   Response: { "access_token", "token_type" }
   Token: signed with ADMIN_SECRET_KEY (separate from user tokens), 1h expiry
 
@@ -94,10 +94,11 @@ POST /admin/payments/{order_ref}/reject
 | 0.3 | Order ID enumeration | `order_ref` includes a random hex suffix (`secrets.token_hex`). Users can only query their own orders (404 otherwise). |
 | 0.4 | Credit double-grant | Approval is idempotent AND concurrency-safe: pending->approved is an atomic compare-and-swap; only the winning request grants credits, in the same transaction as the audit entry. |
 | 0.5 | PII exposure in admin lists | Phone numbers are masked by default; full contact requires an explicit, audited `reveal_contact` action. |
-| 0.5 | Payment details leakage | IBAN/wallet shown only to authenticated users. Not in public API. Logged access. |
-| 0.6 | No audit trail | Every approve/reject logged with admin ID, timestamp, IP. Immutable log table (DB trigger enforces append-only). |
-| 0.7 | Admin token leakage | Admin tokens are signed with a domain-separated secret (`ADMIN_SECRET_KEY`, never the raw user secret) and expire after 1 hour. Login is rate-limited (20/min per IP). |
-| 0.8 | Client IP spoofing in audit log | `X-Forwarded-For` is only honored when the direct peer is a configured trusted proxy (`TRUSTED_PROXIES`); otherwise the direct socket address is recorded. |
+| 0.6 | Payment details leakage | IBAN/wallet shown only to authenticated users. Not in public API. Logged access. |
+| 0.7 | No audit trail | Every approve/reject logged with admin ID, timestamp, IP. Immutable log table (DB trigger enforces append-only; dropping the trigger requires a privileged DB role, which is an operational/least-privilege concern). |
+| 0.8 | Admin token leakage | Admin tokens are signed with a domain-separated secret (`ADMIN_SECRET_KEY`, never the raw user secret) and expire after 1 hour. Login is rate-limited (20/min per IP). |
+| 0.9 | Client IP spoofing in audit log | `X-Forwarded-For` is only honored when the direct peer is a configured trusted proxy (`TRUSTED_PROXIES`); otherwise the direct socket address is recorded. |
+| 0.10 | Attribution loss on user/admin deletion | Payment and audit rows snapshot `user_phone` / `actor_username` at write time, so forensic attribution survives deletion of the referenced user or admin (FKs use ON DELETE SET NULL). |
 
 ### Database
 
@@ -110,15 +111,17 @@ Implemented in `infra/sql/schema.sql` (canonical DDL). Summary:
 - **manual_payments** — `id UUID PK`, `order_ref VARCHAR(32) UNIQUE`
   (public identifier, format `ELH-{YYYYMMDD}-{random_hex_8}`),
   `user_id REFERENCES users(id) ON DELETE SET NULL` (financial records
-  survive user deletion), `package` + `amount_egp` + `status` CHECK
-  constraints, `reject_reason`, composite index `(status, created_at)` for
-  the admin list query, `resolved_at`,
-  `resolved_by VARCHAR(36) REFERENCES admins(id) ON DELETE SET NULL`.
+  survive user deletion), `user_phone` snapshot (forensic attribution),
+  `package` + `amount_egp` + `status` CHECK constraints, `reject_reason`,
+  composite index `(status, created_at)` for the admin list query,
+  `resolved_at`, `resolved_by VARCHAR(36) REFERENCES admins(id) ON DELETE
+  SET NULL`, `resolved_by_username` snapshot.
 - **payment_audit_log** — append-only trail of admin actions
   (`action IN ('approve','reject','reveal_contact')`, `actor_id REFERENCES
-  admins(id)`, `target_user_id REFERENCES users(id) ON DELETE SET NULL`,
-  `order_ref`, `client_ip`). Append-only is enforced at the database level
-  by a BEFORE UPDATE OR DELETE trigger, not only by application code.
+  admins(id)`, `actor_username` snapshot, `target_user_id REFERENCES
+  users(id) ON DELETE SET NULL`, `target_user_phone` snapshot, `order_ref`,
+  `client_ip`). Append-only is enforced at the database level by a BEFORE
+  UPDATE OR DELETE trigger, not only by application code.
 
 Note: the canonical DDL uses `UUID` for user ids (matching `users.id`), while
 the SQLAlchemy models map user ids as `VARCHAR(36)` dashed-UUID strings — a
@@ -827,14 +830,17 @@ Feature 7 (Subscriptions)        ← v2, after stable one-time payments
 ## Environment Configuration
 
 ```env
-# Paymob
+# Paymob (never commit real values; configure per environment)
 PAYMOB_API_KEY=                    # sandbox or production
-PAYMOB_API_BASE=https://sium4m6aqfgh-prod.a.run.app
+PAYMOB_API_BASE=                   # gateway base URL (set per environment)
 PAYMOB_HMAC_SECRET=                # webhook signing secret
 PAYMOB_REDIRECT_URL=https://elhaq.com/payment/return
 
-# Admin
-ADMIN_TOKEN=                       # separate from user JWT
+# Admin (bootstraps the first admin credential at startup; see Feature 0)
+ADMIN_USERNAME=
+ADMIN_PASSWORD=
+ADMIN_SECRET_KEY=                  # domain-separated admin token signing key
+TRUSTED_PROXIES=                   # comma-separated peer IPs allowed to set X-Forwarded-For
 
 # Rate Limits
 RATE_LIMIT_PAYMENT_START=5/hour

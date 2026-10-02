@@ -67,17 +67,16 @@ def bootstrap_admin() -> None:
     concurrency-safe: if two instances race to create the first admin, the
     loser hits the username UNIQUE constraint and continues harmlessly.
     """
+    admin_username = os.getenv("ADMIN_USERNAME")
+    admin_password = os.getenv("ADMIN_PASSWORD")
+
     session = SessionLocal()
     try:
-        if (
-            session.query(Admin).count() == 0
-            and os.getenv("ADMIN_USERNAME")
-            and os.getenv("ADMIN_PASSWORD")
-        ):
+        if session.query(Admin).count() == 0 and admin_username and admin_password:
             session.add(
                 Admin(
-                    username=os.getenv("ADMIN_USERNAME"),
-                    password_hash=get_password_hash(os.getenv("ADMIN_PASSWORD")),
+                    username=admin_username,
+                    password_hash=get_password_hash(admin_password),
                 )
             )
             try:
@@ -87,6 +86,15 @@ def bootstrap_admin() -> None:
                 # Lost the race to a concurrent startup; the other instance
                 # already created the admin.
                 session.rollback()
+        else:
+            # No existing admin and no credentials configured: the admin
+            # panel is unavailable. Surface this to operators at startup.
+            if session.query(Admin).count() == 0:
+                logger.warning(
+                    "No admin credentials configured (ADMIN_USERNAME / "
+                    "ADMIN_PASSWORD unset) and no admin exists; the admin "
+                    "payment endpoints will be unusable."
+                )
     finally:
         session.close()
 

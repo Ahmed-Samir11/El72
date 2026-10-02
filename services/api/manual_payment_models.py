@@ -5,6 +5,10 @@ plans/paymob-integration.md:
 
 - ManualPayment: a user's "I've paid" submission, pending admin verification
 - PaymentAuditLog: append-only audit trail of admin actions (no UPDATE/DELETE)
+
+CHECK constraints are declared both here (ORM) and in infra/sql/schema.sql
+(canonical DDL) so SQLite test databases enforce the same invariants as
+Postgres.
 """
 
 import uuid
@@ -12,6 +16,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import (
     UUID,
+    CheckConstraint,
     Column,
     DateTime,
     ForeignKey,
@@ -36,6 +41,9 @@ class ManualPayment(Base):
     # then range-scan created_at (date_from/date_to).
     __table_args__ = (
         Index("idx_manual_payments_status_created", "status", "created_at"),
+        CheckConstraint("package IN ('standard', 'premium')"),
+        CheckConstraint("amount_egp > 0"),
+        CheckConstraint("status IN ('pending', 'approved', 'rejected')"),
     )
 
     id = Column(
@@ -47,8 +55,14 @@ class ManualPayment(Base):
     # SET NULL (not CASCADE): payment history is a financial record and must
     # survive user deletion for auditing.
     user_id = Column(
-        String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+        String(36),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
     )
+    # Snapshot of the payer's phone at creation time so the row keeps
+    # forensic attribution even if the user account is later deleted.
+    user_phone = Column(String(20), nullable=True)
     package = Column(String(20), nullable=False)  # "standard" | "premium"
     amount_egp = Column(Numeric(10, 2), nullable=False)
     # status: pending | approved | rejected
@@ -59,16 +73,23 @@ class ManualPayment(Base):
     resolved_by = Column(
         String(36), ForeignKey("admins.id", ondelete="SET NULL"), nullable=True
     )
+    # Snapshot of the resolving admin's username (survives admin deletion).
+    resolved_by_username = Column(String(50), nullable=True)
 
 
 class PaymentAuditLog(Base):
     """Append-only audit trail for admin payment actions.
 
     No UPDATE or DELETE endpoints exist for this table; entries are
-    insert-only by design.
+    insert-only by design. Postgres additionally enforces append-only via a
+    BEFORE UPDATE OR DELETE trigger (see infra/sql/schema.sql).
     """
 
     __tablename__ = "payment_audit_log"
+
+    __table_args__ = (
+        CheckConstraint("action IN ('approve', 'reject', 'reveal_contact')"),
+    )
 
     id = Column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, nullable=False
@@ -77,11 +98,15 @@ class PaymentAuditLog(Base):
     actor_id = Column(
         String(36), ForeignKey("admins.id", ondelete="SET NULL"), nullable=True
     )
+    # Snapshot of the acting admin's username (survives admin deletion).
+    actor_username = Column(String(50), nullable=True)
     # SET NULL (not CASCADE): audit rows are forensic records and must survive
     # user deletion.
     target_user_id = Column(
         String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
+    # Snapshot of the target user's phone at action time.
+    target_user_phone = Column(String(20), nullable=True)
     order_ref = Column(String(32), nullable=False, index=True)
     client_ip = Column(String(45), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)

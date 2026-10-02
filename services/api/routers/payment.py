@@ -122,17 +122,20 @@ def _client_ip(request: Request) -> Optional[str]:
 def _audit_entry(
     db: Session,
     admin: Admin,
-    target_user_id: str,
+    target_user_id: Optional[str],
     order_ref: str,
     action: str,
     request: Request,
+    target_user_phone: Optional[str] = None,
 ) -> None:
     """Append an audit entry (no UPDATE/DELETE path exists for this table)."""
     db.add(
         PaymentAuditLog(
             action=action,
             actor_id=str(admin.id),
+            actor_username=admin.username,
             target_user_id=target_user_id,
+            target_user_phone=target_user_phone,
             order_ref=order_ref,
             client_ip=_client_ip(request),
         )
@@ -271,6 +274,7 @@ def create_manual_payment(
         payment = ManualPayment(
             order_ref=order_ref,
             user_id=user.id,
+            user_phone=user.phone,
             package=body.package,
             amount_egp=amount,
             status="pending",
@@ -409,7 +413,13 @@ def reveal_payment_contact(
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
     _audit_entry(
-        db, admin, payment.user_id, payment.order_ref, "reveal_contact", request
+        db,
+        admin,
+        payment.user_id,
+        payment.order_ref,
+        "reveal_contact",
+        request,
+        target_user_phone=payment.user_phone,
     )
     db.commit()
     return {
@@ -467,6 +477,7 @@ def approve_manual_payment(
             status="approved",
             resolved_at=_utcnow(),
             resolved_by=str(admin.id),
+            resolved_by_username=admin.username,
         )
     )
     if result.rowcount == 0:
@@ -477,7 +488,15 @@ def approve_manual_payment(
     # We won the transition: grant credits + audit in the same transaction.
     credits_to_grant = CREDITS_BY_PACKAGE[payment.package]
     grant(db, user, credits_to_grant, reason=f"manual_{payment.package}")
-    _audit_entry(db, admin, payment.user_id, payment.order_ref, "approve", request)
+    _audit_entry(
+        db,
+        admin,
+        payment.user_id,
+        payment.order_ref,
+        "approve",
+        request,
+        target_user_phone=payment.user_phone,
+    )
     db.commit()
 
     logger.info(
@@ -532,13 +551,22 @@ def reject_manual_payment(
             reject_reason=body.reason,
             resolved_at=_utcnow(),
             resolved_by=str(admin.id),
+            resolved_by_username=admin.username,
         )
     )
     if result.rowcount == 0:
         db.rollback()
         raise HTTPException(status_code=409, detail="Payment was concurrently resolved")
 
-    _audit_entry(db, admin, payment.user_id, payment.order_ref, "reject", request)
+    _audit_entry(
+        db,
+        admin,
+        payment.user_id,
+        payment.order_ref,
+        "reject",
+        request,
+        target_user_phone=payment.user_phone,
+    )
     db.commit()
 
     logger.info("Rejected manual payment %s: %s", payment.order_ref, body.reason)

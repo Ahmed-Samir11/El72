@@ -502,5 +502,10 @@ class TestApproveReject:
             assert {"reveal_contact", "approve", "reject"} <= actions
             refs = {r.order_ref for r in rows}
             assert order_ref in refs
+            # Attribution snapshots survive independently of the FKs.
+            assert all(r.actor_username == "admin1" for r in rows)
+            assert all(r.target_user_phone == USER_PHONE for r in rows)
+            payment = db.query(ManualPayment).filter_by(order_ref=order_ref).first()
+            assert payment.user_phone == USER_PHONE
         finally:
             db.close()

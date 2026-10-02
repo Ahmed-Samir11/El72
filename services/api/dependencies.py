@@ -51,6 +51,10 @@ def create_access_token(
     expires_delta: Optional[timedelta] = None,
     secret_key: Optional[str] = None,
 ):
+    """Sign a JWT. Defaults to the user-facing SECRET_KEY; callers that issue
+    tokens for a separate credential domain (e.g. admin tokens) MUST pass
+    their own secret explicitly so the two token spaces never share a key.
+    """
     to_encode = data.copy()
     if expires_delta:
         expire = datetime.utcnow() + expires_delta
