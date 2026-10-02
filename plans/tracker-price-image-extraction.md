@@ -101,7 +101,7 @@ services/api/test_fixtures/              ← NEW: real saved pages
     relative_og_image.html               (hand-made fixture)
     woocommerce_product.html             (hand-made fixture)
 infra/sql/schema.sql                     ← canonical: new columns
-flutter-app/lib/l10n/app_en.arb, app_ar.arb   ← 2 new status strings
+flutter-app/lib/l10n/app_en.arb, app_ar.arb   ← new status strings (priceFetchFailed, notAProductPage, priceRefreshFailed)
 flutter-app/lib/src/data/models/tracked_item_model.dart  ← fetch_status/fetch_error
 flutter-app/lib/src/ui/widgets/tracker_card.dart         ← failed vs fetching state
 flutter-app/lib/src/ui/dashboard/dashboard_page.dart     ← pass status + retry
@@ -164,3 +164,21 @@ pass.
 (`::ffff:127.0.0.1` blocked, `::ffff:8.8.8.8` allowed — Python marks the
 whole `::ffff:0:0/96` range private, so the mapped IPv4 address is judged
 directly) with param cases.
+
+## 8. HGM Review — round 3 (2026-10-02): **APPROVE** (confidence 0.7)
+
+Ten notes came with the approval. The substantive ones were addressed in
+the same branch; the rest are documented trade-offs:
+
+| # | Severity | Finding | Resolution |
+|---|----------|---------|------------|
+| 1 | WARNING | `ALTER TABLE` without `IF NOT EXISTS`; concurrent startup could crash under fail-HARD boot | `ensure_columns` now emits dialect-aware DDL (Postgres `ADD COLUMN IF NOT EXISTS`; SQLite plain) **and** tolerates a lost race (Postgres pgcode 42701 / SQLite "duplicate column name") between the inspector read and the ALTER. |
+| 2 | WARNING | Playwright route guard only covered main-frame navigations | The guard now validates **every** request type (xhr/fetch/image/font/…): a fetched page's own JS can no longer use our headless browser as an SSRF proxy to `169.254.169.254` or other internal addresses. |
+| 3 | WARNING | Thread-safety of the `socket.getaddrinfo` connect-time guard | `fetch_price` is now serialized on a module-level lock. That makes the thread-global socket patching safe and also bounds headless-Chromium launches to one at a time (resolves #6 below). |
+| 4 | WARNING | Non-root Docker image not covered by unit tests; validate in CI | Documented as a follow-up: CI currently has no Docker job (the release-build CI wiring is itself pending plan H1). The image change is minimal (useradd + `PLAYWRIGHT_BROWSERS_PATH`), and the Playwright fallback is a secondary path — the requests path is primary. A docker smoke job lands with the CI release-build work. |
+| 5 | WARNING | Verify `/refresh` resets `last_fetch_status` to NULL | Implemented (endpoint resets store status to NULL + commit before scheduling the fetch) and now **tested**: `test_refresh_tracked_item_price` pre-seeds a `blocked` failure and asserts it is NULL after `POST /refresh` (with the 200 "fetching" response). |
+| 6 | WARNING | Browser reuse / unbounded concurrency | Resolved by the serialization lock (#3): at most one Chromium launch at a time; lifecycle documented in the module docstring (launch per fetch, context+browser closed in `finally`). |
+| 7 | INFO | `ok` (or unknown) status without a price rendered an endless spinner | The card now distinguishes *in flight* (`fetchStatus == null` → spinner) from *settled without a price* (any non-null status → retry chip). Anomalous `ok`-without-price and unknown future status values settle to the retry chip. Two widget tests pin it. |
+| 8 | INFO | Cross-module import of private `_ensure_columns` | Renamed to public `ensure_columns`; import updated. |
+| 9 | INFO | Plan said "2 new status strings" | Plan now lists the three keys. |
+| 10 | INFO | No optimistic feedback on retry tap; full-list invalidation | Accepted trade-off for v1: the server's 200 response already resets the status to "fetching", so the card flips to the spinner on the (fast) refetch; a single-item scoped provider is a reasonable follow-up but not required for correctness. |

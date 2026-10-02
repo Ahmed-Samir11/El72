@@ -726,10 +726,20 @@ def test_refresh_tracked_item_price(client, db_session, monkeypatch):
     session.add(store)
     session.commit()
 
+    # Pre-seed a persisted failure state: the first refresh must reset it
+    # to NULL (in-flight) before the background fetch runs, so the UI shows
+    # the fetching spinner immediately.
+    store.last_fetch_status = "blocked"
+    store.last_fetch_error = "HTTP 521"
+    session.commit()
+
     # No price rows at all -> first refresh is accepted.
     resp = api.post(f"/tracked-items/{item.id}/refresh")
     assert resp.status_code == 200
     assert resp.json()["price_status"] == "fetching"
+    session.refresh(store)
+    assert store.last_fetch_status is None
+    assert store.last_fetch_error is None
 
     # Second attempt within a minute is throttled (no price was written).
     resp = api.post(f"/tracked-items/{item.id}/refresh")

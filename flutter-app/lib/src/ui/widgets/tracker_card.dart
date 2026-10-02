@@ -14,10 +14,13 @@ import 'product_image.dart';
 /// than relying on a magic `currentPrice <= 0` check.
 ///
 /// [fetchStatus] refines the no-price state (backend fetch classification):
-/// - `null` (or `ok` with no price yet) → warning "fetching" chip,
+/// - `null` → warning "fetching" chip (in flight),
 /// - `no_price_found` → error "not a product page" chip (the link is wrong),
-/// - `blocked` / `fetch_failed` → error "couldn't fetch — tap to retry" chip.
-/// [onRetry] is invoked when the card is tapped in a retryable failure state.
+/// - any other settled status (`blocked`, `fetch_failed`, or an anomalous
+///   `ok`/unknown value without a price) → error "couldn't fetch — tap to
+///   retry" chip; settled states never show an endless spinner.
+/// [onRetry] is invoked when the card is tapped in a settled-without-price
+/// state (falling back to [onTap] when [onRetry] is null).
 class TrackerCard extends StatelessWidget {
   final String imageUrl;
   final String title;
@@ -42,9 +45,12 @@ class TrackerCard extends StatelessWidget {
     this.onRetry,
   });
 
-  /// True when the card shows a retryable failure (tap triggers [onRetry]).
-  bool get _retryableFailure =>
-      !hasPrice && FetchStatus.isRetryable(fetchStatus);
+  /// True when the backend fetch has SETTLED (non-null status) but no price
+  /// exists: blocked, fetch_failed, or an anomalous/unknown status such as
+  /// 'ok' without a price row. Such states show a failure chip whose tap
+  /// triggers [onRetry]; only `fetchStatus == null` (in flight) shows the
+  /// fetching spinner — a settled state must never spin forever.
+  bool get _settledWithoutPrice => !hasPrice && fetchStatus != null;
 
   /// Status chip shown while a tracker has no price: a spinner for the
   /// in-flight "fetching" state, an alert icon for the error states.
@@ -95,9 +101,9 @@ class TrackerCard extends StatelessWidget {
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: InkWell(
-        // A retryable failure without an onRetry callback falls back to the
-        // normal tap (the card must never become untappable).
-        onTap: _retryableFailure ? (onRetry ?? onTap) : onTap,
+        // A settled-without-price failure without an onRetry callback falls
+        // back to the normal tap (the card must never become untappable).
+        onTap: _settledWithoutPrice ? (onRetry ?? onTap) : onTap,
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Row(
@@ -145,7 +151,10 @@ class TrackerCard extends StatelessWidget {
                               fetching: false,
                             ),
                           ),
-                        ] else if (_retryableFailure) ...[
+                        ] else if (_settledWithoutPrice) ...[
+                          // Settled failure (blocked / fetch_failed / an
+                          // unknown or contradictory status such as 'ok'
+                          // without a price): tap to retry the fetch.
                           Flexible(
                             child: _statusChip(
                               context,

@@ -128,6 +128,29 @@ void main() {
     expect(retried, 0);
   });
 
+  testWidgets('an anomalous ok-without-price never spins forever', (
+    tester,
+  ) async {
+    await _pumpCard(tester, _card(fetchStatus: 'ok'));
+    // Settled state → retry chip, no spinner.
+    expect(
+      find.text("Couldn't fetch the price - tap to retry."),
+      findsOneWidget,
+    );
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+  });
+
+  testWidgets('an unknown status value also settles (no endless spinner)', (
+    tester,
+  ) async {
+    await _pumpCard(tester, _card(fetchStatus: 'some_future_status'));
+    expect(
+      find.text("Couldn't fetch the price - tap to retry."),
+      findsOneWidget,
+    );
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+  });
+
   testWidgets('a card with a price shows the price, no chip', (tester) async {
     await _pumpCard(
       tester,

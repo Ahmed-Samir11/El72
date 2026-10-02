@@ -11,6 +11,14 @@ treating all failures as one silent timeout.
 
 Extraction strategy is deterministic (JSON-LD → meta → store markup →
 visible text); there is intentionally no LLM/agent involved.
+
+Lifecycle: :func:`fetch_price` calls are **serialized** on a module-level
+lock. That is deliberate: the connect-time DNS guard temporarily wraps
+``socket.getaddrinfo`` (thread-global) so only one fetch may run at a
+time, and serialization bounds headless-Chromium launches to one at a
+time (each launch is expensive; a burst of tracker additions must not
+spawn a browser per item). Fetches are network-bound and user-driven
+(low frequency), so the queue cost is negligible.
 """
 
 from __future__ import annotations
@@ -21,6 +29,7 @@ import json
 import logging
 import re
 import socket
+import threading
 from dataclasses import dataclass
 from typing import Optional, Tuple
 from urllib.parse import urljoin, urlsplit
@@ -134,6 +143,12 @@ def _connect_time_ssrf_guard():
         yield
     finally:
         socket.getaddrinfo = original
+
+
+# Serializes fetch_price (see module docstring): keeps the connect-time
+# DNS guard's thread-global socket patching safe and bounds concurrent
+# headless-Chromium launches to one.
+_FETCH_LOCK = threading.Lock()
 
 
 def _validate_public_url(url: str) -> None:
@@ -789,13 +804,16 @@ def _fetch_html_playwright(url: str, timeout_ms: int = 25000) -> Optional[str]:
                 context = browser.new_context(user_agent=_HEADERS["User-Agent"])
 
                 def _ssrf_guard(route):
-                    if route.request.resource_type == "document":
-                        target = route.request.url
-                        try:
-                            _validate_public_url(target)
-                        except ValueError:
-                            logger.warning("Blocked navigation to %s", target)
-                            return route.abort()
+                    # Attacker-controlled pages can also fire subresource
+                    # requests (fetch/XHR/image) at internal addresses from
+                    # inside the browser — so EVERY request type is
+                    # validated, not just main-frame navigations.
+                    target = route.request.url
+                    try:
+                        _validate_public_url(target)
+                    except ValueError:
+                        logger.warning("Blocked browser request to %s", target)
+                        return route.abort()
                     return route.continue_()
 
                 context.route("**/*", _ssrf_guard)
@@ -823,7 +841,15 @@ def fetch_price(url: str) -> FetchResult:
     Tries a plain HTTP fetch first (fast, no browser); falls back to
     headless Chromium for JS-rendered pages. Non-secure ``http://`` URLs
     are attempted over HTTPS first.
+
+    Serialized on :data:`_FETCH_LOCK` — see the module docstring.
     """
+    with _FETCH_LOCK:
+        return _fetch_price_unlocked(url)
+
+
+def _fetch_price_unlocked(url: str) -> FetchResult:
+    """Body of :func:`fetch_price` (caller holds :data:`_FETCH_LOCK`)."""
     logger.info("Starting price fetch for %s", url)
     # SSRF guard: user-supplied URLs must be public http/https before
     # anything is fetched (requests or browser).
