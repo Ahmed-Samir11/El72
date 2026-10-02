@@ -45,7 +45,10 @@ class ManualPayment(Base):
     # status: pending | approved | rejected
     status = Column(String(20), nullable=False, default="pending")
     reject_reason = Column(Text, nullable=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
+    # Indexed: supports the admin date-range filter (created_at range scan).
+    created_at = Column(
+        DateTime(timezone=True), nullable=False, default=_utcnow, index=True
+    )
     resolved_at = Column(DateTime(timezone=True), nullable=True)
     resolved_by = Column(
         String(36), ForeignKey("admins.id", ondelete="SET NULL"), nullable=True

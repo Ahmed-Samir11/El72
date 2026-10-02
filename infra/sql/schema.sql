@@ -137,6 +137,19 @@ CREATE TABLE IF NOT EXISTS credit_transactions (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+-- Separate admin credentials (not user tiers). Provisioned out-of-band.
+-- id is VARCHAR(36) (dashed UUID string) to match the SQLAlchemy models
+-- and allow FKs from payment_audit_log / manual_payments on both engines.
+-- NOTE: users.id is UUID in this canonical DDL, while the SQLAlchemy
+-- models map user ids as VARCHAR(36) dashed-UUID strings (pre-existing
+-- convention); Postgres accepts dashed UUID literals for the uuid type.
+CREATE TABLE IF NOT EXISTS admins (
+    id VARCHAR(36) PRIMARY KEY,
+    username VARCHAR(50) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
 -- Manual payments (bridge flow, pre-Paymob): user submits "I've paid",
 -- admin verifies the transfer and approves/rejects. Approval grants credits.
 CREATE TABLE IF NOT EXISTS manual_payments (
@@ -156,6 +169,8 @@ CREATE TABLE IF NOT EXISTS manual_payments (
 
 CREATE INDEX IF NOT EXISTS idx_manual_payments_user_id ON manual_payments(user_id);
 CREATE INDEX IF NOT EXISTS idx_manual_payments_status ON manual_payments(status);
+-- Supports the admin date-range filter (created_at range scan).
+CREATE INDEX IF NOT EXISTS idx_manual_payments_created_at ON manual_payments(created_at);
 
 -- Append-only audit trail for admin payment actions (no UPDATE/DELETE).
 CREATE TABLE IF NOT EXISTS payment_audit_log (
@@ -170,16 +185,6 @@ CREATE TABLE IF NOT EXISTS payment_audit_log (
 );
 
 CREATE INDEX IF NOT EXISTS idx_payment_audit_log_order_ref ON payment_audit_log(order_ref);
-
--- Separate admin credentials (not user tiers). Provisioned out-of-band.
--- id is VARCHAR(36) (dashed UUID string) to match the SQLAlchemy models
--- and allow FKs from payment_audit_log / manual_payments on both engines.
-CREATE TABLE IF NOT EXISTS admins (
-    id VARCHAR(36) PRIMARY KEY,
-    username VARCHAR(50) UNIQUE NOT NULL,
-    password_hash VARCHAR(255) NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
-);
 
 -- Affiliate clicks for merchant revenue attribution
 CREATE TABLE IF NOT EXISTS affiliate_clicks (

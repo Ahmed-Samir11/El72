@@ -20,8 +20,8 @@ from sqlalchemy.pool import StaticPool
 from services.api.admin_models import Admin
 from services.api.dependencies import get_db, get_password_hash
 from services.api.main import app
-from services.api.manual_payment_models import PaymentAuditLog
-from services.api.models import Base
+from services.api.manual_payment_models import ManualPayment, PaymentAuditLog
+from services.api.models import Base, CreditTransaction
 
 USER_PHONE = "+201098765432"
 OTHER_PHONE = "+201055555555"
@@ -150,13 +150,25 @@ class TestManualPaymentCreate:
                 headers=_auth_headers(token),
             )
             assert resp.status_code == 200, f"attempt {i}: {resp.text}"
-        # The 4th pending order today is rejected.
+        # The 4th pending order today is rejected and no row is created.
         resp = client.post(
             "/payment/manual",
             json={"package": "standard"},
             headers=_auth_headers(token),
         )
         assert resp.status_code == 429
+
+        gen = app.dependency_overrides[get_db]()
+        db = next(gen)
+        try:
+            pending = (
+                db.query(ManualPayment)
+                .filter(ManualPayment.status == "pending")
+                .count()
+            )
+            assert pending == 3
+        finally:
+            db.close()
 
 
 class TestManualPaymentLookup:
@@ -213,6 +225,16 @@ class TestAdminAuth:
         """A user JWT (sub=user_id) must not authorize admin endpoints."""
         token = _user_token(client)
         resp = client.get("/admin/payments", headers=_auth_headers(token))
+        assert resp.status_code == 401
+
+    def test_admin_token_rejected_on_user_endpoint(self, client):
+        """An admin JWT (sub=admin:username) must not authorize user endpoints."""
+        admin_token = _admin_token(client)
+        resp = client.post(
+            "/payment/manual",
+            json={"package": "standard"},
+            headers=_auth_headers(admin_token),
+        )
         assert resp.status_code == 401
 
 
@@ -303,6 +325,25 @@ class TestApproveReject:
         assert data["credits_granted"] == 10
         # Free tier: 3 starting credits + 10 granted = 13.
         assert data["new_balance"] == 13
+
+        # Approval persists resolved_by/resolved_at and a credit transaction.
+        gen = app.dependency_overrides[get_db]()
+        db = next(gen)
+        try:
+            payment = db.query(ManualPayment).filter_by(order_ref=order_ref).first()
+            assert payment is not None
+            assert payment.status == "approved"
+            assert payment.resolved_by is not None
+            assert payment.resolved_at is not None
+            txns = (
+                db.query(CreditTransaction)
+                .filter(CreditTransaction.user_id == payment.user_id)
+                .all()
+            )
+            grants = [t for t in txns if t.amount == 10]
+            assert len(grants) == 1
+        finally:
+            db.close()
 
     def test_approve_idempotent_no_double_grant(self, client):
         user_token = _user_token(client)

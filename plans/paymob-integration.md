@@ -62,8 +62,9 @@ GET /payment/manual/{order_ref}
   Response: { "id", "order_ref", "package", "amount_egp", "status", "reject_reason" }
 
 POST /admin/login
-  Body: { "username", "password" }   # separate admin credential
+  Body: { "username", "password" }   # separate admin credential, rate-limited (5/min)
   Response: { "access_token", "token_type" }
+  Token: signed with ADMIN_SECRET_KEY (separate from user tokens), 1h expiry
 
 GET /admin/payments?status=pending&date_from=...&date_to=...
   Auth: Admin token (422 on invalid dates)
@@ -98,20 +99,26 @@ POST /admin/payments/{order_ref}/reject
 
 ### Database
 
-```sql
-CREATE TABLE manual_payments (
-    id TEXT PRIMARY KEY,              -- "ELH-20250101-a3f2b"
-    user_id UUID NOT NULL REFERENCES users(id),
-    package TEXT NOT NULL,            -- "standard" | "premium"
-    amount_egp NUMERIC(10,2) NOT NULL,
-    status TEXT NOT NULL DEFAULT 'pending',  -- pending | approved | rejected
-    reject_reason TEXT,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    resolved_at TIMESTAMP,
-    resolved_by UUID                   -- admin who approved/rejected
-);
-CREATE UNIQUE INDEX idx_manual_payments_id ON manual_payments(id);
-```
+Implemented in `infra/sql/schema.sql` (canonical DDL). Summary:
+
+- **admins** — separate admin credentials (`id VARCHAR(36)`, `username UNIQUE`,
+  `password_hash`, `created_at`). Provisioned out-of-band; the first admin is
+  bootstrapped from `ADMIN_USERNAME`/`ADMIN_PASSWORD` at startup (idempotent,
+  concurrency-safe). Admins are never user tiers.
+- **manual_payments** — `id UUID PK`, `order_ref VARCHAR(32) UNIQUE`
+  (public identifier, format `ELH-{YYYYMMDD}-{random_hex_8}`), `user_id`,
+  `package` + `amount_egp` + `status` CHECK constraints, `reject_reason`,
+  `created_at` (indexed for admin date-range filters), `resolved_at`,
+  `resolved_by VARCHAR(36) REFERENCES admins(id) ON DELETE SET NULL`.
+- **payment_audit_log** — append-only trail of admin actions
+  (`action IN ('approve','reject','reveal_contact')`, `actor_id REFERENCES
+  admins(id)`, `target_user_id`, `order_ref`, `client_ip`). No UPDATE/DELETE
+  path exists.
+
+Note: the canonical DDL uses `UUID` for user ids (matching `users.id`), while
+the SQLAlchemy models map user ids as `VARCHAR(36)` dashed-UUID strings — a
+pre-existing convention in this codebase; Postgres accepts dashed UUID
+literals for the `uuid` type.
 
 ### Acceptance Criteria
 - [ ] User can select package, see payment details, submit "I've Paid"

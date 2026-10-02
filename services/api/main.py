@@ -53,26 +53,43 @@ from services.api.create_tables import ensure_columns  # noqa: E402
 
 ensure_columns(engine)
 
-# Bootstrap the first admin credential from environment variables if none
-# exists. Admins are a separate credential (not a user tier); after the first
-# bootstrap, new admins must be provisioned out-of-band.
+from sqlalchemy.exc import IntegrityError  # noqa: E402
+
 from services.api.admin_models import Admin  # noqa: E402
 from services.api.dependencies import get_password_hash  # noqa: E402
 
-_admin_session = SessionLocal()
-if (
-    _admin_session.query(Admin).count() == 0
-    and os.getenv("ADMIN_USERNAME")
-    and os.getenv("ADMIN_PASSWORD")
-):
-    _admin_session.add(
-        Admin(
-            username=os.getenv("ADMIN_USERNAME"),
-            password_hash=get_password_hash(os.getenv("ADMIN_PASSWORD")),
-        )
-    )
-    _admin_session.commit()
-_admin_session.close()
+
+def bootstrap_admin() -> None:
+    """Create the first admin credential from env vars if none exists.
+
+    Admins are a separate credential (not a user tier); after the first
+    bootstrap, new admins must be provisioned out-of-band. Idempotent and
+    concurrency-safe: if two instances race to create the first admin, the
+    loser hits the username UNIQUE constraint and continues harmlessly.
+    """
+    session = SessionLocal()
+    try:
+        if (
+            session.query(Admin).count() == 0
+            and os.getenv("ADMIN_USERNAME")
+            and os.getenv("ADMIN_PASSWORD")
+        ):
+            session.add(
+                Admin(
+                    username=os.getenv("ADMIN_USERNAME"),
+                    password_hash=get_password_hash(os.getenv("ADMIN_PASSWORD")),
+                )
+            )
+            try:
+                session.commit()
+                logger.info("Bootstrapped first admin credential")
+            except IntegrityError:
+                # Lost the race to a concurrent startup; the other instance
+                # already created the admin.
+                session.rollback()
+    finally:
+        session.close()
+
 
 app = FastAPI(title="Elhaq API")
 limiter = Limiter(key_func=get_remote_address)
@@ -120,6 +137,7 @@ DEMO_MODE = os.getenv("DEMO_MODE", "True").lower() in ("1", "true", "yes", "on")
 
 @app.on_event("startup")
 def _seed_demo_data_on_startup() -> None:
+    bootstrap_admin()
     if not DEMO_MODE:
         return
     try:

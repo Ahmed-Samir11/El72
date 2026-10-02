@@ -19,14 +19,17 @@ Security properties:
 """
 
 import logging
+import os
 import secrets
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials
 from jose import JWTError, jwt
 from pydantic import BaseModel
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -49,6 +52,13 @@ from services.api.routers.auth import Token
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+limiter = Limiter(key_func=get_remote_address)
+
+# Admin tokens use a separate secret (falls back to the app secret if unset)
+# and a short 1-hour lifetime, so a leaked admin token is less useful than a
+# leaked user token.
+ADMIN_SECRET_KEY = os.getenv("ADMIN_SECRET_KEY", SECRET_KEY)
+ADMIN_TOKEN_EXPIRE_HOURS = 1
 
 # Package pricing (server-determined — clients never send amounts)
 PACKAGE_PRICING = {
@@ -72,10 +82,10 @@ def _utcnow() -> datetime:
 def _generate_order_ref() -> str:
     """Generate a unique, unguessable order reference.
 
-    Format: ELH-{YYYYMMDD}-{random_hex_6}
+    Format: ELH-{YYYYMMDD}-{random_hex_8} (32 bits of randomness).
     """
     date_part = _utcnow().strftime("%Y%m%d")
-    random_part = secrets.token_hex(3)  # 6 hex chars
+    random_part = secrets.token_hex(4)  # 8 hex chars
     return f"ELH-{date_part}-{random_part}"
 
 
@@ -84,6 +94,15 @@ def _mask_phone(phone: str) -> str:
     if len(phone) <= 5:
         return phone[:2] + "****"
     return phone[:3] + "*" * (len(phone) - 5) + phone[-2:]
+
+
+def _client_ip(request: Request) -> Optional[str]:
+    """Best-effort client IP: honor X-Forwarded-For behind a proxy/LB,
+    falling back to the direct socket address."""
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()[:45]
+    return request.client.host if request.client else None
 
 
 def _audit_entry(
@@ -95,14 +114,13 @@ def _audit_entry(
     request: Request,
 ) -> None:
     """Append an audit entry (no UPDATE/DELETE path exists for this table)."""
-    client_ip = request.client.host if request.client else None
     db.add(
         PaymentAuditLog(
             action=action,
             actor_id=str(admin.id),
             target_user_id=target_user_id,
             order_ref=order_ref,
-            client_ip=client_ip,
+            client_ip=_client_ip(request),
         )
     )
 
@@ -137,7 +155,9 @@ def get_current_admin(
         headers={"WWW-Authenticate": "Bearer"},
     )
     try:
-        payload = jwt.decode(token.credentials, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(
+            token.credentials, ADMIN_SECRET_KEY, algorithms=[ALGORITHM]
+        )
         sub = payload.get("sub", "")
     except JWTError:
         raise credentials_exception from None
@@ -149,13 +169,24 @@ def get_current_admin(
     return admin
 
 
+@limiter.limit("20/minute")
 @router.post("/admin/login", response_model=Token)
-def admin_login(body: AdminLogin, db: Session = Depends(get_db)):
-    """Login with a separate admin credential (not a user account)."""
+def admin_login(
+    body: AdminLogin,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Login with a separate admin credential (not a user account).
+
+    Rate-limited to 20 attempts/minute per client IP (brute-force guard).
+    """
     admin = db.query(Admin).filter(Admin.username == body.username).first()
     if not admin or not pwd_context.verify(body.password, admin.password_hash):
         raise HTTPException(status_code=401, detail="Invalid admin credentials")
-    access_token = create_access_token(data={"sub": f"admin:{admin.username}"})
+    access_token = create_access_token(
+        data={"sub": f"admin:{admin.username}"},
+        expires_delta=timedelta(hours=ADMIN_TOKEN_EXPIRE_HOURS),
+    )
     return {"access_token": access_token, "token_type": "bearer"}
 
 
@@ -168,7 +199,18 @@ class ManualPaymentCreate(BaseModel):
     package: str  # "standard" | "premium"
 
 
-@router.post("/payment/manual", response_model=dict)
+class ManualPaymentResponse(BaseModel):
+    id: str
+    order_ref: str
+    package: str
+    amount_egp: float
+    status: str
+    reject_reason: Optional[str] = None
+    created_at: str
+    resolved_at: Optional[str] = None
+
+
+@router.post("/payment/manual", response_model=ManualPaymentResponse)
 def create_manual_payment(
     body: ManualPaymentCreate,
     db: Session = Depends(get_db),
@@ -229,17 +271,19 @@ def create_manual_payment(
             status_code=500, detail="Could not allocate an order reference"
         )
 
-    return {
-        "id": str(payment.id),
-        "order_ref": payment.order_ref,
-        "package": payment.package,
-        "amount_egp": float(payment.amount_egp),
-        "status": payment.status,
-        "created_at": payment.created_at.isoformat(),
-    }
+    return ManualPaymentResponse(
+        id=str(payment.id),
+        order_ref=payment.order_ref,
+        package=payment.package,
+        amount_egp=float(payment.amount_egp),
+        status=payment.status,
+        reject_reason=None,
+        created_at=payment.created_at.isoformat(),
+        resolved_at=None,
+    )
 
 
-@router.get("/payment/manual/{order_ref}", response_model=dict)
+@router.get("/payment/manual/{order_ref}", response_model=ManualPaymentResponse)
 def get_manual_payment(
     order_ref: str,
     db: Session = Depends(get_db),
@@ -258,16 +302,16 @@ def get_manual_payment(
         # 404 (not 403) to avoid leaking that an order exists for someone else.
         raise HTTPException(status_code=404, detail="Payment not found")
 
-    return {
-        "id": str(payment.id),
-        "order_ref": payment.order_ref,
-        "package": payment.package,
-        "amount_egp": float(payment.amount_egp),
-        "status": payment.status,
-        "reject_reason": payment.reject_reason,
-        "created_at": payment.created_at.isoformat(),
-        "resolved_at": payment.resolved_at.isoformat() if payment.resolved_at else None,
-    }
+    return ManualPaymentResponse(
+        id=str(payment.id),
+        order_ref=payment.order_ref,
+        package=payment.package,
+        amount_egp=float(payment.amount_egp),
+        status=payment.status,
+        reject_reason=payment.reject_reason,
+        created_at=payment.created_at.isoformat(),
+        resolved_at=payment.resolved_at.isoformat() if payment.resolved_at else None,
+    )
 
 
 # ---------------------------------------------------------------------------
