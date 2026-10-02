@@ -17,10 +17,11 @@ logs or stores raw secret values.
 
 import re
 import threading
+import time
 from collections import deque
-from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+from loguru import logger
 from sqlalchemy.orm import Session
 
 from services.api.manual_payment_models import PaymentAuditLog
@@ -45,9 +46,14 @@ _IBAN_RE = re.compile(r"\b([A-Z]{2}\d{4})[A-Z0-9]{8,18}(\d{4})\b")
 def sanitize_for_log(value: str) -> str:
     """Redact sensitive data from a string before it is written to logs.
 
-    Card numbers, gateway tokens and OTPs are fully redacted; phone numbers
-    and IBANs are masked (prefix + suffix kept) per the plan's log
+    Card numbers, gateway tokens and labeled OTPs are fully redacted; phone
+    numbers and IBANs are masked (prefix + suffix kept) per the plan's log
     sanitization rules.
+
+    Documented limitation: secrets embedded without any recognizable label
+    or shape (e.g. a bare 6-digit code with no "otp" nearby) cannot be
+    detected reliably — redacting arbitrary digit runs would corrupt
+    amounts, counts and order data. Callers must not log raw secrets.
     """
     if not value:
         return value
@@ -68,6 +74,17 @@ WEBHOOK_SIGNATURE_WINDOW_SECONDS = 60
 OTP_FAILURE_THRESHOLD = 10
 OTP_FAILURE_WINDOW_SECONDS = 3600
 
+# Explicit per-event configuration. Events not listed here are NOT tracked
+# (record_failure logs a warning and returns False) so an unknown event can
+# never silently inherit another event's threshold.
+_EVENT_CONFIG: dict[str, tuple[int, int]] = {
+    "webhook_signature_failed": (
+        WEBHOOK_SIGNATURE_WINDOW_SECONDS,
+        WEBHOOK_SIGNATURE_FAILURE_THRESHOLD,
+    ),
+    "otp_failed": (OTP_FAILURE_WINDOW_SECONDS, OTP_FAILURE_THRESHOLD),
+}
+
 
 class SecurityMonitor:
     """Sliding-window failure counters for security-relevant events.
@@ -75,6 +92,9 @@ class SecurityMonitor:
     ``record_failure`` returns True exactly when the threshold for that
     event is crossed within its window, so callers can emit an alert (and an
     audit entry) at most once per threshold crossing.
+
+    Windows store epoch-second floats (``time.time()``), so there is no
+    datetime object to get naive/aware mixed up in the eviction math.
     """
 
     def __init__(self) -> None:
@@ -84,26 +104,27 @@ class SecurityMonitor:
         # after the count drops back below the threshold).
         self._alerting: dict[str, bool] = {}
 
-    def record_failure(self, event: str, now: Optional[datetime] = None) -> bool:
+    def record_failure(self, event: str, now: Optional[float] = None) -> bool:
         """Record one failure for ``event``; return True if the threshold
-        for that event is now exceeded within its window."""
+        for that event is now exceeded within its window.
+
+        ``now`` is an epoch-seconds float (defaults to ``time.time()``);
+        pass an explicit value in tests.
+        """
+        config = _EVENT_CONFIG.get(event)
+        if config is None:
+            logger.warning(
+                "SecurityMonitor: untracked event type {!r}; not counted", event
+            )
+            return False
+        window_seconds, threshold = config
         if now is None:
-            now = datetime.now(timezone.utc)
-        window_seconds = (
-            WEBHOOK_SIGNATURE_WINDOW_SECONDS
-            if event == "webhook_signature_failed"
-            else OTP_FAILURE_WINDOW_SECONDS
-        )
-        threshold = (
-            WEBHOOK_SIGNATURE_FAILURE_THRESHOLD
-            if event == "webhook_signature_failed"
-            else OTP_FAILURE_THRESHOLD
-        )
+            now = time.time()
         with self._lock:
             window = self._windows.setdefault(event, deque())
             window.append(now)
             # Evict entries outside the window.
-            cutoff = now - timedelta(seconds=window_seconds)
+            cutoff = now - window_seconds
             while window and window[0] < cutoff:
                 window.popleft()
             count = len(window)
@@ -135,6 +156,9 @@ security_monitor = SecurityMonitor()
 # Payment event audit
 # ---------------------------------------------------------------------------
 
+# NOTE: must stay in sync with the CHECK constraint on payment_audit_log.action
+# in infra/sql/schema.sql (a test in test_payment_security.py asserts the two
+# match).
 PAYMENT_EVENT_TYPES = frozenset(
     {
         "approve",
@@ -158,14 +182,21 @@ def record_payment_event(
     ip_address: Optional[str] = None,
     actor_id: Optional[str] = None,
     actor_username: Optional[str] = None,
+    target_user_phone: Optional[str] = None,
 ) -> PaymentAuditLog:
     """Append one row to the append-only payment audit log.
+
+    This is the single entry point for ALL payment audit writes (admin
+    actions included); do not construct ``PaymentAuditLog`` directly.
 
     ``detail`` must already be sanitized via :func:`sanitize_for_log`; this
     helper enforces it defensively so no caller can leak sensitive data.
 
     Admin-attributed events pass both ``actor_id`` (FK admins) and
     ``actor_username`` (snapshot that survives admin deletion).
+
+    The entry is only added to the session: the CALLER is responsible for
+    committing (or rolling back) the transaction.
     """
     if event_type not in PAYMENT_EVENT_TYPES:
         raise ValueError(f"Unknown payment event type: {event_type}")
@@ -177,6 +208,7 @@ def record_payment_event(
         client_ip=ip_address,
         actor_id=actor_id,
         actor_username=actor_username,
+        target_user_phone=target_user_phone,
     )
     db.add(entry)
     return entry

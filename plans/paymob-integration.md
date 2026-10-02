@@ -689,6 +689,14 @@ CREATE TABLE payment_audit_log (
 - `SecurityMonitor` is an in-process singleton (`security_monitor`); a
   distributed (Redis) counter is a possible hardening for multi-instance
   deployments.
+- Existing deployments are upgraded via
+  `infra/sql/migrations/0001_payment_audit_log_detail.sql` (idempotent:
+  adds the `detail` column and widens the `action` CHECK). Fresh installs
+  get both directly from `infra/sql/schema.sql`; a test asserts
+  `PAYMENT_EVENT_TYPES` matches the schema CHECK.
+- ALL audit writes go through `record_payment_event()` — no direct
+  `PaymentAuditLog(...)` construction outside that helper (the Feature 0
+  `_audit_entry` helper was migrated onto it).
 
 ### Dependencies
 - All other features depend on this

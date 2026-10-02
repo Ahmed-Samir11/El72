@@ -45,8 +45,9 @@ from services.api.dependencies import (
     pwd_context,
     security,
 )
-from services.api.manual_payment_models import ManualPayment, PaymentAuditLog
+from services.api.manual_payment_models import ManualPayment
 from services.api.models import User
+from services.api.payment_security import record_payment_event
 from services.api.routers.auth import Token
 
 logger = logging.getLogger(__name__)
@@ -128,17 +129,17 @@ def _audit_entry(
     request: Request,
     target_user_phone: Optional[str] = None,
 ) -> None:
-    """Append an audit entry (no UPDATE/DELETE path exists for this table)."""
-    db.add(
-        PaymentAuditLog(
-            action=action,
-            actor_id=str(admin.id),
-            actor_username=admin.username,
-            target_user_id=target_user_id,
-            target_user_phone=target_user_phone,
-            order_ref=order_ref,
-            client_ip=_client_ip(request),
-        )
+    """Append an audit entry via the single record_payment_event entry point
+    (no UPDATE/DELETE path exists for this table)."""
+    record_payment_event(
+        db,
+        event_type=action,
+        user_id=target_user_id,
+        payment_ref=order_ref,
+        ip_address=_client_ip(request),
+        actor_id=str(admin.id),
+        actor_username=admin.username,
+        target_user_phone=target_user_phone,
     )
 
 
