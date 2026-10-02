@@ -12,10 +12,12 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from services.api.dependencies import get_current_user, get_db
+from services.api.manual_payment_models import ManualPayment  # noqa: F401
 from services.api.models import Alert, Base, User
 from services.api.routers import affiliate as affiliate_router
 from services.api.routers import auth, public_api
 from services.api.routers import credits as credits_router
+from services.api.routers import payment as payment_router
 from services.api.tracked_items_api import router as tracked_items_router
 from services.api.tracked_items_models import Base as TrackedBase
 from services.common.redis_client import RedisStreamClient
@@ -50,6 +52,52 @@ TrackedBase.metadata.create_all(bind=engine)
 from services.api.create_tables import ensure_columns  # noqa: E402
 
 ensure_columns(engine)
+
+from sqlalchemy.exc import IntegrityError  # noqa: E402
+
+from services.api.admin_models import Admin  # noqa: E402
+from services.api.dependencies import get_password_hash  # noqa: E402
+
+
+def bootstrap_admin() -> None:
+    """Create the first admin credential from env vars if none exists.
+
+    Admins are a separate credential (not a user tier); after the first
+    bootstrap, new admins must be provisioned out-of-band. Idempotent and
+    concurrency-safe: if two instances race to create the first admin, the
+    loser hits the username UNIQUE constraint and continues harmlessly.
+    """
+    admin_username = os.getenv("ADMIN_USERNAME")
+    admin_password = os.getenv("ADMIN_PASSWORD")
+
+    session = SessionLocal()
+    try:
+        if session.query(Admin).count() == 0 and admin_username and admin_password:
+            session.add(
+                Admin(
+                    username=admin_username,
+                    password_hash=get_password_hash(admin_password),
+                )
+            )
+            try:
+                session.commit()
+                logger.info("Bootstrapped first admin credential")
+            except IntegrityError:
+                # Lost the race to a concurrent startup; the other instance
+                # already created the admin.
+                session.rollback()
+        else:
+            # No existing admin and no credentials configured: the admin
+            # panel is unavailable. Surface this to operators at startup.
+            if session.query(Admin).count() == 0:
+                logger.warning(
+                    "No admin credentials configured (ADMIN_USERNAME / "
+                    "ADMIN_PASSWORD unset) and no admin exists; the admin "
+                    "payment endpoints will be unusable."
+                )
+    finally:
+        session.close()
+
 
 app = FastAPI(title="Elhaq API")
 limiter = Limiter(key_func=get_remote_address)
@@ -87,6 +135,9 @@ app.include_router(affiliate_router.router)
 # Tracked-item lifecycle, including one-credit deduction per new tracker.
 app.include_router(tracked_items_router)
 
+# Manual payment flow (bridge to Paymob).
+app.include_router(payment_router.router)
+
 # Demo mode: seed realistic demo data on startup (idempotent).
 # Toggle with DEMO_MODE=True (default) for the investor demo.
 DEMO_MODE = os.getenv("DEMO_MODE", "True").lower() in ("1", "true", "yes", "on")
@@ -94,6 +145,7 @@ DEMO_MODE = os.getenv("DEMO_MODE", "True").lower() in ("1", "true", "yes", "on")
 
 @app.on_event("startup")
 def _seed_demo_data_on_startup() -> None:
+    bootstrap_admin()
     if not DEMO_MODE:
         return
     try:

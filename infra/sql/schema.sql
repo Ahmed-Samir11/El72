@@ -137,6 +137,83 @@ CREATE TABLE IF NOT EXISTS credit_transactions (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+-- Separate admin credentials (not user tiers). Provisioned out-of-band.
+-- id is VARCHAR(36) (dashed UUID string) to match the SQLAlchemy models
+-- and allow FKs from payment_audit_log / manual_payments on both engines.
+-- NOTE: users.id is UUID in this canonical DDL, while the SQLAlchemy
+-- models map user ids as VARCHAR(36) dashed-UUID strings (pre-existing
+-- convention); Postgres accepts dashed UUID literals for the uuid type.
+CREATE TABLE IF NOT EXISTS admins (
+    id VARCHAR(36) PRIMARY KEY,
+    username VARCHAR(50) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+-- Manual payments (bridge flow, pre-Paymob): user submits "I've paid",
+-- admin verifies the transfer and approves/rejects. Approval grants credits.
+CREATE TABLE IF NOT EXISTS manual_payments (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    order_ref VARCHAR(32) UNIQUE NOT NULL,
+    -- SET NULL (not CASCADE): payment history is a financial record and
+    -- must survive user deletion for auditing.
+    user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    -- Snapshot of the payer's phone at creation time so the row keeps
+    -- forensic attribution even if the user account is later deleted.
+    user_phone VARCHAR(20),
+    package VARCHAR(20) NOT NULL
+        CHECK (package IN ('standard', 'premium')),
+    amount_egp NUMERIC(10, 2) NOT NULL CHECK (amount_egp > 0),
+    status VARCHAR(20) NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'approved', 'rejected')),
+    reject_reason TEXT,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    resolved_at TIMESTAMP WITH TIME ZONE,
+    resolved_by VARCHAR(36) REFERENCES admins(id) ON DELETE SET NULL,
+    -- Snapshot of the resolving admin's username (survives admin deletion).
+    resolved_by_username VARCHAR(50)
+);
+
+CREATE INDEX IF NOT EXISTS idx_manual_payments_user_id ON manual_payments(user_id);
+-- Composite index for the primary admin query pattern: status filter +
+-- created_at date-range scan.
+CREATE INDEX IF NOT EXISTS idx_manual_payments_status_created
+    ON manual_payments(status, created_at);
+
+-- Append-only audit trail for admin payment actions (no UPDATE/DELETE).
+CREATE TABLE IF NOT EXISTS payment_audit_log (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    action VARCHAR(50) NOT NULL
+        CHECK (action IN ('approve', 'reject', 'reveal_contact')),
+    actor_id VARCHAR(36) REFERENCES admins(id) ON DELETE SET NULL,
+    -- Snapshot of the acting admin's username (survives admin deletion).
+    actor_username VARCHAR(50),
+    -- SET NULL (not CASCADE): audit rows are forensic records and must
+    -- survive user deletion.
+    target_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    -- Snapshot of the target user's phone at action time.
+    target_user_phone VARCHAR(20),
+    order_ref VARCHAR(32) NOT NULL,
+    client_ip VARCHAR(45),
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_payment_audit_log_order_ref ON payment_audit_log(order_ref);
+
+-- DB-level append-only enforcement: no UPDATE or DELETE on the audit log,
+-- independent of application code.
+CREATE OR REPLACE FUNCTION prevent_payment_audit_modification() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION 'payment_audit_log is append-only';
+END;
+$$;
+
+DROP TRIGGER IF EXISTS payment_audit_log_append_only ON payment_audit_log;
+CREATE TRIGGER payment_audit_log_append_only
+    BEFORE UPDATE OR DELETE ON payment_audit_log
+    FOR EACH ROW EXECUTE FUNCTION prevent_payment_audit_modification();
+
 -- Affiliate clicks for merchant revenue attribution
 CREATE TABLE IF NOT EXISTS affiliate_clicks (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
