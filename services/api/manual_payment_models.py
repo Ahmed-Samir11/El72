@@ -97,7 +97,8 @@ class PaymentAuditLog(Base):
     __table_args__ = (
         CheckConstraint(
             "action IN ('approve', 'reject', 'reveal_contact', "
-            "'webhook_received', 'webhook_signature_failed', 'otp_failed', "
+            "'webhook_received', 'webhook_signature_failed', "
+            "'webhook_duplicate', 'validation_rejected', 'otp_failed', "
             "'token_expired', 'amount_mismatch')",
         ),
     )
@@ -106,7 +107,8 @@ class PaymentAuditLog(Base):
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, nullable=False
     )
     # action: approve | reject | reveal_contact | webhook_received |
-    # webhook_signature_failed | otp_failed | token_expired | amount_mismatch
+    # webhook_signature_failed | webhook_duplicate | validation_rejected |
+    # otp_failed | token_expired | amount_mismatch
     action = Column(String(50), nullable=False)
     # Sanitized free-form detail (never raw card data / tokens / OTPs).
     detail = Column(Text, nullable=True)

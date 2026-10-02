@@ -189,7 +189,8 @@ CREATE TABLE IF NOT EXISTS payment_audit_log (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     action VARCHAR(50) NOT NULL
         CHECK (action IN ('approve', 'reject', 'reveal_contact',
-            'webhook_received', 'webhook_signature_failed', 'otp_failed',
+            'webhook_received', 'webhook_signature_failed',
+            'webhook_duplicate', 'validation_rejected', 'otp_failed',
             'token_expired', 'amount_mismatch')),
     detail TEXT,
     actor_id VARCHAR(36) REFERENCES admins(id) ON DELETE SET NULL,
