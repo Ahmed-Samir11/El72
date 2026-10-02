@@ -245,7 +245,13 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String creditsRemaining(int count) {
-    return 'You have $count trackers left';
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'You have $count trackers left',
+      one: 'You have 1 tracker left',
+    );
+    return '$_temp0';
   }
 
   @override
@@ -253,7 +259,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get reachedLimitBody =>
-      'Your free plan includes 3 price trackers and you\'ve used them all. Upgrade your plan to keep tracking more products.';
+      'You\'ve used all your available price trackers. Upgrade your plan to keep tracking prices and get more trackers.';
 
   @override
   String get upgradePlan => 'Upgrade plan';

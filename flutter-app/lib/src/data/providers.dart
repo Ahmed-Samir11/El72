@@ -52,6 +52,10 @@ final platformStatsProvider = FutureProvider<PlatformStats>((ref) {
 });
 
 /// The current user's credit balance and tier.
+///
+/// One-shot [FutureProvider]: callers must `ref.invalidate(creditBalanceProvider)`
+/// after any credit-consuming action (e.g. successful tracker creation) so
+/// the Profile tab reflects the new balance without an app restart.
 final creditBalanceProvider = FutureProvider<CreditBalance>((ref) {
   return ref.read(creditsRepositoryProvider).getBalance();
 });

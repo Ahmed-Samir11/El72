@@ -66,6 +66,10 @@ class _CreateTrackerSheetState extends ConsumerState<CreateTrackerSheet> {
                 // Refresh the Trackers list so the new item appears immediately.
                 ref.invalidate(trackedItemsProvider);
 
+                // The creation consumed one credit: refresh the balance so
+                // the Profile tab shows the new number.
+                ref.invalidate(creditBalanceProvider);
+
                 // Schedule a second refresh after the background price fetch
                 // has had time to complete (~3.5s). Guard with mounted: if the
                 // sheet is dismissed first, the state is disposed and `ref`

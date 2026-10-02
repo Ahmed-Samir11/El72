@@ -245,7 +245,17 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String creditsRemaining(int count) {
-    return 'لديك $count متتبعات متبقية';
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'لديك $count متتبعًا متبقية',
+      many: 'لديك $count متتبعًا متبقية',
+      few: 'لديك $count متتبعات متبقية',
+      two: 'لديك متتبعان متبقيان',
+      one: 'لديك متتبع واحد متبقٍ',
+      zero: 'لا توجد متتبعات متبقية لديك',
+    );
+    return '$_temp0';
   }
 
   @override
@@ -253,7 +263,7 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get reachedLimitBody =>
-      'خطة المجانية تشمل 3 متتبعات وقد استخدمتها كلها. قم بالترقية لمواصلة تتبع المزيد من المنتجات.';
+      'لقد استنفدت جميع متتبعات الأسعار المتاحة لديك. قم بترقية خطتك لمواصلة تتبع الأسعار والحصول على متتبعات إضافية.';
 
   @override
   String get upgradePlan => 'قم بالترقية';

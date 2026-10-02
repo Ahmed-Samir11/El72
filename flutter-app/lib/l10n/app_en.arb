@@ -140,7 +140,7 @@
 
   "liveDeals": "Live Deals",
 
-  "creditsRemaining": "You have {count} trackers left",
+  "creditsRemaining": "{count, plural, =1{You have 1 tracker left} other{You have {count} trackers left}}",
   "@creditsRemaining": {
     "description": "Profile tab: remaining tracker credits for the signed-in user.",
     "placeholders": {
@@ -151,7 +151,7 @@
   "@reachedLimitTitle": {
     "description": "Dialog title when tracker creation fails with HTTP 402 (no credits left)."
   },
-  "reachedLimitBody": "Your free plan includes 3 price trackers and you've used them all. Upgrade your plan to keep tracking more products.",
+  "reachedLimitBody": "You've used all your available price trackers. Upgrade your plan to keep tracking prices and get more trackers.",
   "@reachedLimitBody": {
     "description": "Dialog body explaining the credit limit and offering an upgrade."
   },

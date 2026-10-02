@@ -20,7 +20,12 @@ class InsufficientCreditsException implements Exception {
 
 /// Data source for the user's tracked items (`GET /tracked-items`).
 class TrackedItemsRepository {
-  final ApiClient _apiClient = ApiClient();
+  /// Creates a repository. An [ApiClient] may be injected for testing;
+  /// a default client is created when omitted.
+  TrackedItemsRepository({ApiClient? apiClient})
+    : _apiClient = apiClient ?? ApiClient();
+
+  final ApiClient _apiClient;
 
   Future<List<TrackedItem>> getTrackedItems({
     bool includeInactive = false,
@@ -45,23 +50,35 @@ class TrackedItemsRepository {
   }
 
   /// Create a tracker from a single product URL (any supported store).
+  ///
+  /// Throws [InsufficientCreditsException] when the backend rejects the
+  /// request with HTTP 402 (no credits left) and a generic [Exception] for
+  /// any other failure, so the UI can offer the upgrade flow for 402 and a
+  /// plain error message otherwise.
   Future<void> createFromUrl(String url, {double? targetPrice}) async {
-    final response = await _apiClient.dio.post(
-      '/tracked-items/from-url',
-      data: {
-        'url': url,
-        if (targetPrice != null && targetPrice > 0) 'target_price': targetPrice,
-      },
-    );
-    if (response.statusCode != null &&
-        (response.statusCode! < 200 || response.statusCode! >= 300)) {
-      final detail = response.data is Map
-          ? (response.data as Map)['detail']
+    try {
+      await _apiClient.dio.post(
+        '/tracked-items/from-url',
+        data: {
+          'url': url,
+          if (targetPrice != null && targetPrice > 0) 'target_price': targetPrice,
+        },
+      );
+    } on DioException catch (e) {
+      // Dio throws for every non-2xx status; map the credit-exhaustion
+      // signal (HTTP 402) to a typed exception and keep other failures
+      // generic.
+      final status = e.response?.statusCode;
+      final detail = e.response?.data is Map
+          ? (e.response!.data as Map)['detail']
           : null;
-      if (response.statusCode == 402) {
-        throw InsufficientCreditsException(detail ?? 'Insufficient credits');
+      // The backend sends `detail` as a string, but treat it as dynamic:
+      // a non-string value must not crash the app with a TypeError.
+      final message = detail is String ? detail : null;
+      if (status == 402) {
+        throw InsufficientCreditsException(message ?? 'Insufficient credits');
       }
-      throw Exception(detail ?? 'Failed to create tracker');
+      throw Exception(message ?? 'Failed to create tracker');
     }
   }
 

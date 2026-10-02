@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 
 import '../config.dart';
 import '../demo_data.dart';
@@ -28,8 +29,13 @@ class CreditsRepository {
           (response.data as Map).cast<String, dynamic>(),
         );
       }
-    } on DioException catch (_) {
-      // Fall through to demo fallback below.
+    } on DioException catch (e) {
+      // Fall through to demo fallback below. In demo mode *any* failure
+      // (including 401/403) is swallowed and replaced by demo data so the
+      // offline UI stays usable; the failure is logged for diagnostics.
+      if (AppConfig.demoMode) {
+        debugPrint('CreditsRepository: demo fallback after $e');
+      }
     }
     if (AppConfig.demoMode) return DemoData.creditBalance;
     throw DioException(

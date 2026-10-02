@@ -521,7 +521,7 @@ abstract class AppLocalizations {
   /// Profile tab: remaining tracker credits for the signed-in user.
   ///
   /// In en, this message translates to:
-  /// **'You have {count} trackers left'**
+  /// **'{count, plural, =1{You have 1 tracker left} other{You have {count} trackers left}}'**
   String creditsRemaining(int count);
 
   /// Dialog title when tracker creation fails with HTTP 402 (no credits left).
@@ -533,7 +533,7 @@ abstract class AppLocalizations {
   /// Dialog body explaining the credit limit and offering an upgrade.
   ///
   /// In en, this message translates to:
-  /// **'Your free plan includes 3 price trackers and you\'ve used them all. Upgrade your plan to keep tracking more products.'**
+  /// **'You\'ve used all your available price trackers. Upgrade your plan to keep tracking prices and get more trackers.'**
   String get reachedLimitBody;
 
   /// Button label that navigates to the subscription/plans screen.
