@@ -78,23 +78,38 @@ class ManualPayment(Base):
 
 
 class PaymentAuditLog(Base):
-    """Append-only audit trail for admin payment actions.
+    """Append-only audit trail of ALL payment events.
 
-    No UPDATE or DELETE endpoints exist for this table; entries are
-    insert-only by design. Postgres additionally enforces append-only via a
-    BEFORE UPDATE OR DELETE trigger (see infra/sql/schema.sql).
+    Covers admin actions (approve / reject / reveal_contact) and system
+    security events (webhook signature failures, OTP failures, token expiry,
+    amount mismatches). No UPDATE or DELETE endpoints exist for this table;
+    entries are insert-only by design. Postgres additionally enforces
+    append-only via a BEFORE UPDATE OR DELETE trigger (see
+    infra/sql/schema.sql).
+
+    ``detail`` must be sanitized via
+    :func:`services.api.payment_security.sanitize_for_log` — never raw card
+    data, gateway tokens or OTPs.
     """
 
     __tablename__ = "payment_audit_log"
 
     __table_args__ = (
-        CheckConstraint("action IN ('approve', 'reject', 'reveal_contact')"),
+        CheckConstraint(
+            "action IN ('approve', 'reject', 'reveal_contact', "
+            "'webhook_received', 'webhook_signature_failed', 'otp_failed', "
+            "'token_expired', 'amount_mismatch')",
+        ),
     )
 
     id = Column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, nullable=False
     )
-    action = Column(String(50), nullable=False)  # approve|reject|reveal_contact
+    # action: approve | reject | reveal_contact | webhook_received |
+    # webhook_signature_failed | otp_failed | token_expired | amount_mismatch
+    action = Column(String(50), nullable=False)
+    # Sanitized free-form detail (never raw card data / tokens / OTPs).
+    detail = Column(Text, nullable=True)
     actor_id = Column(
         String(36), ForeignKey("admins.id", ondelete="SET NULL"), nullable=True
     )

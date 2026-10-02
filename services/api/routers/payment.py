@@ -302,8 +302,10 @@ def create_manual_payment(
     )
 
 
+@limiter.limit("30/minute")
 @router.get("/payment/manual/{order_ref}", response_model=ManualPaymentResponse)
 def get_manual_payment(
+    request: Request,
     order_ref: str,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
@@ -350,12 +352,14 @@ class AdminPaymentResponse(BaseModel):
     resolved_at: Optional[str] = None
 
 
+@limiter.limit("20/minute")
 @router.get(
     "/admin/payments",
     response_model=list[AdminPaymentResponse],
     include_in_schema=False,
 )
 def list_manual_payments(
+    request: Request,
     db: Session = Depends(get_db),
     admin: Admin = Depends(get_current_admin),
     status_filter: Optional[str] = None,
@@ -398,6 +402,7 @@ def list_manual_payments(
     ]
 
 
+@limiter.limit("20/minute")
 @router.get(
     "/admin/payments/{order_ref}/contact", response_model=dict, include_in_schema=False
 )
@@ -432,6 +437,7 @@ class RejectBody(BaseModel):
     reason: str
 
 
+@limiter.limit("20/minute")
 @router.post(
     "/admin/payments/{order_ref}/approve", response_model=dict, include_in_schema=False
 )
@@ -515,6 +521,7 @@ def approve_manual_payment(
     }
 
 
+@limiter.limit("20/minute")
 @router.post(
     "/admin/payments/{order_ref}/reject", response_model=dict, include_in_schema=False
 )

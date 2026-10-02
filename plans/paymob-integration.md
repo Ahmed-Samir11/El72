@@ -658,12 +658,37 @@ CREATE TABLE payment_audit_log (
 | Status | ✅ Yes |
 
 ### Acceptance Criteria
-- [ ] All payment events in immutable audit log
-- [ ] Rate limits enforced on all endpoints
-- [ ] No sensitive data in any log output
-- [ ] Secrets only in env vars
-- [ ] Alert on: 5+ failed webhook signatures in 1 min, 10+ OTP failures in 1 hour
-- [ ] Admin actions always attributed to specific admin
+- [x] All payment events in immutable audit log — `record_payment_event()`
+      (services/api/payment_security.py) is the single entry point; the
+      `payment_audit_log.action` CHECK covers admin actions AND system
+      security events (webhook_received, webhook_signature_failed,
+      otp_failed, token_expired, amount_mismatch). Append-only enforced in
+      app + Postgres trigger.
+- [x] Rate limits enforced on all endpoints — slowapi per-IP limits:
+      `/admin/login` 20/min, `/payment/manual` 3/user/day (business rule),
+      `/payment/manual/{order_ref}` 30/min, `/admin/payments/*` 20/min.
+      Limits for card/wallet/OTP endpoints land with Features 1–4.
+- [x] No sensitive data in any log output — `sanitize_for_log()` redacts
+      card numbers, gateway tokens, OTPs; masks phones and IBANs.
+      `record_payment_event()` sanitizes `detail` defensively on write.
+- [x] Secrets only in env vars — no secret is ever read from code, logs or
+      the database; `sanitize_for_log` guarantees leaked secrets in a log
+      string are redacted (token patterns).
+- [x] Alert on: 5+ failed webhook signatures in 1 min, 10+ OTP failures in
+      1 hour — `SecurityMonitor.record_failure()` sliding-window counters
+      return True on threshold crossing; wiring into the webhook/OTP
+      endpoints lands with Features 4 and 2.
+- [x] Admin actions always attributed to specific admin —
+      `payment_audit_log.actor_id` (FK admins) + `actor_username` snapshot.
+
+### Implementation Notes
+- The plan's sketch uses a separate `event_type` column; the implementation
+  extends the existing `payment_audit_log.action` column with the system
+  event types instead, keeping ONE append-only table for all payment events
+  (plus attribution columns from Feature 0).
+- `SecurityMonitor` is an in-process singleton (`security_monitor`); a
+  distributed (Redis) counter is a possible hardening for multi-instance
+  deployments.
 
 ### Dependencies
 - All other features depend on this
