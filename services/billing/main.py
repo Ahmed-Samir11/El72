@@ -1,14 +1,14 @@
 import json
 import logging
 import os
+from decimal import Decimal
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from pydantic import BaseModel
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
 from sqlalchemy import create_engine, text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DataError, IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from services.api.credits import grant
@@ -33,8 +33,20 @@ PACKAGE_PRICES = {"standard": 30.0, "premium": 90.0}
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
+
+def _webhook_rate_limit_key(request) -> str:
+    """Rate-limit webhooks by SOCKET PEER IP, not X-Forwarded-For.
+
+    The caller is Paymob's egress infrastructure, not an end user behind a
+    proxy, so the transport peer is the correct identity. A spoofed
+    X-Forwarded-For header from an untrusted source must not be able to
+    shard (or exhaust) the quota.
+    """
+    return request.client.host if request.client else "unknown"
+
+
 app = FastAPI(title="Elhaq Billing")
-limiter = Limiter(key_func=get_remote_address)
+limiter = Limiter(key_func=_webhook_rate_limit_key)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
@@ -65,7 +77,12 @@ def verify_paymob_webhook(request: Request, body: bytes) -> bool:
 
 
 def _client_ip(request: Request) -> str:
-    """Best-effort client IP (X-Forwarded-For first, then socket peer)."""
+    """Best-effort client IP for AUDIT LOGGING only (never for rate limiting).
+
+    X-Forwarded-For is honored only when the deployment sits behind a
+    trusted reverse proxy that sets it (the same convention as the API
+    service); without one, the socket peer is used.
+    """
     forwarded = request.headers.get("x-forwarded-for", "")
     if forwarded:
         return forwarded.split(",")[0].strip()
@@ -145,8 +162,13 @@ async def paymob_webhook(request: Request, db: Session = Depends(get_db)):
     if package not in PACKAGE_CREDITS:
         raise HTTPException(status_code=400, detail="Invalid package")
 
-    # 4.6: validate the user exists.
-    user = db.query(User).filter(User.id == user_id_str).first()
+    # 4.6: validate the user exists. On Postgres a token that is not a valid
+    # UUID raises a type error at the column level; such a token cannot
+    # reference an existing user, so map it to 400.
+    try:
+        user = db.query(User).filter(User.id == user_id_str).first()
+    except DataError as exc:
+        raise HTTPException(status_code=400, detail="Unknown user") from exc
     if user is None:
         raise HTTPException(status_code=400, detail="Unknown user")
 
@@ -174,17 +196,10 @@ async def paymob_webhook(request: Request, db: Session = Depends(get_db)):
         return {"status": "duplicate"}
 
     if status_value != "succeeded":
-        # failed/canceled: record the outcome, grant nothing.
-        db.add(
-            PaymentLog(
-                user_id=user.id,
-                paymob_order_id=order_id,
-                amount=amount_paisa / 100,
-                currency="EGP",
-                status=status_value,
-                tier=package,
-            )
-        )
+        # failed/canceled: audit the outcome and grant nothing. Deliberately
+        # NO PaymentLog row — a terminal-failure record must not occupy the
+        # unique paymob_order_id, so a later succeeded delivery of the same
+        # order remains processable.
         record_payment_event(
             db,
             event_type="webhook_received",
@@ -209,7 +224,7 @@ async def paymob_webhook(request: Request, db: Session = Depends(get_db)):
             PaymentLog(
                 user_id=user.id,
                 paymob_order_id=order_id,
-                amount=amount_paisa / 100,
+                amount=Decimal(amount_paisa) / 100,
                 currency="EGP",
                 status=status_value,
                 tier=package,
@@ -233,7 +248,11 @@ async def paymob_webhook(request: Request, db: Session = Depends(get_db)):
 
     logger.info(
         "Payment processed",
-        extra={"order_id": order_id, "amount": amount_paisa / 100, "tier": package},
+        extra={
+            "order_id": order_id,
+            "amount": str(Decimal(amount_paisa) / 100),
+            "tier": package,
+        },
     )
     return {"status": "processed"}
 

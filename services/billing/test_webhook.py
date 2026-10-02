@@ -215,18 +215,25 @@ class TestWebhookProcessing:
         assert resp.status_code == 400
         assert resp.json() == {"detail": "Invalid package"}
 
-    def test_failed_status_ignored_no_credits_but_logged(self, client):
+    def test_failed_status_audited_no_credits_and_no_payment_row(self, client):
+        """A terminal failure is audited but must NOT occupy the unique
+        paymob_order_id, so a later succeeded delivery stays processable."""
         resp = _webhook(client, self._tx(client, status="failed"))
         assert resp.status_code == 200
         assert resp.json() == {"status": "ignored"}
 
         db = next(client.app.dependency_overrides[billing_main.get_db]())
         try:
-            log = db.query(PaymentLog).filter_by(paymob_order_id="txn_abc123").one()
-            assert log.status == "failed"
+            assert db.query(PaymentLog).count() == 0
             assert db.query(UserCredit).count() == 0
             audit = db.query(PaymentAuditLog).one()
             assert audit.action == "webhook_received"
+
+            # A succeeded delivery of the SAME order now processes cleanly.
+            ok = _webhook(client, self._tx(client, status="succeeded"))
+            assert ok.json() == {"status": "processed"}
+            credit = db.query(UserCredit).filter_by(user_id=client._test_user_id).one()
+            assert credit.balance == 13
         finally:
             db.close()
 

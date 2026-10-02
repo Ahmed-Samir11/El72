@@ -559,10 +559,20 @@ async def paymob_webhook(request: Request, db: Session = Depends(get_db)):
   `record_payment_event()`: `webhook_received` (success/failed/canceled),
   `webhook_signature_failed`, `amount_mismatch`. Signature failures are committed BEFORE
   the 401 is raised so the audit row survives.
-- **Rate limit**: 100/hour per IP via slowapi (`@limiter.limit` innermost decorator +
-  `RateLimitExceeded` exception handler on the billing app). Failed signatures count too.
-- The billing `GUID` type decorator is dialect-aware (plain string on SQLite, native UUID
-  on Postgres) because SQLite user ids are integers.
+- **Rate limit**: 100/hour via slowapi (`@limiter.limit` innermost decorator +
+  `RateLimitExceeded` exception handler). The key is the SOCKET PEER IP (not
+  X-Forwarded-For): the caller is Paymob's egress infrastructure, not an end user
+  behind a proxy, and a spoofed XFF must not be able to shard/exhaust the quota.
+  Failed signatures count too. Audit logging uses XFF-first `_client_ip` (trusted
+  reverse-proxy convention, same as the API service).
+- **Non-succeeded webhooks are audited only** — no `PaymentLog` row — so a
+  terminal-failure record does not occupy the unique `paymob_order_id` and a later
+  succeeded delivery of the same order remains processable.
+- **User lookup maps Postgres UUID type errors to 400** (`DataError` → "Unknown
+  user"): a token that is not a valid UUID cannot reference an existing user.
+- **Amounts use `Decimal`** (piastres ÷ 100) — no float monetary math.
+- The billing `GUID` type decorator is dialect-aware (plain string on SQLite, native
+  UUID on Postgres) because SQLite user ids are integers.
 
 ### Acceptance Criteria
 - [ ] Valid webhook → credits granted, payment logged

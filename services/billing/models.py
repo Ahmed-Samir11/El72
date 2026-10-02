@@ -33,10 +33,12 @@ class GUID(TypeDecorator):
     def process_result_value(self, value, dialect):
         if value is None or isinstance(value, uuid.UUID):
             return value
-        try:
+        # Postgres values are expected to be UUIDs; SQLite values are the
+        # plain string representations (user ids are integers there) and are
+        # returned as-is.
+        if dialect.name == "postgresql":
             return uuid.UUID(str(value))
-        except (ValueError, TypeError):
-            return value
+        return value
 
 
 Base = declarative_base()
