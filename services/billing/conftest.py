@@ -11,9 +11,10 @@ import pytest
 @pytest.fixture(autouse=True)
 def _reset_rate_limiter():
     # Deferred import: importing services.billing.main at collection time
-    # would create its SQLAlchemy engine before DATABASE_URL is finalized by
-    # other test modules. Importing inside the fixture body defers that to
-    # test-execution time, when the env is stable.
+    # would create its SQLAlchemy engine from whatever DATABASE_URL happens
+    # to be set at that moment. Importing inside the fixture body defers that
+    # to test-execution time; the engine is never used because get_db is
+    # overridden with an in-memory SQLite session in each test.
     from services.billing.main import limiter
 
     limiter.reset()

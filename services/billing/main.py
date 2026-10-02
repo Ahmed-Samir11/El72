@@ -41,6 +41,11 @@ def _webhook_rate_limit_key(request) -> str:
     proxy, so the transport peer is the correct identity. A spoofed
     X-Forwarded-For header from an untrusted source must not be able to
     shard (or exhaust) the quota.
+
+    Note: behind a reverse proxy the socket peer is the proxy itself, so
+    the limit acts as a GLOBAL flood guard for the endpoint — which is
+    exactly the plan's intent (4.9: "webhook endpoint is rate-limited
+    (100/hour); if exceeded → 429").
     """
     return request.client.host if request.client else "unknown"
 
@@ -81,12 +86,40 @@ def _client_ip(request: Request) -> str:
 
     X-Forwarded-For is honored only when the deployment sits behind a
     trusted reverse proxy that sets it (the same convention as the API
-    service); without one, the socket peer is used.
+    service); without one, the socket peer is used. Enforcing proxy trust is
+    a deployment concern (trusted-proxy configuration), not application
+    logic.
     """
     forwarded = request.headers.get("x-forwarded-for", "")
     if forwarded:
         return forwarded.split(",")[0].strip()
     return request.client.host if request.client else ""
+
+
+def _reject_webhook(db: Session, ip: str, reason: str, user_id, order_ref: str) -> None:
+    """Audit a rejected webhook outcome (committed BEFORE the 4xx is raised,
+    so the audit row survives)."""
+    record_payment_event(
+        db,
+        event_type="validation_rejected",
+        user_id=str(user_id) if user_id is not None else None,
+        payment_ref=order_ref,
+        detail=sanitize_for_log(f"reason={reason}"),
+        ip_address=ip,
+    )
+    db.commit()
+
+
+def _is_duplicate_order_error(exc: IntegrityError) -> bool:
+    """True ONLY for a unique violation on payment_logs.paymob_order_id.
+
+    Other integrity failures (foreign keys, NOT NULL, ...) must propagate —
+    they are bugs or attacks, not duplicate deliveries.
+    """
+    orig = str(exc.orig) if exc.orig else ""
+    return "paymob_order_id" in orig and (
+        "unique" in orig.lower() or "duplicate" in orig.lower()
+    )
 
 
 @app.post("/purchase")
@@ -143,11 +176,44 @@ async def paymob_webhook(request: Request, db: Session = Depends(get_db)):
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise HTTPException(status_code=400, detail="Invalid webhook payload") from exc
     if not isinstance(tx, dict):
+        _reject_webhook(db, ip, "invalid_payload", None, "")
         raise HTTPException(status_code=400, detail="Invalid webhook payload")
 
-    status_value = str(tx.get("status", ""))
-    order_id = str(tx.get("id", ""))
-    reference_id = str(tx.get("reference_id", ""))
+    # Strict payload validation — reject missing/None fields before use so
+    # nothing is ever stringified to 'None'.
+    order_id = tx.get("id")
+    status_value = tx.get("status")
+    reference_id = tx.get("reference_id")
+    amount_paisa = tx.get("amount")
+    if (
+        not isinstance(order_id, str)
+        or not order_id
+        or not isinstance(status_value, str)
+        or not status_value
+        or not isinstance(reference_id, str)
+        or not reference_id
+        or not isinstance(amount_paisa, int)
+        or isinstance(amount_paisa, bool)
+    ):
+        _reject_webhook(db, ip, "invalid_payload", None, "")
+        raise HTTPException(status_code=400, detail="Invalid webhook payload")
+
+    # 4.2: idempotency FIRST — a duplicate delivery short-circuits before any
+    # other validation (no user lookup, no side effects) and is audited.
+    existing = db.execute(
+        text("SELECT 1 FROM payment_logs WHERE paymob_order_id = :order_id"),
+        {"order_id": order_id},
+    ).first()
+    if existing is not None:
+        record_payment_event(
+            db,
+            event_type="webhook_duplicate",
+            payment_ref=order_id,
+            detail=sanitize_for_log("duplicate delivery"),
+            ip_address=ip,
+        )
+        db.commit()
+        return {"status": "duplicate"}
 
     # 4.4: validate reference_id format: elhaq-{user_id}-{package}. User ids
     # may contain dashes (UUIDs), so the package is the LAST segment and the
@@ -157,9 +223,11 @@ async def paymob_webhook(request: Request, db: Session = Depends(get_db)):
     # check.
     parts = reference_id.split("-")
     if len(parts) < 3 or parts[0] != "elhaq" or not parts[1]:
+        _reject_webhook(db, ip, "invalid_reference_id", None, order_id)
         raise HTTPException(status_code=400, detail="Invalid reference_id")
     user_id_str, package = "-".join(parts[1:-1]), parts[-1]
     if package not in PACKAGE_CREDITS:
+        _reject_webhook(db, ip, "invalid_package", None, order_id)
         raise HTTPException(status_code=400, detail="Invalid package")
 
     # 4.6: validate the user exists. On Postgres a token that is not a valid
@@ -168,12 +236,13 @@ async def paymob_webhook(request: Request, db: Session = Depends(get_db)):
     try:
         user = db.query(User).filter(User.id == user_id_str).first()
     except DataError as exc:
+        _reject_webhook(db, ip, "unknown_user", None, order_id)
         raise HTTPException(status_code=400, detail="Unknown user") from exc
     if user is None:
+        _reject_webhook(db, ip, "unknown_user", None, order_id)
         raise HTTPException(status_code=400, detail="Unknown user")
 
     # 4.3: validate amount (Paymob reports in piastres, the minor unit).
-    amount_paisa = tx.get("amount", 0)
     expected_paisa = int(PACKAGE_PRICES[package] * 100)
     if amount_paisa != expected_paisa:
         record_payment_event(
@@ -186,14 +255,6 @@ async def paymob_webhook(request: Request, db: Session = Depends(get_db)):
         )
         db.commit()
         raise HTTPException(status_code=400, detail="Amount mismatch")
-
-    # 4.2: idempotency — a duplicate delivery has no side effects.
-    existing = db.execute(
-        text("SELECT 1 FROM payment_logs WHERE paymob_order_id = :order_id"),
-        {"order_id": order_id},
-    ).first()
-    if existing is not None:
-        return {"status": "duplicate"}
 
     if status_value != "succeeded":
         # failed/canceled: audit the outcome and grant nothing. Deliberately
@@ -240,10 +301,20 @@ async def paymob_webhook(request: Request, db: Session = Depends(get_db)):
             ip_address=ip,
         )
         db.commit()
-    except IntegrityError:
-        # Lost a race on the unique paymob_order_id constraint: the duplicate
-        # won, so roll back and report it as a duplicate.
+    except IntegrityError as exc:
+        # Only a unique violation on paymob_order_id means we lost a race to
+        # a duplicate delivery; any other integrity failure propagates.
         db.rollback()
+        if not _is_duplicate_order_error(exc):
+            raise
+        record_payment_event(
+            db,
+            event_type="webhook_duplicate",
+            payment_ref=order_id,
+            detail=sanitize_for_log("duplicate delivery (race)"),
+            ip_address=ip,
+        )
+        db.commit()
         return {"status": "duplicate"}
 
     logger.info(

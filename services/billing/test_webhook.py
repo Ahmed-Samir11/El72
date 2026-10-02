@@ -168,6 +168,11 @@ class TestWebhookProcessing:
                 .count()
                 == 1
             )
+            # The duplicate delivery IS audited.
+            dup_audit = (
+                db.query(PaymentAuditLog).filter_by(action="webhook_duplicate").one()
+            )
+            assert dup_audit.order_ref == "txn_abc123"
         finally:
             db.close()
 
@@ -196,6 +201,14 @@ class TestWebhookProcessing:
         assert resp.status_code == 400
         assert resp.json() == {"detail": "Unknown user"}
 
+        db = next(client.app.dependency_overrides[billing_main.get_db]())
+        try:
+            # The rejection IS audited.
+            audit = db.query(PaymentAuditLog).one()
+            assert audit.action == "validation_rejected"
+        finally:
+            db.close()
+
     def test_malformed_reference_id_returns_400(self, client):
         for bad_ref in (
             "nope",
@@ -207,6 +220,18 @@ class TestWebhookProcessing:
             resp = _webhook(client, self._tx(client, reference_id=bad_ref))
             assert resp.status_code == 400, (bad_ref, resp.text)
 
+        db = next(client.app.dependency_overrides[billing_main.get_db]())
+        try:
+            # Every rejection is audited (immutable trail).
+            assert (
+                db.query(PaymentAuditLog)
+                .filter_by(action="validation_rejected")
+                .count()
+                == 5
+            )
+        finally:
+            db.close()
+
     def test_invalid_package_returns_400(self, client):
         resp = _webhook(
             client,
@@ -214,6 +239,13 @@ class TestWebhookProcessing:
         )
         assert resp.status_code == 400
         assert resp.json() == {"detail": "Invalid package"}
+
+        db = next(client.app.dependency_overrides[billing_main.get_db]())
+        try:
+            audit = db.query(PaymentAuditLog).one()
+            assert audit.action == "validation_rejected"
+        finally:
+            db.close()
 
     def test_failed_status_audited_no_credits_and_no_payment_row(self, client):
         """A terminal failure is audited but must NOT occupy the unique
@@ -226,14 +258,20 @@ class TestWebhookProcessing:
         try:
             assert db.query(PaymentLog).count() == 0
             assert db.query(UserCredit).count() == 0
-            audit = db.query(PaymentAuditLog).one()
-            assert audit.action == "webhook_received"
+            assert (
+                db.query(PaymentAuditLog).filter_by(action="webhook_received").count()
+                == 1
+            )
 
             # A succeeded delivery of the SAME order now processes cleanly.
             ok = _webhook(client, self._tx(client, status="succeeded"))
             assert ok.json() == {"status": "processed"}
             credit = db.query(UserCredit).filter_by(user_id=client._test_user_id).one()
             assert credit.balance == 13
+            assert (
+                db.query(PaymentAuditLog).filter_by(action="webhook_received").count()
+                == 2
+            )
         finally:
             db.close()
 

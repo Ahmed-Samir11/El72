@@ -570,6 +570,19 @@ async def paymob_webhook(request: Request, db: Session = Depends(get_db)):
   succeeded delivery of the same order remains processable.
 - **User lookup maps Postgres UUID type errors to 400** (`DataError` → "Unknown
   user"): a token that is not a valid UUID cannot reference an existing user.
+- **Idempotency check runs FIRST** (right after payload validation, before
+  reference_id/user/amount checks) so duplicate deliveries short-circuit with no
+  user lookup and are audited as `webhook_duplicate`.
+- **Every rejected outcome is audited**: `validation_rejected` (with the reason in
+  `detail`) for malformed payloads / reference_id / package / unknown user, plus
+  the dedicated `amount_mismatch` event. Audit rows are committed BEFORE the 4xx
+  is raised so they survive.
+- **Strict payload validation**: `id`/`status`/`reference_id` must be non-empty
+  strings and `amount` an int (bools excluded) — no `None` ever stringified to
+  `'None'`.
+- **IntegrityError handling is narrow**: only a unique violation on
+  `paymob_order_id` is treated as a duplicate race; any other integrity failure
+  propagates.
 - **Amounts use `Decimal`** (piastres ÷ 100) — no float monetary math.
 - The billing `GUID` type decorator is dialect-aware (plain string on SQLite, native
   UUID on Postgres) because SQLite user ids are integers.
