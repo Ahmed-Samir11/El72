@@ -381,19 +381,26 @@ async def test_startup_initializes_stream_pools_and_background_tasks():
     await analyzer_app.shutdown()
 
 
-def _collect_paths(routes):
+def _collect_paths(routes, _seen=None):
     """Flatten route paths, descending into mounted sub-routers.
 
     Newer Starlette versions expose mounted routers as ``_IncludedRouter``
-    objects which lack a direct ``path`` attribute.
+    objects which lack a direct ``path`` attribute. A visited guard keeps the
+    recursion safe if a route object ever appears more than once.
     """
+    if _seen is None:
+        _seen = set()
     paths = []
     for route in routes:
+        route_id = id(route)
+        if route_id in _seen:
+            continue
+        _seen.add(route_id)
         if hasattr(route, "path"):
             paths.append(route.path)
         sub_routes = getattr(route, "routes", None)
         if sub_routes:
-            paths.extend(_collect_paths(sub_routes))
+            paths.extend(_collect_paths(sub_routes, _seen))
     return paths
 
 
