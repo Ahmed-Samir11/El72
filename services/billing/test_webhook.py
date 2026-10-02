@@ -247,6 +247,64 @@ class TestWebhookProcessing:
         finally:
             db.close()
 
+    def test_invalid_currency_returns_400(self, client):
+        resp = _webhook(client, self._tx(client, currency="USD"))
+        assert resp.status_code == 400
+        assert resp.json() == {"detail": "Invalid currency"}
+
+        db = next(client.app.dependency_overrides[billing_main.get_db]())
+        try:
+            audit = db.query(PaymentAuditLog).one()
+            assert audit.action == "validation_rejected"
+        finally:
+            db.close()
+
+    def test_unknown_status_returns_400(self, client):
+        resp = _webhook(client, self._tx(client, status="processing"))
+        assert resp.status_code == 400
+        assert resp.json() == {"detail": "Invalid status"}
+
+        db = next(client.app.dependency_overrides[billing_main.get_db]())
+        try:
+            audit = db.query(PaymentAuditLog).one()
+            assert audit.action == "validation_rejected"
+        finally:
+            db.close()
+
+    def test_malformed_json_audited(self, client):
+        # A signed but unparseable body is rejected AND audited.
+        resp = client.post(
+            "/webhook/paymob",
+            content=b"this is not json",
+            headers={"X-Paymob-Signature": _sign(b"this is not json")},
+        )
+        assert resp.status_code == 400
+
+        db = next(client.app.dependency_overrides[billing_main.get_db]())
+        try:
+            audit = db.query(PaymentAuditLog).one()
+            assert audit.action == "validation_rejected"
+        finally:
+            db.close()
+
+    def test_missing_fields_audited(self, client):
+        # No amount field -> rejected AND audited.
+        payload = {
+            "id": "txn_no_amount",
+            "status": "succeeded",
+            "currency": "EGP",
+            "reference_id": f"elhaq-{client._test_user_id}-standard",
+        }
+        resp = _webhook(client, payload)
+        assert resp.status_code == 400
+
+        db = next(client.app.dependency_overrides[billing_main.get_db]())
+        try:
+            audit = db.query(PaymentAuditLog).one()
+            assert audit.action == "validation_rejected"
+        finally:
+            db.close()
+
     def test_failed_status_audited_no_credits_and_no_payment_row(self, client):
         """A terminal failure is audited but must NOT occupy the unique
         paymob_order_id, so a later succeeded delivery stays processable."""

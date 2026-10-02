@@ -28,6 +28,10 @@ PAYMOB_CHECKOUT_URL = os.getenv("PAYMOB_CHECKOUT_URL", "")
 
 PACKAGE_CREDITS = {"standard": 10, "premium": 30}
 PACKAGE_PRICES = {"standard": 30.0, "premium": 90.0}
+# Exact piastre (minor-unit) values — the validation path uses integers,
+# never float multiplication.
+PACKAGE_PRICES_PAISA = {"standard": 3000, "premium": 9000}
+WEBHOOK_STATUSES = {"succeeded", "failed", "canceled"}
 
 # SQLAlchemy setup
 engine = create_engine(DATABASE_URL)
@@ -51,7 +55,15 @@ def _webhook_rate_limit_key(request) -> str:
 
 
 app = FastAPI(title="Elhaq Billing")
-limiter = Limiter(key_func=_webhook_rate_limit_key)
+
+# Multi-instance deployments should set PAYMOB_RATE_LIMIT_REDIS so the
+# rate-limit state is shared across workers/processes (slowapi in-memory
+# state is process-local by default).
+RATE_LIMIT_STORAGE_URI = os.getenv("PAYMOB_RATE_LIMIT_REDIS", "")
+limiter_kwargs: dict = {"key_func": _webhook_rate_limit_key}
+if RATE_LIMIT_STORAGE_URI:
+    limiter_kwargs["storage_uri"] = RATE_LIMIT_STORAGE_URI
+limiter = Limiter(**limiter_kwargs)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
@@ -81,30 +93,36 @@ def verify_paymob_webhook(request: Request, body: bytes) -> bool:
     return verify_paymob_hmac(PAYMOB_HMAC_SECRET, body, signature)
 
 
+# X-Forwarded-For is honored ONLY when the deployment explicitly declares a
+# trusted reverse proxy (TRUST_PROXY=1); otherwise an untrusted client could
+# forge the audit IP.
+TRUST_PROXY = os.getenv("TRUST_PROXY", "") == "1"
+
+
 def _client_ip(request: Request) -> str:
     """Best-effort client IP for AUDIT LOGGING only (never for rate limiting).
 
-    X-Forwarded-For is honored only when the deployment sits behind a
-    trusted reverse proxy that sets it (the same convention as the API
-    service); without one, the socket peer is used. Enforcing proxy trust is
-    a deployment concern (trusted-proxy configuration), not application
-    logic.
+    X-Forwarded-For is honored only when TRUST_PROXY=1 (deployment behind a
+    trusted reverse proxy); otherwise the socket peer is used so an untrusted
+    client cannot forge the recorded IP.
     """
-    forwarded = request.headers.get("x-forwarded-for", "")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
+    if TRUST_PROXY:
+        forwarded = request.headers.get("x-forwarded-for", "")
+        if forwarded:
+            return forwarded.split(",")[0].strip()
     return request.client.host if request.client else ""
 
 
-def _reject_webhook(db: Session, ip: str, reason: str, user_id, order_ref: str) -> None:
+def _reject_webhook(db: Session, ip: str, detail: str, user_id, order_ref: str) -> None:
     """Audit a rejected webhook outcome (committed BEFORE the 4xx is raised,
-    so the audit row survives)."""
+    so the audit row survives). ``detail`` carries forensic context (reason +
+    the offending token/package); it is sanitized before storage."""
     record_payment_event(
         db,
         event_type="validation_rejected",
         user_id=str(user_id) if user_id is not None else None,
         payment_ref=order_ref,
-        detail=sanitize_for_log(f"reason={reason}"),
+        detail=sanitize_for_log(detail),
         ip_address=ip,
     )
     db.commit()
@@ -149,11 +167,16 @@ async def paymob_webhook(request: Request, db: Session = Depends(get_db)):
       4.1 HMAC-SHA512 signature on the raw body -> 401
       4.4 reference_id must match elhaq-{user_uuid}-{package} -> 400
       4.6 user must exist -> 400
-      4.3 amount must equal PACKAGE_PRICES[package] * 100 piastres -> 400
+      4.3 amount must equal the package's exact piastre value -> 400
       4.2 idempotency: unique paymob_order_id, duplicate -> no side effect
       4.5 atomic credit grant in one transaction
       4.8 every processing outcome is written to the immutable audit log
       4.9 rate limited (100/hour)
+
+    The endpoint is async (the raw body requires ``await``) and performs
+    short-lived synchronous database calls; webhook traffic is low-volume
+    and each transaction is millisecond-scale, so event-loop blocking is
+    acceptable for this endpoint.
     """
     body = await request.body()
     ip = _client_ip(request)
@@ -174,9 +197,11 @@ async def paymob_webhook(request: Request, db: Session = Depends(get_db)):
         data = json.loads(body.decode("utf-8"))
         tx = data.get("obj", data) if isinstance(data, dict) else None
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        # Malformed bodies are rejected AND audited (immutable trail).
+        _reject_webhook(db, ip, "invalid_payload: unparseable body", None, "")
         raise HTTPException(status_code=400, detail="Invalid webhook payload") from exc
     if not isinstance(tx, dict):
-        _reject_webhook(db, ip, "invalid_payload", None, "")
+        _reject_webhook(db, ip, "invalid_payload: not an object", None, "")
         raise HTTPException(status_code=400, detail="Invalid webhook payload")
 
     # Strict payload validation — reject missing/None fields before use so
@@ -185,6 +210,7 @@ async def paymob_webhook(request: Request, db: Session = Depends(get_db)):
     status_value = tx.get("status")
     reference_id = tx.get("reference_id")
     amount_paisa = tx.get("amount")
+    currency = tx.get("currency")
     if (
         not isinstance(order_id, str)
         or not order_id
@@ -194,9 +220,17 @@ async def paymob_webhook(request: Request, db: Session = Depends(get_db)):
         or not reference_id
         or not isinstance(amount_paisa, int)
         or isinstance(amount_paisa, bool)
+        or not isinstance(currency, str)
+        or not currency
     ):
-        _reject_webhook(db, ip, "invalid_payload", None, "")
+        _reject_webhook(db, ip, "invalid_payload: missing/typed fields", None, "")
         raise HTTPException(status_code=400, detail="Invalid webhook payload")
+
+    # Status whitelist: only the Paymob terminal statuses we understand are
+    # accepted; anything else is a rejected (and audited) payload.
+    if status_value not in WEBHOOK_STATUSES:
+        _reject_webhook(db, ip, f"unknown_status: {status_value}", None, order_id)
+        raise HTTPException(status_code=400, detail="Invalid status")
 
     # 4.2: idempotency FIRST — a duplicate delivery short-circuits before any
     # other validation (no user lookup, no side effects) and is audited.
@@ -223,11 +257,17 @@ async def paymob_webhook(request: Request, db: Session = Depends(get_db)):
     # check.
     parts = reference_id.split("-")
     if len(parts) < 3 or parts[0] != "elhaq" or not parts[1]:
-        _reject_webhook(db, ip, "invalid_reference_id", None, order_id)
+        _reject_webhook(
+            db,
+            ip,
+            f"invalid_reference_id: {reference_id}",
+            None,
+            order_id,
+        )
         raise HTTPException(status_code=400, detail="Invalid reference_id")
     user_id_str, package = "-".join(parts[1:-1]), parts[-1]
     if package not in PACKAGE_CREDITS:
-        _reject_webhook(db, ip, "invalid_package", None, order_id)
+        _reject_webhook(db, ip, f"invalid_package: {package}", None, order_id)
         raise HTTPException(status_code=400, detail="Invalid package")
 
     # 4.6: validate the user exists. On Postgres a token that is not a valid
@@ -236,14 +276,20 @@ async def paymob_webhook(request: Request, db: Session = Depends(get_db)):
     try:
         user = db.query(User).filter(User.id == user_id_str).first()
     except DataError as exc:
-        _reject_webhook(db, ip, "unknown_user", None, order_id)
+        _reject_webhook(db, ip, f"unknown_user: token={user_id_str}", None, order_id)
         raise HTTPException(status_code=400, detail="Unknown user") from exc
     if user is None:
-        _reject_webhook(db, ip, "unknown_user", None, order_id)
+        _reject_webhook(db, ip, f"unknown_user: token={user_id_str}", None, order_id)
         raise HTTPException(status_code=400, detail="Unknown user")
 
-    # 4.3: validate amount (Paymob reports in piastres, the minor unit).
-    expected_paisa = int(PACKAGE_PRICES[package] * 100)
+    # Currency must be EGP (the only currency this deployment sells in).
+    if currency != "EGP":
+        _reject_webhook(db, ip, f"invalid_currency: {currency}", None, order_id)
+        raise HTTPException(status_code=400, detail="Invalid currency")
+
+    # 4.3: validate amount (Paymob reports in piastres, the minor unit) —
+    # integer comparison against the exact package price.
+    expected_paisa = PACKAGE_PRICES_PAISA[package]
     if amount_paisa != expected_paisa:
         record_payment_event(
             db,
