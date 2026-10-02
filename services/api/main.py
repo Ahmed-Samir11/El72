@@ -41,14 +41,14 @@ TrackedBase.metadata.create_all(bind=engine)
 
 # In-place column migration for databases created before the new columns
 # (last_fetch_status/last_fetch_error, image_url) existed. create_all adds
-# missing tables but not columns, so upgraded DBs need this. Fail-soft: a
-# migration error is logged, not fatal at import time.
-try:
-    from services.api.create_tables import _ensure_columns
+# missing tables but not columns, so upgraded DBs need this. This is
+# fail-HARD on purpose: the tracked-items endpoints query these columns, so
+# starting without them would surface as confusing 500s later — a boot
+# failure is the honest signal. (create_tables is import-safe: it creates
+# no engine at import time.)
+from services.api.create_tables import _ensure_columns  # noqa: E402
 
-    _ensure_columns(engine)
-except Exception as e:  # fail-soft: migration is best-effort at startup
-    logging.getLogger(__name__).warning("Column migration skipped: %s", e)
+_ensure_columns(engine)
 
 app = FastAPI(title="Elhaq API")
 limiter = Limiter(key_func=get_remote_address)

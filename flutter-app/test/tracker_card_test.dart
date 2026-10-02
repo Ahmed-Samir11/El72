@@ -99,6 +99,20 @@ void main() {
     expect(tapped, 0);
   });
 
+  testWidgets('a retryable failure without onRetry falls back to onTap (never '
+      'untappable)', (tester) async {
+    var tapped = 0;
+    await _pumpCard(
+      tester,
+      _card(fetchStatus: 'fetch_failed', onTap: () => tapped++),
+    );
+
+    await tester.tap(find.byType(TrackerCard));
+    await tester.pump();
+
+    expect(tapped, 1);
+  });
+
   testWidgets('tap in fetching state calls onTap, not onRetry', (tester) async {
     var tapped = 0;
     var retried = 0;

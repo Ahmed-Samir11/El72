@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:dio/dio.dart';
 
 import '../../../l10n/app_localizations.dart';
 import '../../core/format/error_message.dart';
@@ -125,10 +124,11 @@ class _TrackersTab extends ConsumerWidget {
                           await ref
                               .read(trackedItemsRepositoryProvider)
                               .refreshPrice(item.id);
-                        } on DioException catch (_) {
-                          // Throttled (429) or offline: the refresh couldn't
-                          // start. Tell the user instead of swallowing the
-                          // tap silently — the card stays in its failure
+                        } catch (_) {
+                          // The refresh request itself failed (DioException
+                          // on 429/offline/5xx, or anything else unexpected):
+                          // tell the user instead of letting the error escape
+                          // the tap handler — the card stays in its failure
                           // state so they can retry later.
                           if (context.mounted) {
                             ScaffoldMessenger.of(context)

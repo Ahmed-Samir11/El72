@@ -145,3 +145,22 @@ pipeline consumes (values verbatim, including the `http://` og:image +
 `secure_url` quirk) so the PR diff stays reviewable; extraction results
 unchanged. Phase 2 (ML) remains a contingency only — Phase 1 fixture tests
 pass.
+
+## 7. HGM Review Responses (round 2, 2026-10-02 — 9 findings, all addressed)
+
+| # | Severity | Finding | Resolution |
+|---|----------|---------|------------|
+| 1 | CRITICAL | DNS-rebinding TOCTOU (validate resolves once; fetch resolves again) | Closed at the moment of connection: the requests path runs inside `_connect_time_ssrf_guard`, which wraps `socket.getaddrinfo` so **every** resolution during the fetch is re-checked and a blocked IP fails the connection (`_BlockedAddressError` → `blocked` status). The Playwright browser (separate process) is protected by pinning the target host's DNS to its validated IP via `--host-resolver-rules=MAP host ip` (skipped for IP-literal hosts), in addition to the existing route guard. Test: `test_dns_rebinding_at_connect_time_is_blocked` (public on validation, private at connect → `blocked`). |
+| 2 | WARNING | Module-level engine in create_tables (import side effect) | create_tables.py is now import-safe: no engine/SessionLocal at import time; `_ensure_columns(engine)` takes the caller's engine; the standalone script builds its own from `DATABASE_URL`. |
+| 3 | WARNING | Fail-soft migration can leave the API without required columns | The startup migration is now fail-HARD: the tracked-items endpoints query these columns, so booting without them would surface as confusing 500s — a boot failure is the honest signal. |
+| 4 | WARNING | Chromium `--no-sandbox` blast radius in a root container | The API now runs as an unprivileged `appuser` (uid 10001) in the Dockerfile; Playwright browsers install to the shared `/opt/playwright-browsers` path. `--no-sandbox` is retained (Chromium in a container still requires it) but a compromised browser process is no longer root. |
+| 5 | INFO | Migration log noisy when columns already exist | `_ensure_columns` now inspects existing columns first and only ALTERs + logs columns actually added; already-upgraded DBs produce no migration log lines. |
+| 6 | INFO | Model parsing assumes string fetch_status/fetch_error | `fromJson` now checks `is String` before casting (non-string → null) instead of throwing on contract drift. |
+| 7 | INFO | Retry handler only caught DioException | Broadened to `catch (_)` — any failure from the refresh request shows the SnackBar; nothing escapes the tap handler. |
+| 8 | INFO | Retryable failure + null onRetry made the card untappable | `onTap: _retryableFailure ? (onRetry ?? onTap) : onTap` — falls back to the normal tap. Widget test added. |
+| 9 | INFO | Malformed ports/URLs raised unclassified | `_validate_public_url` now catches `ValueError` from `urlsplit`/`getaddrinfo` (invalid port, unterminated IPv6 bracket) and reports it uniformly as a rejected URL. Tests: `https://8.8.8.8:abc/x`, `http://[::1/x`, `http://:80/x`. |
+
+**Also from missed_tests:** IPv4-mapped IPv6 handling added to `_is_blocked_ip`
+(`::ffff:127.0.0.1` blocked, `::ffff:8.8.8.8` allowed — Python marks the
+whole `::ffff:0:0/96` range private, so the mapped IPv4 address is judged
+directly) with param cases.

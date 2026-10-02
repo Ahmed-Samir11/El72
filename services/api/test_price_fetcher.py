@@ -8,6 +8,7 @@ classification, and end-to-end extraction on saved real pages.
 """
 
 import os
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -636,6 +637,10 @@ class TestSsrfProtection:
             ("::1", True),
             ("2001:4860:4860::8888", False),
             ("not-an-ip", True),
+            # IPv4-mapped IPv6 forms of blocked addresses.
+            ("::ffff:127.0.0.1", True),
+            ("::ffff:10.0.0.5", True),
+            ("::ffff:8.8.8.8", False),
         ],
     )
     def test_is_blocked_ip(self, ip, blocked):
@@ -676,6 +681,52 @@ class TestSsrfProtection:
         result = fetch_price("https://8.8.8.8/product")
         assert result.status == FETCH_BLOCKED
         assert "redirect" in result.reason
+
+    def test_malformed_urls_are_rejected_not_raised(self):
+        # urlsplit/getaddrinfo quirks (bad port, unterminated bracket) must
+        # surface as a rejected URL, and fetch_price must classify, not crash.
+        for url in ("https://8.8.8.8:abc/x", "http://[::1/x", "http://:80/x"):
+            with pytest.raises(ValueError):
+                _validate_public_url(url)
+
+    def test_dns_rebinding_at_connect_time_is_blocked(self, monkeypatch):
+        import socket as socket_lib
+
+        requests_lib = pytest.importorskip("requests")
+
+        # Resolution #1 (upfront validation): public. Resolution #2 (at
+        # connect time, inside the fetch guard): private — the rebinding
+        # attack. The guard must fail the connection, not complete it.
+        calls = {"n": 0}
+
+        def rebinding(host, port, *args, **kwargs):
+            calls["n"] += 1
+            if host == "rebind.example":
+                if calls["n"] == 1:
+                    return [(2, 1, 6, "", ("93.184.216.34", port))]
+                return [(2, 1, 6, "", ("127.0.0.1", port))]
+            raise socket_lib.gaierror("no such host (test)")
+
+        class _Resp:
+            status_code = 200
+            headers = {}
+            text = "<html><body>x</body></html>"
+
+        def fake_get(url, **kw):
+            # Simulate connect-time resolution (where rebinding bites).
+            socket_lib.getaddrinfo(urlsplit(url).hostname, 443)
+            return _Resp()
+
+        monkeypatch.setattr(socket_lib, "getaddrinfo", rebinding)
+        monkeypatch.setattr(requests_lib, "get", fake_get)
+        from services.api import price_fetcher as pf
+
+        monkeypatch.setattr(
+            pf, "_fetch_html_playwright", lambda url, timeout_ms=25000: None
+        )
+        result = fetch_price("https://rebind.example/p")
+        assert result.status == FETCH_BLOCKED
+        assert "connect" in result.reason
 
 
 class TestImageHardening:

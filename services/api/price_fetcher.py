@@ -15,6 +15,7 @@ visible text); there is intentionally no LLM/agent involved.
 
 from __future__ import annotations
 
+import contextlib
 import ipaddress
 import json
 import logging
@@ -80,12 +81,19 @@ def _is_blocked_ip(ip: str) -> bool:
 
     Blocks loopback, private (RFC1918 + ULA), link-local (including the
     169.254.169.254 cloud-metadata address), multicast, reserved and
-    unspecified ranges — for both IPv4 and IPv6.
+    unspecified ranges — for both IPv4 and IPv6, including IPv4-mapped
+    IPv6 forms such as ``::ffff:127.0.0.1``.
     """
     try:
         addr = ipaddress.ip_address(ip)
     except ValueError:
         return True  # unparseable → refuse
+    # IPv4-mapped IPv6 (e.g. ::ffff:127.0.0.1): Python marks the entire
+    # ::ffff:0:0/96 range as private, so judge the mapped IPv4 address
+    # directly instead — before the generic checks below.
+    mapped = getattr(addr, "ipv4_mapped", None)
+    if mapped is not None:
+        return mapped.is_loopback or mapped.is_private or mapped.is_link_local
     return any(
         (
             addr.is_loopback,
@@ -98,6 +106,36 @@ def _is_blocked_ip(ip: str) -> bool:
     )
 
 
+class _BlockedAddressError(ValueError):
+    """A connect-time DNS resolution returned a non-public address."""
+
+
+@contextlib.contextmanager
+def _connect_time_ssrf_guard():
+    """Re-validate DNS at connect time (closes the DNS-rebinding TOCTOU).
+
+    :func:`_validate_public_url` resolves the host once before the fetch;
+    an attacker domain could answer with a public IP then and a private one
+    at connect time. While the fetch runs, ``socket.getaddrinfo`` is wrapped
+    so **every** resolution (requests resolves at connect time) is checked,
+    and any blocked IP fails the connection instead of completing it.
+    """
+    original = socket.getaddrinfo
+
+    def guarded(host, port, *args, **kwargs):
+        results = original(host, port, *args, **kwargs)
+        for info in results:
+            if _is_blocked_ip(info[4][0]):
+                raise _BlockedAddressError("non-public address at connect time")
+        return results
+
+    socket.getaddrinfo = guarded
+    try:
+        yield
+    finally:
+        socket.getaddrinfo = original
+
+
 def _validate_public_url(url: str) -> None:
     """Raise :class:`ValueError` unless [url] is a fetchable public URL.
 
@@ -105,10 +143,14 @@ def _validate_public_url(url: str) -> None:
     only http/https, and every IP the host resolves to must be public —
     loopback, private, link-local (cloud metadata), multicast, reserved and
     unspecified addresses are refused. DNS is resolved here so obfuscated
-    hosts (decimal/octal IP literals, DNS-rebinding to private ranges) are
-    caught too.
+    hosts (decimal/octal IP literals) are caught; the follow-up fetch is
+    additionally wrapped in :func:`_connect_time_ssrf_guard` so a DNS
+    rebinding answer at connect time is refused too.
     """
-    parts = urlsplit(url)
+    try:
+        parts = urlsplit(url)
+    except ValueError as exc:
+        raise ValueError(f"malformed URL: {exc}") from exc
     if parts.scheme.lower() not in ("http", "https"):
         raise ValueError(f"scheme not allowed: {parts.scheme!r}")
     host = parts.hostname
@@ -120,6 +162,10 @@ def _validate_public_url(url: str) -> None:
         )
     except socket.gaierror as exc:
         raise ValueError(f"unresolvable host: {exc}") from exc
+    except ValueError as exc:
+        # Invalid port etc. surfaced by urlsplit/getaddrinfo — report it
+        # uniformly as a rejected URL.
+        raise ValueError(f"malformed URL: {exc}") from exc
     for info in infos:
         ip = info[4][0]
         if _is_blocked_ip(ip):
@@ -646,31 +692,45 @@ def _fetch_html_requests(
     except ImportError:
         return None, "requests not installed"
     current = url
-    for _ in range(max_redirects + 1):
-        try:
-            r = requests.get(
-                current, headers=_HEADERS, timeout=timeout, allow_redirects=False
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("requests fetch failed for %s: %s", current, exc)
-            return None, f"request error: {type(exc).__name__}"
-        if r.status_code in (301, 302, 303, 307, 308):
-            location = r.headers.get("Location")
-            if not location:
+    try:
+        # Re-validate DNS at connect time (DNS-rebinding protection); the
+        # guard raises ValueError if the OS resolves a blocked IP while
+        # connecting.
+        with _connect_time_ssrf_guard():
+            for _ in range(max_redirects + 1):
+                try:
+                    r = requests.get(
+                        current,
+                        headers=_HEADERS,
+                        timeout=timeout,
+                        allow_redirects=False,
+                    )
+                except _BlockedAddressError:
+                    raise  # connect-time SSRF guard signal — re-raised below
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("requests fetch failed for %s: %s", current, exc)
+                    return None, f"request error: {type(exc).__name__}"
+                if r.status_code in (301, 302, 303, 307, 308):
+                    location = r.headers.get("Location")
+                    if not location:
+                        return None, f"HTTP {r.status_code}"
+                    target = urljoin(current, location)
+                    try:
+                        _validate_public_url(target)
+                    except ValueError:
+                        logger.warning(
+                            "Blocked redirect to %s from %s", target, current
+                        )
+                        return None, "blocked: redirect to non-public address"
+                    current = target
+                    continue
+                if r.status_code == 200:
+                    return r.text, None
+                logger.warning("HTTP %s fetching %s", r.status_code, current)
                 return None, f"HTTP {r.status_code}"
-            target = urljoin(current, location)
-            try:
-                _validate_public_url(target)
-            except ValueError:
-                logger.warning("Blocked redirect to %s from %s", target, current)
-                return None, "blocked: redirect to non-public address"
-            current = target
-            continue
-        if r.status_code == 200:
-            return r.text, None
-        logger.warning("HTTP %s fetching %s", r.status_code, current)
-        return None, f"HTTP {r.status_code}"
-    return None, "too many redirects"
+            return None, "too many redirects"
+    except ValueError:
+        return None, "blocked: non-public address at connect time"
 
 
 # JS predicate for Playwright: true once a price indicator is in the DOM.
@@ -694,9 +754,11 @@ def _fetch_html_playwright(url: str, timeout_ms: int = 25000) -> Optional[str]:
 
     Returns ``None`` on failure.
 
-    Runs with ``--no-sandbox``/``--disable-dev-shm-usage``: the API image
-    runs as root in a container, where Chromium's sandbox fails without
-    them. A route guard aborts navigations to non-public URLs (SSRF).
+    Runs with ``--no-sandbox``/``--disable-dev-shm-usage`` (Chromium's
+    sandbox fails in the container API image). SSRF: a route guard aborts
+    navigations to non-public URLs, and the target host's DNS is pinned to
+    its validated IP via ``--host-resolver-rules`` so the browser process
+    cannot be DNS-rebound either.
     """
     try:
         from playwright.sync_api import sync_playwright
@@ -705,11 +767,24 @@ def _fetch_html_playwright(url: str, timeout_ms: int = 25000) -> Optional[str]:
         return None
     try:
         logger.info("Launching Playwright browser for %s", url)
+        launch_args = ["--no-sandbox", "--disable-dev-shm-usage"]
+        # Pin the target host's DNS to its validated IP (DNS-rebinding
+        # protection inside the browser process). Skipped for IP-literal
+        # hosts (nothing to rebind).
+        _host = urlsplit(url).hostname
+        if _host:
+            try:
+                ipaddress.ip_address(_host)
+            except ValueError:
+                try:
+                    _port = 443 if urlsplit(url).scheme.lower() == "https" else 80
+                    _ip = socket.getaddrinfo(_host, _port)[0][4][0]
+                    if not _is_blocked_ip(_ip):
+                        launch_args.append(f"--host-resolver-rules=MAP {_host} {_ip}")
+                except (socket.gaierror, ValueError):
+                    pass
         with sync_playwright() as pw:
-            browser = pw.chromium.launch(
-                headless=True,
-                args=["--no-sandbox", "--disable-dev-shm-usage"],
-            )
+            browser = pw.chromium.launch(headless=True, args=launch_args)
             try:
                 context = browser.new_context(user_agent=_HEADERS["User-Agent"])
 

@@ -96,8 +96,12 @@ class TrackedItem {
           : null,
       createdAt: _parseDate(json['created_at']),
       updatedAt: _parseDate(json['updated_at']),
-      fetchStatus: json['fetch_status'] as String?,
-      fetchError: json['fetch_error'] as String?,
+      fetchStatus: json['fetch_status'] is String
+          ? json['fetch_status'] as String
+          : null,
+      fetchError: json['fetch_error'] is String
+          ? json['fetch_error'] as String
+          : null,
     );
   }
 }

@@ -95,7 +95,9 @@ class TrackerCard extends StatelessWidget {
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: InkWell(
-        onTap: _retryableFailure ? onRetry : onTap,
+        // A retryable failure without an onRetry callback falls back to the
+        // normal tap (the card must never become untappable).
+        onTap: _retryableFailure ? (onRetry ?? onTap) : onTap,
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Row(
