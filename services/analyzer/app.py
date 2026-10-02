@@ -13,6 +13,7 @@ from prometheus_client import Gauge
 from pythonjsonlogger import jsonlogger
 
 from services.analyzer import ml_detector
+from services.analyzer.analytics import record_deal_evaluation, record_price_observation
 from services.analyzer.intent_upsert import upsert_retailer_analytics_batch
 from services.analyzer.routers.intelligence import router as intelligence_router
 from services.analyzer.settings import AnalyzerSettings
@@ -402,13 +403,14 @@ async def insert_price_history(conn: asyncpg.Connection, event: Dict[str, Any]) 
     """
     await conn.execute(
         """
-        INSERT INTO price_history (time, sku, store_id, price_egp, in_stock)
-        VALUES (to_timestamp($1)::timestamptz, $2, $3, $4, $5)
+        INSERT INTO price_history (time, sku, store_id, price_usd, price_local, in_stock)
+        VALUES (to_timestamp($1)::timestamptz, $2, $3, $4, $5, $6)
         """,
         event.get("timestamp"),
         event.get("sku"),
         event.get("store"),
-        float(event.get("price")),
+        float(event.get("price_usd", event.get("price"))),
+        float(event.get("price_local", event.get("price"))),
         bool(event.get("in_stock", True)),
     )
 
@@ -421,12 +423,12 @@ async def fetch_recent_prices(
     Returns a list of floats ordered newest->oldest (the caller may reorder).
     """
     query = (
-        "SELECT price_egp FROM price_history "
+        "SELECT price_local FROM price_history "
         "WHERE sku=$1 AND store_id=$2 "
         "ORDER BY time DESC LIMIT $3"
     )
     rows = await conn.fetch(query, sku, store, limit)
-    return [float(r["price_egp"]) for r in rows]
+    return [float(r.get("price_local", r.get("price_egp"))) for r in rows]
 
 
 async def find_alerting_users(
@@ -516,6 +518,14 @@ async def consume_loop():  # noqa: C901
                     try:
                         async with ts_pool.acquire() as conn:
                             await insert_price_history(conn, payload)
+                            await record_price_observation(
+                                conn,
+                                sku=sku,
+                                store=store,
+                                price=float(payload.get("price")),
+                                price_usd=payload.get("price_usd"),
+                                in_stock=bool(payload.get("in_stock", True)),
+                            )
                             # Build window and score using same connection to
                             # avoid double-acquire
                             recent = await fetch_recent_prices(
@@ -540,6 +550,16 @@ async def consume_loop():  # noqa: C901
 
                         # If anomaly, handle monetization and publish
                         if score > settings.ml_threshold:
+                            async with ts_pool.acquire() as conn:
+                                deal_key = await record_deal_evaluation(
+                                    conn,
+                                    sku=sku,
+                                    store=store,
+                                    price=float(payload.get("price")),
+                                    prices=recent,
+                                    score=float(score),
+                                    model_version=f"{settings.ml_method}-v1",
+                                )
                             # Find users who have alerts for this SKU
                             async with pg_pool.acquire() as conn:
                                 alerting = await find_alerting_users(conn, sku)
@@ -561,6 +581,9 @@ async def consume_loop():  # noqa: C901
                                 "price": payload.get("price"),
                                 "timestamp": payload.get("timestamp"),
                                 "anomaly_score": score,
+                                "deal_key": deal_key,
+                                "event_type": "deal.detected",
+                                "schema_version": "1",
                                 "trace_id": trace_id,
                                 "orig_stream": stream,
                                 "orig_msg_id": msg_id,

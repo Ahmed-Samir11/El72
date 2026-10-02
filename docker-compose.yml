@@ -43,7 +43,9 @@ services:
       - postgres
     environment:
       REDIS_URL: "redis://redis:6379"
-      DATABASE_URL: "${DATABASE_URL:-postgresql://elhaq:elhaq_pass@postgres:5432/elhaq}"
+      DATABASE_URL: "${DATABASE_URL_DOCKER:-postgresql://elhaq:elhaq_pass@postgres:5432/elhaq}"
+      TIMESCALE_URL: "${TIMESCALE_URL_DOCKER:-postgresql://elhaq:elhaq_pass@timescaledb:5432/elhaq_ts}"
+      DEMO_MODE: "${DEMO_MODE:-true}"
     ports:
       - "8001:8000"
 
@@ -54,9 +56,11 @@ services:
     depends_on:
       - redis
       - postgres
+      - timescaledb
     environment:
       REDIS_URL: "redis://redis:6379"
-      DATABASE_URL: "${DATABASE_URL:-postgresql://elhaq:elhaq_pass@postgres:5432/elhaq}"
+      DATABASE_URL: "${DATABASE_URL_DOCKER:-postgresql://elhaq:elhaq_pass@postgres:5432/elhaq}"
+      TIMESCALE_URL: "${TIMESCALE_URL_DOCKER:-postgresql://elhaq:elhaq_pass@timescaledb:5432/elhaq_ts}"
     ports:
       - "8000:8000"
 
@@ -79,7 +83,7 @@ services:
       - postgres
       - timescaledb
     environment:
-      DATABASE_URL: "${DATABASE_URL:-postgresql://elhaq:elhaq_pass@postgres:5432/elhaq}"
+      DATABASE_URL: "${DATABASE_URL_DOCKER:-postgresql://elhaq:elhaq_pass@postgres:5432/elhaq}"
       REDIS_URL: "redis://redis:6379"
       SCRAPE_INTERVAL: "30"
       MAX_CONCURRENT_SCRAPES: "10"
@@ -95,7 +99,7 @@ services:
       - redis
       - postgres
     environment:
-      DATABASE_URL: "${DATABASE_URL:-postgresql://elhaq:elhaq_pass@postgres:5432/elhaq}"
+      DATABASE_URL: "${DATABASE_URL_DOCKER:-postgresql://elhaq:elhaq_pass@postgres:5432/elhaq}"
       REDIS_URL: "redis://redis:6379"
       SCRAPER_TARGETS_SOURCE: "redis_stream"
       SCRAPER_TARGETS_STREAM: "stream:targets"

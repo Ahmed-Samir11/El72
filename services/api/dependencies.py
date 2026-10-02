@@ -17,10 +17,16 @@ ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./elhaq.db")
+TIMESCALE_URL = os.getenv("TIMESCALE_URL")
 
 # SQLAlchemy setup
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+TimescaleSessionLocal = (
+    sessionmaker(autocommit=False, autoflush=False, bind=create_engine(TIMESCALE_URL))
+    if TIMESCALE_URL
+    else None
+)
 
 # Password hashing
 pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
@@ -32,6 +38,17 @@ security = HTTPBearer()
 # Dependency
 def get_db():
     db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+def get_timescale_db():
+    """Yield the canonical TimescaleDB session for price-history reads."""
+    if TimescaleSessionLocal is None:
+        raise RuntimeError("TIMESCALE_URL is required for price-history access")
+    db = TimescaleSessionLocal()
     try:
         yield db
     finally:
@@ -84,7 +101,11 @@ def get_current_user(
             raise credentials_exception
     except JWTError:
         raise credentials_exception from None
-    user = db.query(User).filter(User.phone == phone).first()
+    user = (
+        db.query(User)
+        .filter(User.phone == phone, User.status == "ACTIVE")
+        .first()
+    )
     if user is None:
         raise credentials_exception
     return user

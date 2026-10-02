@@ -8,18 +8,18 @@ Flutter app (``flutter-app/``):
 * ``GET /price-history/{sku}`` — price history for the chart screen
 * ``GET /pricing``             — tiered pricing
 
-All data is derived from the seeded ``price_history`` table (populated by
-``services/api/seed_demo_data.py`` and Engineer C's ``seed_data.py``), so the
-demo is alive against a running backend rather than relying on client-side
-fallbacks.
+Price-history-derived data is read from the canonical TimescaleDB
+``price_history`` table. Operational PostgreSQL remains the source for users,
+alerts, and current application state; this router never silently reads a
+same-named operational table.
 
 Design notes
 ------------
 * **Public (no auth)** — the landing page calls these unauthenticated; the
   Flutter app's auth interceptor simply adds a token that these endpoints
   ignore.
-* **Fail-soft** — if ``price_history`` does not exist yet (fresh database),
-  endpoints return empty results instead of 500ing.
+* **Explicit target** — the router receives a TimescaleDB session through its
+    dependency, so database selection is visible at the API boundary.
 * **DRY** — the plan listed these as three separate router files; they share
   one data source (``price_history``) and one query helper, so they are
   consolidated here to avoid duplicating the access layer.
@@ -36,7 +36,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from services.api.dependencies import get_db
+from services.api.dependencies import get_timescale_db
 
 router = APIRouter(tags=["public"])
 limiter = Limiter(key_func=get_remote_address)
@@ -164,7 +164,7 @@ def _first_last_per_sku(rows: List[dict]) -> Dict[str, dict]:
 @router.get("/price-history/{sku}")
 @limiter.limit("60/minute")
 def get_price_history(
-    request: Request, sku: str, db: Session = Depends(get_db)
+    request: Request, sku: str, db: Session = Depends(get_timescale_db)
 ) -> List[dict]:
     """Best (lowest) price across stores per day for a product.
 
@@ -192,7 +192,7 @@ def get_price_history(
 
 @router.get("/deals/live")
 @limiter.limit("60/minute")
-def get_live_deals(request: Request, db: Session = Depends(get_db)) -> List[dict]:
+def get_live_deals(request: Request, db: Session = Depends(get_timescale_db)) -> List[dict]:
     """Live deal discovery feed.
 
     A "deal" is a product whose current (latest-day) lowest price is below its
@@ -241,7 +241,7 @@ def get_live_deals(request: Request, db: Session = Depends(get_db)) -> List[dict
 
 @router.get("/stats")
 @limiter.limit("60/minute")
-def get_stats(request: Request, db: Session = Depends(get_db)) -> dict:
+def get_stats(request: Request, db: Session = Depends(get_timescale_db)) -> dict:
     """Platform-wide stats derived from the seeded price history.
 
     Returns both key sets so the two consumers are satisfied:
