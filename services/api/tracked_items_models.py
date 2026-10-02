@@ -12,42 +12,21 @@ from sqlalchemy import (
     Index,
     Numeric,
     String,
-    Table,
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import UUID as postgres_UUID
-from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 
-from .models import DialectIdType
-
-Base = declarative_base()
+from .models import Base, OperationalIdType, _new_operational_id
 
 
 def _new_id(table: str):
-    """Dialect-aware PK default: auto-increment int on SQLite, UUID on Postgres."""
-
     def _fn(context):
-        if context.dialect.name == "sqlite":
-            return context.connection.exec_driver_sql(
-                f"SELECT COALESCE(MAX(id), 0) + 1 FROM {table}"
-            ).scalar_one()
-        return uuid.uuid4()
+        return _new_operational_id(context, table)
 
     return _fn
 
-
-users = Table(
-    "users",
-    Base.metadata,
-    Column("id", postgres_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4),
-    Column("phone", String(20), unique=True, nullable=False),
-    Column("password_hash", String(128), nullable=False),
-    Column("salt", String(32), nullable=False),
-    Column("tier", String(20), nullable=False, default="free"),
-    Column("valid_until", DateTime, nullable=True),
-)
+users = Base.metadata.tables["users"]
 
 
 class TrackedItem(Base):
@@ -61,8 +40,8 @@ class TrackedItem(Base):
 
     __tablename__ = "tracked_items"
 
-    id = Column(DialectIdType(), primary_key=True, default=_new_id("tracked_items"))
-    user_id = Column(DialectIdType(), ForeignKey("users.id"), nullable=False)
+    id = Column(OperationalIdType(), primary_key=True, default=_new_id("tracked_items"))
+    user_id = Column(OperationalIdType(), ForeignKey("users.id"), nullable=False)
     canonical_product_id = Column(Text, nullable=False)
     specs = Column(JSON, nullable=True)  # JSONB for spec-based tracking
     target_price = Column(Numeric(10, 2), nullable=True)
@@ -103,10 +82,10 @@ class TrackedItemStore(Base):
     __tablename__ = "tracked_item_stores"
 
     id = Column(
-        DialectIdType(), primary_key=True, default=_new_id("tracked_item_stores")
+        OperationalIdType(), primary_key=True, default=_new_id("tracked_item_stores")
     )
     tracked_item_id = Column(
-        DialectIdType(),
+        OperationalIdType(),
         ForeignKey("tracked_items.id", ondelete="CASCADE"),
         nullable=False,
     )
@@ -149,7 +128,7 @@ class CurrentPrice(Base):
     __tablename__ = "current_prices"
 
     tracked_item_id = Column(
-        DialectIdType(),
+        OperationalIdType(),
         ForeignKey("tracked_items.id", ondelete="CASCADE"),
         primary_key=True,
     )
@@ -183,7 +162,7 @@ class LowestPrice(Base):
     __tablename__ = "lowest_prices"
 
     tracked_item_id = Column(
-        DialectIdType(),
+        OperationalIdType(),
         ForeignKey("tracked_items.id", ondelete="CASCADE"),
         primary_key=True,
     )

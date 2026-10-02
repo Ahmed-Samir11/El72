@@ -45,14 +45,19 @@ async def test_insert_price_history_egp_and_other(mock_db_pool):
         conn, 1, "amazon_eg", "SKU", 3.2, 100.0, "EGP", True
     )
     args = conn.execute.await_args[0]
-    assert args[3] == 100.0
+    assert args[3] == 3.2
+    assert args[4] == 100.0
+    assert args[5] == "EGP"
+    assert args[6] is True
 
     conn.execute.reset_mock()
     await processor._insert_price_history(
         conn, 1, "amazon_eg", "SKU", 10.0, 10.0, "USD", True
     )
     args = conn.execute.await_args[0]
-    assert args[3] == pytest.approx(10.0 / 0.032)
+    assert args[3] == 10.0
+    assert args[4] == 10.0
+    assert args[5] == "USD"
 
 
 @pytest.mark.asyncio
@@ -60,12 +65,12 @@ async def test_insert_price_history_passes_image_url(mock_db_pool):
     pool, conn = mock_db_pool
     processor = PriceProcessor(pool)
 
-    # conn.execute is called as (query, sku, store_id, price_egp, in_stock,
-    # image_url); image_url is the 6th positional argument (index 5).
+    # conn.execute receives normalized USD/local prices, currency, stock, and
+    # the optional image URL after the SQL statement.
     await processor._insert_price_history(
         conn, 1, "amazon_eg", "SKU", 3.2, 100.0, "EGP", True
     )
-    assert conn.execute.await_args[0][5] is None
+    assert conn.execute.await_args[0][7] is None
 
     # Explicit: a populated image_url is passed through to the SQL execute call.
     conn.execute.reset_mock()
@@ -80,7 +85,7 @@ async def test_insert_price_history_passes_image_url(mock_db_pool):
         True,
         image_url="https://img.com/a.jpg",
     )
-    assert conn.execute.await_args[0][5] == "https://img.com/a.jpg"
+    assert conn.execute.await_args[0][7] == "https://img.com/a.jpg"
 
 
 @pytest.mark.asyncio
