@@ -36,8 +36,11 @@ android {
     // Play Store package identity. If `com.elhaq.tracker` turns out to be
     // taken, switch to the fallback `com.el72.elhaq` (owner verification).
     namespace = "com.elhaq.tracker"
-    // Pinned explicitly (WS3): compileSdk == targetSdk so the SDK levels are
-    // deterministic and never depend on the Flutter template defaults.
+    // Pinned explicitly (WS3) so the SDK levels are deterministic and never
+    // depend on the Flutter template defaults. compileSdk 36: build against
+    // the newest platform (new APIs, lint baselines). targetSdk 35: the
+    // current Play Store requirement — deliberately one level below
+    // compileSdk until the app is verified on API 36 behavior.
     compileSdk = 36
 
     compileOptions {
