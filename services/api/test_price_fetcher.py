@@ -2,16 +2,38 @@
 
 Covers the JSON-LD parsing paths (top-level objects, lists, @graph nesting,
 URI-typed @type), robust amount parsing (currency symbols/prefixes/comma
-grouping), the intentional EGP default, and the meta/visible-text fallbacks.
+grouping), the intentional EGP default, the meta/visible-text fallbacks,
+image cascades with URL absolutization, WooCommerce markup, fetch-status
+classification, and end-to-end extraction on saved real pages.
 """
+
+import os
+from urllib.parse import urlsplit
 
 import pytest
 
 from services.api.price_fetcher import (
+    FETCH_BLOCKED,
+    FETCH_FAILED,
+    FETCH_NO_PRICE,
+    FETCH_OK,
+    _absolutize,
+    _best_srcset_url,
     _extract_from_html,
+    _extract_image_from_imgs,
+    _extract_image_from_meta,
+    _extract_woocommerce_price,
+    _first_image_url,
+    _is_blocked_ip,
     _jsonld_product,
+    _looks_like_bot_wall,
     _parse_amount,
     _parse_jsonld,
+    _safe_fetch_error,
+    _url_candidates,
+    _validate_public_url,
+    fetch_price,
+    fetch_price_sync,
 )
 
 
@@ -252,3 +274,551 @@ class TestExtractFromHtml:
         price, currency, title, _ = _extract_from_html(html)
         # JSON-LD is authoritative: 500 from the graph product, not 999,999.
         assert (price, currency, title) == (500.0, "EGP", "From Graph")
+
+
+# --------------------------------------------------------------------------- #
+#  New: URL absolutization, image cascades, WooCommerce, classification       #
+# --------------------------------------------------------------------------- #
+
+_FIXTURES = os.path.join(os.path.dirname(__file__), "test_fixtures")
+
+
+def _fixture(name: str) -> str:
+    with open(os.path.join(_FIXTURES, name), encoding="utf-8") as fh:
+        return fh.read()
+
+
+class TestAbsolutize:
+    def test_empty_page_url_returns_input(self):
+        assert _absolutize("https://a.com/x.jpg", "") == "https://a.com/x.jpg"
+
+    def test_relative_path_resolved(self):
+        assert (
+            _absolutize("/cdn/shop/x.jpg", "https://store.com/products/p")
+            == "https://store.com/cdn/shop/x.jpg"
+        )
+
+    def test_protocol_relative_inherits_page_scheme(self):
+        assert (
+            _absolutize("//cdn.store.com/x.jpg", "https://store.com/p")
+            == "https://cdn.store.com/x.jpg"
+        )
+        assert (
+            _absolutize("//cdn.store.com/x.jpg", "http://store.com/p")
+            == "http://cdn.store.com/x.jpg"
+        )
+
+    def test_http_asset_upgraded_on_https_page(self):
+        assert (
+            _absolutize("http://img.store.com/x.jpg", "https://store.com/p")
+            == "https://img.store.com/x.jpg"
+        )
+
+    def test_absolute_http_kept_on_http_page(self):
+        assert (
+            _absolutize("http://img.store.com/x.jpg", "http://store.com/p")
+            == "http://img.store.com/x.jpg"
+        )
+
+    def test_blank_returns_none(self):
+        assert _absolutize(None, "https://a.com") is None
+        assert _absolutize("   ", "https://a.com") is None
+
+
+class TestExtractImageFromMeta:
+    def test_og_image(self):
+        html = '<meta property="og:image" content="https://a.com/x.jpg">'
+        assert _extract_image_from_meta(html, "") == "https://a.com/x.jpg"
+
+    def test_secure_url_preferred(self):
+        html = (
+            '<meta property="og:image" content="http://a.com/insecure.jpg">'
+            '<meta property="og:image:secure_url" content="https://a.com/secure.jpg">'
+        )
+        assert _extract_image_from_meta(html, "https://store.com") == (
+            "https://a.com/secure.jpg"
+        )
+
+    def test_twitter_fallback(self):
+        html = '<meta name="twitter:image" content="https://a.com/t.jpg">'
+        assert _extract_image_from_meta(html, "") == "https://a.com/t.jpg"
+
+    def test_relative_og_image_absolutized(self):
+        html = '<meta property="og:image" content="/cdn/x.jpg">'
+        assert (
+            _extract_image_from_meta(html, "https://store.com/p")
+            == "https://store.com/cdn/x.jpg"
+        )
+
+    def test_no_image_meta(self):
+        assert _extract_image_from_meta("<html></html>", "") is None
+
+
+class TestExtractImageFromImgs:
+    def test_skips_logos_and_svg(self):
+        html = (
+            '<img src="/assets/logo.png" alt="logo">'
+            '<img src="https://cdn.com/brand.svg" alt="brand">'
+            '<img src="https://cdn.com/product-1.jpg" alt="Product">'
+        )
+        assert (
+            _extract_image_from_imgs(html, "https://store.com/p")
+            == "https://cdn.com/product-1.jpg"
+        )
+
+    def test_data_uri_skipped(self):
+        html = '<img src="data:image/png;base64,AAA"><img src="/a.jpg">'
+        assert _extract_image_from_imgs(html, "https://store.com/p") == (
+            "https://store.com/a.jpg"
+        )
+
+    def test_no_imgs(self):
+        assert _extract_image_from_imgs("<html></html>", "") is None
+
+
+class TestExtractWooCommercePrice:
+    def test_standard_markup(self):
+        html = (
+            '<span class="woocommerce-Price-amount amount">'
+            "<bdi><span class=\"woocommerce-Price-currencySymbol\">EGP </span>"
+            "2,450.00</bdi></span>"
+        )
+        price, currency = _extract_woocommerce_price(html)
+        assert (price, currency) == (2450.0, "EGP")
+
+    def test_usd_symbol(self):
+        html = (
+            '<span class="woocommerce-Price-amount amount">'
+            '<bdi><span class="woocommerce-Price-currencySymbol">$</span>99.90</bdi>'
+            "</span>"
+        )
+        price, currency = _extract_woocommerce_price(html)
+        assert (price, currency) == (99.9, "USD")
+
+    def test_no_markup(self):
+        assert _extract_woocommerce_price("<html></html>") == (None, None)
+
+    def test_markup_without_number(self):
+        html = '<span class="woocommerce-Price-amount amount">Call us</span>'
+        assert _extract_woocommerce_price(html) == (None, None)
+
+
+class TestUrlCandidates:
+    def test_https_url_single_candidate(self):
+        assert _url_candidates("https://a.com/p") == ["https://a.com/p"]
+
+    def test_http_url_https_first(self):
+        assert _url_candidates("http://a.com/p") == [
+            "https://a.com/p",
+            "http://a.com/p",
+        ]
+
+
+class TestLooksLikeBotWall:
+    def test_cloudflare_521_page_is_wall(self):
+        assert _looks_like_bot_wall(_fixture("alfrensia_bot_wall.html")) is True
+
+    def test_real_product_page_is_not_wall(self):
+        assert _looks_like_bot_wall(_fixture("compumarts_product.html")) is False
+
+    def test_large_page_never_wall(self):
+        assert _looks_like_bot_wall("x" * 60_000) is False
+
+
+class TestJsonldProductMainEntity:
+    def test_bootstrap_main_entity_layout(self):
+        html = _page_with_jsonld(
+            '{"@type": "WebPage", "mainEntity": '
+            '{"@type": "Product", "name": "ME", '
+            '"offers": {"price": "100", "priceCurrency": "EGP"}}}'
+        )
+        from services.api.price_fetcher import _jsonld_product
+
+        prod = _jsonld_product(html)
+        assert prod is not None and prod["name"] == "ME"
+
+    def test_graph_inside_graph(self):
+        html = _page_with_jsonld(
+            '{"@graph": [{"@graph": [{"@type": "Product", "name": "Deep"}]}]}'
+        )
+        from services.api.price_fetcher import _jsonld_product
+
+        prod = _jsonld_product(html)
+        assert prod is not None and prod["name"] == "Deep"
+
+
+class TestFixtureExtraction:
+    """End-to-end extraction against saved real pages."""
+
+    def test_real_shopify_product_page_price_and_image(self):
+        html = _fixture("compumarts_product.html")
+        page_url = "https://www.compumarts.com/lenovo-r27qe-monitor"
+        price, currency, title, image = _extract_from_html(html, page_url)
+        assert price is not None and price > 0
+        assert currency == "EGP"
+        assert "Legion" in title
+        # The image must be an absolute HTTPS URL the app can load directly.
+        assert image is not None
+        assert image.startswith("https://")
+        assert "/cdn/shop/" in image
+
+    def test_woocommerce_fixture_price_and_relative_image(self):
+        html = _fixture("woocommerce_product.html")
+        page_url = "https://alfrensia.com/product/baguette-maker"
+        price, currency, title, image = _extract_from_html(html, page_url)
+        assert (price, currency) == (2450.0, "EGP")
+        assert title == "French Baguette Maker | Alfrensia"
+        # Relative og:image resolved against the page URL.
+        assert (
+            image
+            == "https://alfrensia.com/wp-content/uploads/2025/09/baguette-maker.jpg"
+        )
+
+    def test_relative_og_image_fixture(self):
+        html = _fixture("relative_og_image.html")
+        page_url = "https://example-store.com/products/widget"
+        price, currency, title, image = _extract_from_html(html, page_url)
+        assert (price, currency) == (12500.0, "EGP")
+        assert title == "Widget"
+        # Protocol-relative image inherits the page's https scheme.
+        assert image == "https://cdn.example-store.com/products/widget.jpg"
+
+    def test_bot_wall_fixture_yields_no_price(self):
+        html = _fixture("alfrensia_bot_wall.html")
+        assert _extract_from_html(html, "https://alfrensia.com/product/x") is None
+
+
+class TestFetchPriceClassification:
+    """fetch_price with mocked fetchers (no network in tests)."""
+
+    def _patch(self, monkeypatch, requests_result, playwright_result=None):
+        from services.api import price_fetcher as pf
+
+        monkeypatch.setattr(
+            pf, "_fetch_html_requests", lambda url, timeout=30: requests_result
+        )
+        monkeypatch.setattr(
+            pf,
+            "_fetch_html_playwright",
+            lambda url, timeout_ms=25000: playwright_result,
+        )
+        # These tests exercise classification, not URL policy: skip the real
+        # SSRF validator (it resolves DNS; tests use fake domains and must
+        # run offline). The SSRF group below tests the validator itself.
+        monkeypatch.setattr(pf, "_validate_public_url", lambda url: None)
+
+    def test_ok_with_price(self, monkeypatch):
+        self._patch(
+            monkeypatch,
+            ('<html><body><span>Price: 100 EGP</span></body></html>', None),
+        )
+        result = fetch_price("https://store.com/p")
+        assert result.status == FETCH_OK
+        assert result.price is not None
+        assert result.price.price_local == 100.0
+
+    def test_http_url_tries_https_first(self, monkeypatch):
+        from services.api import price_fetcher as pf
+
+        seen = []
+
+        def fake_requests(url, timeout=30):
+            seen.append(url)
+            return (None, "request error: SSLError")
+
+        monkeypatch.setattr(pf, "_fetch_html_requests", fake_requests)
+        monkeypatch.setattr(
+            pf, "_fetch_html_playwright", lambda url, timeout_ms=25000: None
+        )
+
+        result = fetch_price("http://store.com/p")
+        assert seen == ["https://store.com/p", "http://store.com/p"]
+        assert result.status == FETCH_FAILED
+
+    def test_blocked_on_521(self, monkeypatch):
+        self._patch(monkeypatch, (None, "HTTP 521"))
+        result = fetch_price("https://alfrensia.com/product/x")
+        assert result.status == FETCH_BLOCKED
+        assert "521" in result.reason
+
+    def test_failed_on_network_error(self, monkeypatch):
+        self._patch(monkeypatch, (None, "request error: ConnectTimeout"))
+        result = fetch_price("https://store.com/p")
+        assert result.status == FETCH_FAILED
+        assert "ConnectTimeout" in result.reason
+
+    def test_no_price_found_on_plain_page(self, monkeypatch):
+        self._patch(
+            monkeypatch,
+            ("<html><body>This is my portfolio, no prices here.</body></html>", None),
+        )
+        result = fetch_price("https://example.com/portfolio")
+        assert result.status == FETCH_NO_PRICE
+
+    def test_blocked_on_bot_wall_page(self, monkeypatch):
+        self._patch(monkeypatch, (_fixture("alfrensia_bot_wall.html"), None))
+        result = fetch_price("https://alfrensia.com/product/x")
+        assert result.status == FETCH_BLOCKED
+
+    def test_playwright_fallback_used_when_requests_fail(self, monkeypatch):
+        self._patch(
+            monkeypatch,
+            (None, "request error: ConnectTimeout"),
+            "<html><body><span>Price: 55 EGP</span></body></html>",
+        )
+        result = fetch_price("https://store.com/p")
+        assert result.status == FETCH_OK
+        assert result.price.price_local == 55.0
+
+    def test_fetch_price_sync_never_raises(self, monkeypatch):
+        from services.api import price_fetcher as pf
+
+        def boom(url, timeout=30):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(pf, "_fetch_html_requests", boom)
+        monkeypatch.setattr(pf, "_fetch_html_playwright", boom)
+        result = fetch_price_sync("https://store.com/p")
+        assert result.status == FETCH_FAILED
+
+
+class TestSsrfProtection:
+    """SSRF validation for user-supplied URLs.
+
+    Uses IP-literal hosts so the resolver needs no network (getaddrinfo on
+    an IP literal never touches DNS).
+    """
+
+    def test_public_ip_literal_passes_validation(self):
+        _validate_public_url("https://8.8.8.8/")  # must not raise
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "http://127.0.0.1:8000/admin",
+            "https://localhost/admin",
+            "http://10.0.0.5/x",
+            "http://172.16.3.4/x",
+            "http://192.168.1.106:8000/x",
+            "http://169.254.169.254/latest/meta-data/",
+            "http://0.0.0.0/x",
+            "http://[::1]/x",
+            "http://[fc00::1]/x",
+            "http://[fe80::1]/x",
+        ],
+    )
+    def test_non_public_addresses_are_rejected(self, url):
+        with pytest.raises(ValueError):
+            _validate_public_url(url)
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "ftp://8.8.8.8/file",
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "https:///no-host",
+            "notaurl",
+        ],
+    )
+    def test_bad_schemes_and_missing_hosts_are_rejected(self, url):
+        with pytest.raises(ValueError):
+            _validate_public_url(url)
+
+    @pytest.mark.parametrize(
+        "ip,blocked",
+        [
+            ("127.0.0.1", True),
+            ("10.1.2.3", True),
+            ("192.168.0.1", True),
+            ("169.254.169.254", True),
+            ("8.8.8.8", False),
+            ("93.184.216.34", False),
+            ("::1", True),
+            ("2001:4860:4860::8888", False),
+            ("not-an-ip", True),
+            # IPv4-mapped IPv6 forms of blocked addresses.
+            ("::ffff:127.0.0.1", True),
+            ("::ffff:10.0.0.5", True),
+            ("::ffff:8.8.8.8", False),
+        ],
+    )
+    def test_is_blocked_ip(self, ip, blocked):
+        assert _is_blocked_ip(ip) is blocked
+
+    def test_fetch_price_refuses_private_url_without_fetching(self, monkeypatch):
+        from services.api import price_fetcher as pf
+
+        calls = []
+        monkeypatch.setattr(
+            pf,
+            "_fetch_html_requests",
+            lambda url, timeout=30: (calls.append(url), ("", None))[1],
+        )
+        monkeypatch.setattr(
+            pf, "_fetch_html_playwright", lambda url, timeout_ms=25000: None
+        )
+        result = fetch_price("http://127.0.0.1:8000/admin")
+        assert result.status == FETCH_BLOCKED
+        assert "rejected" in result.reason.lower()
+        assert calls == []  # never reached the network
+
+    def test_redirect_to_internal_address_is_blocked(self, monkeypatch):
+        requests_lib = pytest.importorskip("requests")
+
+        from services.api import price_fetcher as pf
+
+        class _RedirectResp:
+            status_code = 302
+            headers = {"Location": "http://127.0.0.1:8000/secret"}
+            text = ""
+
+        monkeypatch.setattr(requests_lib, "get", lambda url, **kw: _RedirectResp())
+        monkeypatch.setattr(
+            pf, "_fetch_html_playwright", lambda url, timeout_ms=25000: None
+        )
+        # Public IP literal: passes the initial validation without DNS.
+        result = fetch_price("https://8.8.8.8/product")
+        assert result.status == FETCH_BLOCKED
+        assert "redirect" in result.reason
+
+    def test_malformed_urls_are_rejected_not_raised(self):
+        # urlsplit/getaddrinfo quirks (bad port, unterminated bracket) must
+        # surface as a rejected URL, and fetch_price must classify, not crash.
+        for url in ("https://8.8.8.8:abc/x", "http://[::1/x", "http://:80/x"):
+            with pytest.raises(ValueError):
+                _validate_public_url(url)
+
+    def test_dns_rebinding_at_connect_time_is_blocked(self, monkeypatch):
+        import socket as socket_lib
+
+        requests_lib = pytest.importorskip("requests")
+
+        # Resolution #1 (upfront validation): public. Resolution #2 (at
+        # connect time, inside the fetch guard): private — the rebinding
+        # attack. The guard must fail the connection, not complete it.
+        calls = {"n": 0}
+
+        def rebinding(host, port, *args, **kwargs):
+            calls["n"] += 1
+            if host == "rebind.example":
+                if calls["n"] == 1:
+                    return [(2, 1, 6, "", ("93.184.216.34", port))]
+                return [(2, 1, 6, "", ("127.0.0.1", port))]
+            raise socket_lib.gaierror("no such host (test)")
+
+        class _Resp:
+            status_code = 200
+            headers = {}
+            text = "<html><body>x</body></html>"
+
+        def fake_get(url, **kw):
+            # Simulate connect-time resolution (where rebinding bites).
+            socket_lib.getaddrinfo(urlsplit(url).hostname, 443)
+            return _Resp()
+
+        monkeypatch.setattr(socket_lib, "getaddrinfo", rebinding)
+        monkeypatch.setattr(requests_lib, "get", fake_get)
+        from services.api import price_fetcher as pf
+
+        monkeypatch.setattr(
+            pf, "_fetch_html_playwright", lambda url, timeout_ms=25000: None
+        )
+        result = fetch_price("https://rebind.example/p")
+        assert result.status == FETCH_BLOCKED
+        assert "connect" in result.reason
+
+
+class TestImageHardening:
+    """Image-cascade hardening: data URIs, uppercase schemes, srcset."""
+
+    def test_data_uri_is_rejected_by_absolutize(self):
+        assert _absolutize("data:image/png;base64,AAA", "https://page.com/p") is None
+
+    def test_javascript_uri_is_rejected_by_absolutize(self):
+        assert _absolutize("javascript:alert(1)", "https://page.com/p") is None
+
+    def test_uppercase_http_scheme_is_upgraded(self):
+        assert (
+            _absolutize("HTTP://cdn.example.com/x.jpg", "https://page.com/p")
+            == "https://cdn.example.com/x.jpg"
+        )
+
+    def test_jsonld_data_uri_image_is_skipped(self):
+        # data: entry first, real URL second — the usable one must win.
+        url = _first_image_url(
+            ["data:image/png;base64,AAA", "https://cdn.example.com/ok.jpg"]
+        )
+        assert url == "https://cdn.example.com/ok.jpg"
+
+    def test_meta_data_uri_falls_back_to_img_scan(self):
+        html = (
+            '<html><head>'
+            '<meta property="og:image" content="data:image/png;base64,AAA">'
+            "</head><body>"
+            '<img src="/product/real.jpg">'
+            "</body></html>"
+        )
+        image = _extract_image_from_meta(html, "https://page.com/p")
+        assert image is None  # meta produced nothing usable
+        assert (
+            _extract_image_from_imgs(html, "https://page.com/p")
+            == "https://page.com/product/real.jpg"
+        )
+
+    def test_srcset_prefers_largest_width_entry(self):
+        html = '<img src="/small.jpg" srcset="/small.jpg 100w, /large.jpg 800w">'
+        assert (
+            _extract_image_from_imgs(html, "https://page.com/p")
+            == "https://page.com/large.jpg"
+        )
+
+    def test_srcset_prefers_highest_density_entry(self):
+        html = '<img src="/a.jpg" srcset="/a.jpg 1x, /b.jpg 2x">'
+        assert (
+            _extract_image_from_imgs(html, "https://page.com/p")
+            == "https://page.com/b.jpg"
+        )
+
+    def test_srcset_falls_back_to_src_when_unparseable(self):
+        assert _best_srcset_url("") is None
+        assert _best_srcset_url("/only.jpg") == "/only.jpg"
+
+
+class TestBotWallRefinement:
+    """Challenge markers override; legacy word markers keep working."""
+
+    def test_challenge_page_quoting_price_is_still_a_wall(self):
+        html = (
+            "<html><head><title>Just a moment...</title></head><body>"
+            + 'cf-chl <div>Checking your browser... price</div>' * 3
+            + "</body></html>"
+        )
+        assert _looks_like_bot_wall(html) is True
+
+    def test_cloudflare_521_page_is_a_wall(self):
+        html = "<html><body>Error 521 Web server is down. product price</body></html>"
+        assert _looks_like_bot_wall(html) is True
+
+    def test_plain_page_without_markers_is_a_wall(self):
+        assert _looks_like_bot_wall("<html><body>hi</body></html>") is True
+
+    def test_word_markers_still_prevent_wall(self):
+        # Portfolio-style page the user mis-linked: no price, but not a wall
+        # either — it must surface as no_price_found, not blocked.
+        html = "<html><body>This is my portfolio, no prices here.</body></html>"
+        assert _looks_like_bot_wall(html) is False
+
+
+class TestSafeFetchError:
+    def test_long_reasons_are_truncated(self):
+        assert len(_safe_fetch_error("x" * 500)) == 200
+
+    def test_control_chars_are_stripped(self):
+        assert "\x00" not in _safe_fetch_error("bad\x00\x01reason")
+
+    def test_none_passes_through(self):
+        assert _safe_fetch_error(None) is None
+
+    def test_short_reasons_are_unchanged(self):
+        assert _safe_fetch_error("HTTP 521") == "HTTP 521"

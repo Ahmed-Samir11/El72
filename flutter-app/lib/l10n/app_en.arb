@@ -125,6 +125,12 @@
 
   "fetchingPrice": "Fetching live price...",
 
+  "priceFetchFailed": "Couldn't fetch the price - tap to retry.",
+
+  "notAProductPage": "This page doesn't look like a product - check the link.",
+
+  "priceRefreshFailed": "Couldn't refresh the price right now - try again in a moment.",
+
   "genericLoadError": "Failed to load.\n{error}",
   "@genericLoadError": {
     "placeholders": {

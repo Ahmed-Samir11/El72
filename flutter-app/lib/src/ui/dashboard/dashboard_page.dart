@@ -104,6 +104,7 @@ class _TrackersTab extends ConsumerWidget {
                       targetPrice: item.targetPrice ?? 0.0,
                       hasPrice: lowest != null && lowest.priceLocal > 0,
                       isActive: item.isActive,
+                      fetchStatus: item.fetchStatus,
                       onTap: () {
                         Navigator.push(
                           context,
@@ -114,6 +115,37 @@ class _TrackersTab extends ConsumerWidget {
                             ),
                           ),
                         );
+                      },
+                      // Retryable fetch failure: re-trigger the backend fetch
+                      // (the server resets the status to "fetching"), then
+                      // reload so the card shows the spinner again.
+                      onRetry: () async {
+                        try {
+                          await ref
+                              .read(trackedItemsRepositoryProvider)
+                              .refreshPrice(item.id);
+                        } catch (_) {
+                          // The refresh request itself failed (DioException
+                          // on 429/offline/5xx, or anything else unexpected):
+                          // tell the user instead of letting the error escape
+                          // the tap handler — the card stays in its failure
+                          // state so they can retry later.
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context)
+                              ..hideCurrentSnackBar()
+                              ..showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    AppLocalizations.of(
+                                      context,
+                                    ).priceRefreshFailed,
+                                  ),
+                                ),
+                              );
+                          }
+                          return;
+                        }
+                        ref.invalidate(trackedItemsProvider);
                       },
                     );
                   },

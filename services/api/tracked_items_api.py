@@ -18,7 +18,16 @@ from sqlalchemy.orm import Session
 from services.api.credits import deduct
 from services.api.dependencies import SessionLocal, get_current_user, get_db
 from services.api.models import User
-from services.api.price_fetcher import _to_usd, fetch_price_sync
+from services.api.price_fetcher import (
+    FETCH_BLOCKED,
+    FETCH_FAILED,
+    FETCH_NO_PRICE,
+    FETCH_OK,
+    FetchResult,
+    _safe_fetch_error,
+    _to_usd,
+    fetch_price_sync,
+)
 from services.api.tracked_items_models import (
     CurrentPrice,
     LowestPrice,
@@ -161,6 +170,40 @@ def _image_url_for_item(db: Session, sku: str, store_id: str) -> str:
         return ""
 
 
+# Ordering of fetch statuses by user actionability: the most informative
+# status wins when aggregating several store mappings onto one item.
+_STATUS_SEVERITY = {
+    FETCH_OK: 0,
+    FETCH_FAILED: 1,
+    FETCH_BLOCKED: 2,
+    FETCH_NO_PRICE: 3,
+}
+
+
+def _aggregate_fetch_status(stores) -> tuple:
+    """(status, error) summary across an item's store mappings.
+
+    The highest-severity non-OK status wins (a definitive "not a product
+    page" beats a transient "blocked" beats "fetch failed"), so the UI can
+    show the single most actionable message. All-OK (or no mappings) is
+    reported as ('ok', None).
+    """
+    worst = None
+    worst_status: Optional[str] = None
+    for store in stores:
+        status = getattr(store, "last_fetch_status", None)
+        if not status or status == FETCH_OK:
+            continue
+        if worst is None or _STATUS_SEVERITY.get(status, 1) > _STATUS_SEVERITY.get(
+            worst_status, 1
+        ):
+            worst = store
+            worst_status = status
+    if worst is None:
+        return FETCH_OK, None
+    return worst_status, worst.last_fetch_error
+
+
 @router.post("/", status_code=status.HTTP_201_CREATED)
 async def create_tracked_item(
     item: TrackedItemWithStores,
@@ -261,6 +304,16 @@ async def list_tracked_items(
             db.query(LowestPrice).filter(LowestPrice.tracked_item_id == item.id).first()
         )
 
+        stores = (
+            db.query(TrackedItemStore)
+            .filter(
+                TrackedItemStore.tracked_item_id == item.id,
+                TrackedItemStore.is_active,
+            )
+            .all()
+        )
+        fetch_status, fetch_error = _aggregate_fetch_status(stores)
+
         result.append(
             {
                 "id": item.id,
@@ -268,14 +321,24 @@ async def list_tracked_items(
                 "target_price": float(item.target_price) if item.target_price else None,
                 "is_active": item.is_active,
                 "store_count": store_count,
+                # Actionable state for the UI: distinguishes "fetching" (no
+                # status yet) from failed fetches and non-product links.
+                "fetch_status": fetch_status,
+                "fetch_error": fetch_error,
                 "lowest_price": (
                     {
                         "store_id": lowest.store_id,
                         "price_local": float(lowest.price_local),
                         "currency": lowest.currency,
                         "url": lowest.url,
-                        "image_url": _image_url_for_item(
-                            db, item.canonical_product_id, lowest.store_id
+                        # Prefer the image persisted with the price row;
+                        # fall back to the best-effort history lookup for
+                        # older rows written before the column existed.
+                        "image_url": (
+                            getattr(lowest, "image_url", None)
+                            or _image_url_for_item(
+                                db, item.canonical_product_id, lowest.store_id
+                            )
                         ),
                     }
                     if lowest
@@ -326,12 +389,26 @@ async def get_tracked_item(
         db.query(LowestPrice).filter(LowestPrice.tracked_item_id == item_id).first()
     )
 
+    # Aggregate fetch status across the item's store mappings so the UI can
+    # show "couldn't fetch" vs "not a product page" vs "fetching".
+    stores = (
+        db.query(TrackedItemStore)
+        .filter(
+            TrackedItemStore.tracked_item_id == item_id,
+            TrackedItemStore.is_active,
+        )
+        .all()
+    )
+    fetch_status, fetch_error = _aggregate_fetch_status(stores)
+
     return {
         "id": item.id,
         "canonical_product_id": item.canonical_product_id,
         "specs": item.specs,
         "target_price": float(item.target_price) if item.target_price else None,
         "is_active": item.is_active,
+        "fetch_status": fetch_status,
+        "fetch_error": fetch_error,
         "created_at": item.created_at,
         "updated_at": item.updated_at,
         "lowest_price": (
@@ -341,8 +418,11 @@ async def get_tracked_item(
                 "price_local": float(lowest.price_local),
                 "currency": lowest.currency,
                 "url": lowest.url,
-                "image_url": _image_url_for_item(
-                    db, item.canonical_product_id, lowest.store_id
+                "image_url": (
+                    getattr(lowest, "image_url", None)
+                    or _image_url_for_item(
+                        db, item.canonical_product_id, lowest.store_id
+                    )
                 ),
                 "last_updated": lowest.last_updated,
             }
@@ -528,9 +608,15 @@ def _persist_fetched_price(tracked_item_id, store_id: str, url: str, canonical_i
 
     Runs as a FastAPI background task so the create request returns quickly.
     Uses its own DB session (the request session is closed by then).
-    Retries up to ``_FETCH_MAX_RETRIES`` times with exponential backoff.
+    Retries up to ``_FETCH_MAX_RETRIES`` times with exponential backoff —
+    except for a definitive ``no_price_found`` (the page loaded fine but has
+    no price; a retry cannot change that, so it fails fast).
+
+    The classified outcome (ok / no_price_found / blocked / fetch_failed)
+    is always persisted to ``tracked_item_stores.last_fetch_status`` so the
+    UI can show an actionable state instead of "fetching" forever.
     """
-    fetched = None
+    result: Optional[FetchResult] = None
     for attempt in range(1, _FETCH_MAX_RETRIES + 1):
         logger.info(
             "Fetching price for %s (attempt %d/%d, item=%s)",
@@ -540,46 +626,74 @@ def _persist_fetched_price(tracked_item_id, store_id: str, url: str, canonical_i
             tracked_item_id,
         )
         try:
-            fetched = fetch_price_sync(url)
-        except Exception as exc:
+            result = fetch_price_sync(url)
+        except Exception as exc:  # noqa: BLE001 — fetch_price_sync already
             logger.warning(
                 "Fetch attempt %d raised for %s: %s",
                 attempt,
                 url,
                 exc,
             )
-            fetched = None
-        if fetched is not None:
+            result = FetchResult(
+                FETCH_FAILED, f"unexpected error: {type(exc).__name__}"
+            )
+        if result.status == FETCH_OK:
             logger.info(
                 "Price fetched for %s: %s %s (image=%s)",
                 url,
-                fetched.price_local,
-                fetched.currency,
-                bool(fetched.image_url),
+                result.price.price_local,
+                result.price.currency,
+                bool(result.price.image_url),
             )
+            break
+        # A definitive "no price on page" needs no retry; blocked/failed are
+        # transient (challenge may lift, network may recover) and retry.
+        if result.status == FETCH_NO_PRICE:
             break
         if attempt < _FETCH_MAX_RETRIES:
             wait = 2**attempt
             logger.warning(
-                "Fetch attempt %d failed for %s, retrying in %ds",
+                "Fetch attempt %d failed for %s (%s), retrying in %ds",
                 attempt,
                 url,
+                result.status,
                 wait,
             )
             time.sleep(wait)
 
-    if fetched is None:
-        logger.warning(
-            "All %d fetch attempts failed for %s (item=%s, store=%s)",
-            _FETCH_MAX_RETRIES,
-            url,
-            tracked_item_id,
-            store_id,
-        )
-        return
-
     db = SessionLocal()
     try:
+        store_row = (
+            db.query(TrackedItemStore)
+            .filter(
+                TrackedItemStore.tracked_item_id == tracked_item_id,
+                TrackedItemStore.store_id == store_id,
+            )
+            .first()
+        )
+        if store_row is None:
+            # Item/store was deleted between scheduling and execution.
+            return
+
+        if result is None or result.status != FETCH_OK or result.price is None:
+            final_status = result.status if result is not None else FETCH_FAILED
+            final_reason = result.reason if result is not None else "no fetch result"
+            logger.warning(
+                "Fetch ended %s for %s (item=%s, store=%s): %s",
+                final_status,
+                url,
+                tracked_item_id,
+                store_id,
+                final_reason,
+            )
+            store_row.last_fetch_status = final_status
+            # Sanitization boundary: only short, client-safe reasons are
+            # persisted (this value is returned by the list/detail APIs).
+            store_row.last_fetch_error = _safe_fetch_error(final_reason)
+            db.commit()
+            return
+
+        fetched = result.price
         price_usd = _to_usd(fetched.price_local, fetched.currency)
         now = datetime.utcnow()
 
@@ -597,6 +711,7 @@ def _persist_fetched_price(tracked_item_id, store_id: str, url: str, canonical_i
             existing.price_local = fetched.price_local
             existing.currency = fetched.currency
             existing.in_stock = fetched.in_stock
+            existing.image_url = fetched.image_url
             existing.last_updated = now
         else:
             db.add(
@@ -607,6 +722,7 @@ def _persist_fetched_price(tracked_item_id, store_id: str, url: str, canonical_i
                     price_local=fetched.price_local,
                     currency=fetched.currency,
                     in_stock=fetched.in_stock,
+                    image_url=fetched.image_url,
                     last_updated=now,
                 )
             )
@@ -623,6 +739,7 @@ def _persist_fetched_price(tracked_item_id, store_id: str, url: str, canonical_i
             low.price_local = fetched.price_local
             low.currency = fetched.currency
             low.url = url
+            low.image_url = fetched.image_url
             low.last_updated = now
         else:
             db.add(
@@ -633,6 +750,7 @@ def _persist_fetched_price(tracked_item_id, store_id: str, url: str, canonical_i
                     price_local=fetched.price_local,
                     currency=fetched.currency,
                     url=url,
+                    image_url=fetched.image_url,
                     last_updated=now,
                 )
             )
@@ -665,6 +783,13 @@ def _persist_fetched_price(tracked_item_id, store_id: str, url: str, canonical_i
             db.commit()
         except SQLAlchemyError:
             db.rollback()
+
+        # Record the successful fetch on the store mapping (clears any
+        # earlier failure state so the UI stops showing the error).
+        store_row.last_fetch_status = FETCH_OK
+        store_row.last_fetch_error = None
+        db.commit()
+
         logger.info(
             "Price persisted for item=%s store=%s price=%s %s",
             tracked_item_id,
@@ -847,6 +972,11 @@ async def refresh_tracked_item_price(
             store.store_url,
             item.canonical_product_id,
         )
+        # Reset the previous failure state so the UI immediately shows the
+        # "fetching" spinner (the new fetch overwrites this when it settles).
+        store.last_fetch_status = None
+        store.last_fetch_error = None
+    db.commit()
 
     lowest = (
         db.query(LowestPrice).filter(LowestPrice.tracked_item_id == item.id).first()

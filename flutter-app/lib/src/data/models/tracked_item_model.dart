@@ -1,3 +1,26 @@
+/// Backend fetch-status values for a tracker's store mapping(s), mirroring
+/// the Python constants in `services/api/price_fetcher.py` (FETCH_*).
+/// `TrackedItem.fetchStatus` is `null` when never fetched / in flight;
+/// compare against these constants instead of raw string literals so the
+/// allowed states live in one place.
+abstract final class FetchStatus {
+  /// Price + image extracted successfully.
+  static const String ok = 'ok';
+
+  /// Fetched fine but no price on the page — likely not a product link.
+  static const String noPriceFound = 'no_price_found';
+
+  /// Store blocked the fetch (bot wall / 403 / 429 / 5xx).
+  static const String blocked = 'blocked';
+
+  /// Network/transport failure.
+  static const String fetchFailed = 'fetch_failed';
+
+  /// Whether [status] is a failure the user can retry from the card.
+  static bool isRetryable(String? status) =>
+      status == blocked || status == fetchFailed;
+}
+
 /// Model for a tracked item as returned by `GET /tracked-items`.
 ///
 /// The list endpoint returns, per item:
@@ -28,6 +51,15 @@ class TrackedItem {
   final DateTime? createdAt;
   final DateTime? updatedAt;
 
+  /// Backend fetch status for this tracker's store mapping(s):
+  /// `null` (never fetched / in flight), `ok`, `no_price_found`, `blocked`,
+  /// or `fetch_failed`. Drives the card's actionable "failed" states so a
+  /// bad link is not mistaken for an endless fetch.
+  final String? fetchStatus;
+
+  /// Short reason for a non-`ok` [fetchStatus] (log-safe, not user-facing).
+  final String? fetchError;
+
   const TrackedItem({
     required this.id,
     required this.canonicalProductId,
@@ -37,6 +69,8 @@ class TrackedItem {
     this.lowestPrice,
     this.createdAt,
     this.updatedAt,
+    this.fetchStatus,
+    this.fetchError,
   });
 
   /// Human-friendly label derived from the canonical id.
@@ -62,6 +96,12 @@ class TrackedItem {
           : null,
       createdAt: _parseDate(json['created_at']),
       updatedAt: _parseDate(json['updated_at']),
+      fetchStatus: json['fetch_status'] is String
+          ? json['fetch_status'] as String
+          : null,
+      fetchError: json['fetch_error'] is String
+          ? json['fetch_error'] as String
+          : null,
     );
   }
 }

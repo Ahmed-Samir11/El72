@@ -116,6 +116,14 @@ class TrackedItemStore(Base):
     is_active = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
+    # Result of the last on-demand price fetch for this store mapping.
+    # last_fetch_status: ok | no_price_found | blocked | fetch_failed (NULL =
+    # never fetched yet). last_fetch_error: short human/log-safe reason.
+    # Surfaced by the API so the app can show an actionable state instead of
+    # an endless "fetching" spinner.
+    last_fetch_status = Column(Text, nullable=True)
+    last_fetch_error = Column(Text, nullable=True)
+
     # Relationships
     tracked_item = relationship("TrackedItem", back_populates="store_mappings")
 
@@ -150,6 +158,10 @@ class CurrentPrice(Base):
     price_local = Column(Numeric(10, 2), nullable=False)
     currency = Column(String(10), nullable=False)
     in_stock = Column(Boolean, nullable=False, default=True)
+    # Product image captured with this price (absolute URL). Lets the list/
+    # detail endpoints serve an image without the best-effort price_history
+    # lookup (kept as a fallback for rows written before this column).
+    image_url = Column(Text, nullable=True)
     last_updated = Column(DateTime, nullable=False, default=datetime.utcnow)
 
     # Relationships
@@ -180,6 +192,8 @@ class LowestPrice(Base):
     price_local = Column(Numeric(10, 2), nullable=False)
     currency = Column(String(10), nullable=False)
     url = Column(Text, nullable=False)
+    # Product image captured with the lowest price (see CurrentPrice.image_url).
+    image_url = Column(Text, nullable=True)
     last_updated = Column(DateTime, nullable=False, default=datetime.utcnow)
 
     # Relationships

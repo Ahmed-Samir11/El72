@@ -39,6 +39,18 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base.metadata.create_all(bind=engine)
 TrackedBase.metadata.create_all(bind=engine)
 
+# In-place column migration for databases created before the new columns
+# (last_fetch_status/last_fetch_error, image_url) existed. create_all adds
+# missing tables but not columns, so upgraded DBs need this. This is
+# fail-HARD on purpose: the tracked-items endpoints query these columns, so
+# starting without them would surface as confusing 500s later — a boot
+# failure is the honest signal. (create_tables is import-safe: it creates
+# no engine at import time; concurrent startups are handled by
+# IF NOT EXISTS / duplicate-column tolerance inside ensure_columns.)
+from services.api.create_tables import ensure_columns  # noqa: E402
+
+ensure_columns(engine)
+
 app = FastAPI(title="Elhaq API")
 limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter

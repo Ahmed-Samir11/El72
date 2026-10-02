@@ -4,14 +4,23 @@ import '../../../l10n/app_localizations.dart';
 import '../../core/format/price_format.dart';
 import '../../core/styles/app_colors.dart';
 import '../../core/styles/app_theme.dart';
+import '../../data/models/tracked_item_model.dart';
 import 'product_image.dart';
 
 /// Product tracker row.
 ///
 /// [hasPrice] drives the pending-price state: when false the card shows a
-/// hourglass placeholder and a warning tint, signalling that the background
-/// price fetch has not produced a price yet. Callers must pass it explicitly
-/// rather than relying on a magic `currentPrice <= 0` check.
+/// status chip instead of a price. Callers must pass it explicitly rather
+/// than relying on a magic `currentPrice <= 0` check.
+///
+/// [fetchStatus] refines the no-price state (backend fetch classification):
+/// - `null` → warning "fetching" chip (in flight),
+/// - `no_price_found` → error "not a product page" chip (the link is wrong),
+/// - any other settled status (`blocked`, `fetch_failed`, or an anomalous
+///   `ok`/unknown value without a price) → error "couldn't fetch — tap to
+///   retry" chip; settled states never show an endless spinner.
+/// [onRetry] is invoked when the card is tapped in a settled-without-price
+/// state (falling back to [onTap] when [onRetry] is null).
 class TrackerCard extends StatelessWidget {
   final String imageUrl;
   final String title;
@@ -19,7 +28,9 @@ class TrackerCard extends StatelessWidget {
   final double targetPrice;
   final bool hasPrice;
   final bool isActive;
+  final String? fetchStatus;
   final VoidCallback? onTap;
+  final VoidCallback? onRetry;
 
   const TrackerCard({
     super.key,
@@ -29,8 +40,57 @@ class TrackerCard extends StatelessWidget {
     required this.targetPrice,
     required this.hasPrice,
     required this.isActive,
+    this.fetchStatus,
     this.onTap,
+    this.onRetry,
   });
+
+  /// True when the backend fetch has SETTLED (non-null status) but no price
+  /// exists: blocked, fetch_failed, or an anomalous/unknown status such as
+  /// 'ok' without a price row. Such states show a failure chip whose tap
+  /// triggers [onRetry]; only `fetchStatus == null` (in flight) shows the
+  /// fetching spinner — a settled state must never spin forever.
+  bool get _settledWithoutPrice => !hasPrice && fetchStatus != null;
+
+  /// Status chip shown while a tracker has no price: a spinner for the
+  /// in-flight "fetching" state, an alert icon for the error states.
+  Widget _statusChip(
+    BuildContext context,
+    String label,
+    Color color, {
+    required bool fetching,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: color.withValues(alpha: 0.4)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (fetching)
+            SizedBox(
+              width: 12,
+              height: 12,
+              child: CircularProgressIndicator(strokeWidth: 2, color: color),
+            )
+          else
+            Icon(Icons.error_outline, size: 14, color: color),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: color,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -41,7 +101,9 @@ class TrackerCard extends StatelessWidget {
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: InkWell(
-        onTap: onTap,
+        // A settled-without-price failure without an onRetry callback falls
+        // back to the normal tap (the card must never become untappable).
+        onTap: _settledWithoutPrice ? (onRetry ?? onTap) : onTap,
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Row(
@@ -78,40 +140,36 @@ class TrackerCard extends StatelessWidget {
                               shape: BoxShape.circle,
                             ),
                           ),
+                        ] else if (fetchStatus == FetchStatus.noPriceFound) ...[
+                          // Flexible so the message wraps on narrow screens
+                          // instead of overflowing the row.
+                          Flexible(
+                            child: _statusChip(
+                              context,
+                              AppLocalizations.of(context).notAProductPage,
+                              tokens.error,
+                              fetching: false,
+                            ),
+                          ),
+                        ] else if (_settledWithoutPrice) ...[
+                          // Settled failure (blocked / fetch_failed / an
+                          // unknown or contradictory status such as 'ok'
+                          // without a price): tap to retry the fetch.
+                          Flexible(
+                            child: _statusChip(
+                              context,
+                              AppLocalizations.of(context).priceFetchFailed,
+                              tokens.error,
+                              fetching: false,
+                            ),
+                          ),
                         ] else ...[
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 4,
-                            ),
-                            decoration: BoxDecoration(
-                              color: tokens.warning.withValues(alpha: 0.12),
-                              borderRadius: BorderRadius.circular(6),
-                              border: Border.all(
-                                color: tokens.warning.withValues(alpha: 0.4),
-                              ),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                SizedBox(
-                                  width: 12,
-                                  height: 12,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: tokens.warning,
-                                  ),
-                                ),
-                                const SizedBox(width: 6),
-                                Text(
-                                  AppLocalizations.of(context).fetchingPrice,
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w600,
-                                    color: tokens.warning,
-                                  ),
-                                ),
-                              ],
+                          Flexible(
+                            child: _statusChip(
+                              context,
+                              AppLocalizations.of(context).fetchingPrice,
+                              tokens.warning,
+                              fetching: true,
                             ),
                           ),
                         ],
