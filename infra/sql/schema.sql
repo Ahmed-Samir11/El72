@@ -180,11 +180,18 @@ CREATE INDEX IF NOT EXISTS idx_manual_payments_user_id ON manual_payments(user_i
 CREATE INDEX IF NOT EXISTS idx_manual_payments_status_created
     ON manual_payments(status, created_at);
 
--- Append-only audit trail for admin payment actions (no UPDATE/DELETE).
+-- Append-only audit trail of ALL payment events: admin actions
+-- (approve / reject / reveal_contact) and system security events (webhook
+-- signature failures, OTP failures, token expiry, amount mismatches).
+-- `detail` is sanitized free-form text — never raw card data, gateway
+-- tokens or OTPs. No UPDATE/DELETE path exists in the application.
 CREATE TABLE IF NOT EXISTS payment_audit_log (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     action VARCHAR(50) NOT NULL
-        CHECK (action IN ('approve', 'reject', 'reveal_contact')),
+        CHECK (action IN ('approve', 'reject', 'reveal_contact',
+            'webhook_received', 'webhook_signature_failed', 'otp_failed',
+            'token_expired', 'amount_mismatch')),
+    detail TEXT,
     actor_id VARCHAR(36) REFERENCES admins(id) ON DELETE SET NULL,
     -- Snapshot of the acting admin's username (survives admin deletion).
     actor_username VARCHAR(50),

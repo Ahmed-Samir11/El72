@@ -45,8 +45,9 @@ from services.api.dependencies import (
     pwd_context,
     security,
 )
-from services.api.manual_payment_models import ManualPayment, PaymentAuditLog
+from services.api.manual_payment_models import ManualPayment
 from services.api.models import User
+from services.api.payment_security import record_payment_event
 from services.api.routers.auth import Token
 
 logger = logging.getLogger(__name__)
@@ -128,17 +129,17 @@ def _audit_entry(
     request: Request,
     target_user_phone: Optional[str] = None,
 ) -> None:
-    """Append an audit entry (no UPDATE/DELETE path exists for this table)."""
-    db.add(
-        PaymentAuditLog(
-            action=action,
-            actor_id=str(admin.id),
-            actor_username=admin.username,
-            target_user_id=target_user_id,
-            target_user_phone=target_user_phone,
-            order_ref=order_ref,
-            client_ip=_client_ip(request),
-        )
+    """Append an audit entry via the single record_payment_event entry point
+    (no UPDATE/DELETE path exists for this table)."""
+    record_payment_event(
+        db,
+        event_type=action,
+        user_id=target_user_id,
+        payment_ref=order_ref,
+        ip_address=_client_ip(request),
+        actor_id=str(admin.id),
+        actor_username=admin.username,
+        target_user_phone=target_user_phone,
     )
 
 
@@ -186,8 +187,8 @@ def get_current_admin(
     return admin
 
 
-@limiter.limit("20/minute")
 @router.post("/admin/login", response_model=Token, include_in_schema=False)
+@limiter.limit("20/minute")
 def admin_login(
     body: AdminLogin,
     request: Request,
@@ -303,7 +304,9 @@ def create_manual_payment(
 
 
 @router.get("/payment/manual/{order_ref}", response_model=ManualPaymentResponse)
+@limiter.limit("30/minute")
 def get_manual_payment(
+    request: Request,
     order_ref: str,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
@@ -355,7 +358,9 @@ class AdminPaymentResponse(BaseModel):
     response_model=list[AdminPaymentResponse],
     include_in_schema=False,
 )
+@limiter.limit("20/minute")
 def list_manual_payments(
+    request: Request,
     db: Session = Depends(get_db),
     admin: Admin = Depends(get_current_admin),
     status_filter: Optional[str] = None,
@@ -401,6 +406,7 @@ def list_manual_payments(
 @router.get(
     "/admin/payments/{order_ref}/contact", response_model=dict, include_in_schema=False
 )
+@limiter.limit("20/minute")
 def reveal_payment_contact(
     request: Request,
     order_ref: str,
@@ -435,6 +441,7 @@ class RejectBody(BaseModel):
 @router.post(
     "/admin/payments/{order_ref}/approve", response_model=dict, include_in_schema=False
 )
+@limiter.limit("20/minute")
 def approve_manual_payment(
     request: Request,
     order_ref: str,
@@ -518,6 +525,7 @@ def approve_manual_payment(
 @router.post(
     "/admin/payments/{order_ref}/reject", response_model=dict, include_in_schema=False
 )
+@limiter.limit("20/minute")
 def reject_manual_payment(
     request: Request,
     order_ref: str,
