@@ -542,6 +542,28 @@ async def paymob_webhook(request: Request, db: Session = Depends(get_db)):
     return {"status": "processed"}
 ```
 
+### Implementation Notes (as built)
+- Endpoint lives in the **billing service** (`services/billing/main.py`), upgraded from the
+  stub. The legacy flat-payload contract and `test_billing_main.py` were replaced by the real
+  Paymob payload format; full coverage is in `services/billing/test_webhook.py`.
+- **reference_id parsing**: user ids may contain dashes (UUIDs), so the package is the LAST
+  `-`-separated segment and the user token is everything between `elhaq-` and the package.
+  There is no strict UUID parse — the DB existence check (4.6) is the authoritative gate
+  (in production Postgres every existing user id is a UUID, so tampered tokens are
+  rejected there).
+- **Amounts are in piastres** (Paymob minor units): `amount == PACKAGE_PRICES[package] * 100`.
+- **Credit granting reuses `services.api.credits.grant`** — lazy provisioning +
+  `credit_transactions` ledger row in the same session/transaction as the `PaymentLog`
+  insert and the audit write (one `db.commit()` = one transaction, per 4.5).
+- **Every processing outcome is audited** through the single entry point
+  `record_payment_event()`: `webhook_received` (success/failed/canceled),
+  `webhook_signature_failed`, `amount_mismatch`. Signature failures are committed BEFORE
+  the 401 is raised so the audit row survives.
+- **Rate limit**: 100/hour per IP via slowapi (`@limiter.limit` innermost decorator +
+  `RateLimitExceeded` exception handler on the billing app). Failed signatures count too.
+- The billing `GUID` type decorator is dialect-aware (plain string on SQLite, native UUID
+  on Postgres) because SQLite user ids are integers.
+
 ### Acceptance Criteria
 - [ ] Valid webhook → credits granted, payment logged
 - [ ] Invalid signature → 401, no side effects
