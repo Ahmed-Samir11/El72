@@ -404,4 +404,62 @@ void main() {
       expect(await storage.read(key: 'access_token'), isNull);
     },
   );
+
+  test(
+    'an unauthenticated 401 with no stored token does not trigger sign-out',
+    () async {
+      // No token in storage and no Bearer header on the request: there is no
+      // session to sign out (e.g. a public-endpoint or startup 401) — the
+      // user must not be routed to login for it.
+      final storage = _FakeSecureStorage();
+
+      var unauthorizedCalled = false;
+      ApiClient.onUnauthorized = () async {
+        unauthorizedCalled = true;
+      };
+      addTearDown(() => ApiClient.onUnauthorized = null);
+
+      final client = ApiClient.withStorage(storage);
+      client.dio.httpClientAdapter = _StatusAdapter(401);
+
+      await expectLater(
+        client.dio.get('/api/public/things'),
+        throwsA(isA<DioException>()),
+      );
+      await pumpEventQueue();
+
+      expect(unauthorizedCalled, isFalse);
+    },
+  );
+
+  test(
+    'a 401 on /admin/api/auth/login with a prefixed base still signs out',
+    () async {
+      // The anchored match is exact: with base path /api, the path
+      // /admin/api/auth/login must NOT be treated as the login endpoint.
+      final storage = _FakeSecureStorage();
+      await storage.write(key: 'access_token', value: 'expired-token');
+
+      var unauthorizedCalled = false;
+      ApiClient.onUnauthorized = () async {
+        unauthorizedCalled = true;
+      };
+      addTearDown(() => ApiClient.onUnauthorized = null);
+
+      final client = ApiClient.withStorage(
+        storage,
+        baseUrl: 'https://api.example.com/api',
+      );
+      client.dio.httpClientAdapter = _StatusAdapter(401);
+
+      await expectLater(
+        client.dio.get('/admin/api/auth/login'),
+        throwsA(isA<DioException>()),
+      );
+      await pumpEventQueue();
+
+      expect(unauthorizedCalled, isTrue);
+      expect(await storage.read(key: 'access_token'), isNull);
+    },
+  );
 }

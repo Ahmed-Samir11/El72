@@ -86,7 +86,22 @@ class ApiClient {
           // navigation handler's in-flight dedup does not cover this — the
           // second navigation would only start after the first completed.)
           final sentToken = _tokenFromOptions(error.requestOptions);
-          final currentToken = await _storage.read(key: 'access_token');
+          // A storage failure must not mask the original 401: if the read
+          // fails, assume the identity matches (proceed to clear + navigate —
+          // the 401 is real and re-authentication is the safe path).
+          String? currentToken = sentToken;
+          try {
+            currentToken = await _storage.read(key: 'access_token');
+          } catch (e) {
+            debugPrint('ApiClient: failed to read stored token: $e');
+          }
+          // No token was sent and none is stored: there is no session to
+          // sign out (e.g. a 401 from a public/startup request) — don't
+          // route the user to login or reset form state.
+          if (sentToken == null && currentToken == null) {
+            handler.next(error);
+            return;
+          }
           if (currentToken != sentToken) {
             handler.next(error);
             return;
@@ -120,11 +135,18 @@ class ApiClient {
   }
 
   /// The bearer token [options] were sent with, or null if the request was
-  /// unauthenticated.
+  /// unauthenticated. Dio headers can hold `List<String>` values; the last
+  /// entry wins (mirrors HTTP header folding).
   String? _tokenFromOptions(RequestOptions options) {
     final header = options.headers['Authorization'];
-    if (header is String && header.startsWith('Bearer ')) {
-      return header.substring('Bearer '.length);
+    String? value;
+    if (header is String) {
+      value = header;
+    } else if (header is List && header.isNotEmpty) {
+      value = header.last.toString();
+    }
+    if (value != null && value.startsWith('Bearer ')) {
+      return value.substring('Bearer '.length);
     }
     return null;
   }
@@ -135,18 +157,27 @@ class ApiClient {
   /// semantics drop the base URL's path component), so a call to
   /// `'/auth/login'` keeps the path `'/auth/login'` even with a path-prefixed
   /// base URL; relative calls (`'auth/login'`) keep the prefix
-  /// (`'/api/auth/login'`). Both forms are matched. With a root base URL the
-  /// match is exact (`'/auth/login'`), which also avoids false positives such
-  /// as `'/admin/auth/login'` that a bare suffix match would hit.
+  /// (`'/api/auth/login'`). Both forms are matched by EXACT comparison only
+  /// — which also avoids false positives such as `'/admin/auth/login'` and
+  /// `'/admin/api/auth/login'` that a bare suffix match would hit.
   bool _isCredentialPath(String path) {
     const endpoints = ['/auth/login', '/auth/register'];
-    var basePath = Uri.parse(_baseUrl).path;
+    String basePath = '';
+    try {
+      basePath = Uri.parse(_baseUrl).path;
+    } catch (_) {
+      return false; // malformed base URL: never treat as credential
+    }
     if (basePath.endsWith('/')) {
       basePath = basePath.substring(0, basePath.length - 1);
     }
     for (final endpoint in endpoints) {
+      // Exact matches only (no bare suffix): '/auth/login' for root bases
+      // (avoids '/admin/auth/login'), or the base path prepended for
+      // relative calls against a path-prefixed base ('/api/auth/login' —
+      // which must not match '/admin/api/auth/login').
       if (path == endpoint) return true;
-      if (basePath.isNotEmpty && path.endsWith('$basePath$endpoint')) {
+      if (basePath.isNotEmpty && path == '$basePath$endpoint') {
         return true;
       }
     }
