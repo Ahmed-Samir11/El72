@@ -2,7 +2,7 @@
 
 **Branch:** `chore/review-agent-tunnel` (off `main`)
 **Date:** 2026-10-02
-**Status:** Ready for implementation
+**Status:** Implemented (PR #22) — tunnel mode merged into the review workflow
 
 ## Goal
 

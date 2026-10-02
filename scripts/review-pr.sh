@@ -30,23 +30,39 @@
 #     bash scripts/review-pr.sh compumarts/el72#12
 set -euo pipefail
 
-# Review LLM mode: local (default) or tunnel.
+# Review LLM mode: local (default) or tunnel. Any other value is a
+# misconfiguration (e.g. a "TUNNEL" typo) — fail loudly instead of
+# silently falling back to a local server that may be down.
 REVIEW_LLM_MODE="${REVIEW_LLM_MODE:-local}"
-
-# llama-server endpoint (llama-server must be running with qwen-27b loaded).
-export LLAMA_SERVER_HOST="${LLAMA_SERVER_HOST:-localhost}"
-export LLAMA_SERVER_PORT="${LLAMA_SERVER_PORT:-8080}"
+if [ "$REVIEW_LLM_MODE" != "local" ] && [ "$REVIEW_LLM_MODE" != "tunnel" ]; then
+  echo "Error: REVIEW_LLM_MODE must be 'local' or 'tunnel' (got '$REVIEW_LLM_MODE')." >&2
+  exit 1
+fi
 
 if [ "$REVIEW_LLM_MODE" = "tunnel" ]; then
   # Tunnel mode: pass the custom OpenAI-compatible endpoint through to HGM.
   : "${REVIEW_LLM_BASE_URL:?REVIEW_LLM_MODE=tunnel requires REVIEW_LLM_BASE_URL (e.g. https://<tunnel>.trycloudflare.com/v1)}"
+  case "$REVIEW_LLM_BASE_URL" in
+    http://*|https://*) ;;
+    *)
+      echo "Error: REVIEW_LLM_BASE_URL must be an http(s) URL (got '$REVIEW_LLM_BASE_URL')." >&2
+      exit 1
+      ;;
+  esac
   export HGM_LLM_BASE_URL="$REVIEW_LLM_BASE_URL"
+  # The default key 'local' suits unauthenticated vLLM endpoints; a tunnel
+  # that requires real auth must set REVIEW_LLM_API_KEY explicitly.
   export HGM_LLM_API_KEY="${REVIEW_LLM_API_KEY:-local}"
   REVIEW_MODEL="${REVIEW_LLM_MODEL:-qwen3.8-27b}"
 else
   # Local-only guarantee: strip any inherited remote LLM endpoint config.
   unset HGM_LLM_BASE_URL HGM_LLM_API_KEY
   REVIEW_MODEL="local/qwen-27b"
+
+  # llama-server endpoint (llama-server must be running with qwen-27b
+  # loaded) — only relevant in local mode.
+  export LLAMA_SERVER_HOST="${LLAMA_SERVER_HOST:-localhost}"
+  export LLAMA_SERVER_PORT="${LLAMA_SERVER_PORT:-8080}"
 fi
 
 # HGM checkout location — overridable, with a clear error if missing.
