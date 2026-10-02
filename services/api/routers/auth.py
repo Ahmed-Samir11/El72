@@ -1,7 +1,7 @@
 import secrets
-from datetime import timedelta
+from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, validator
 from sqlalchemy.orm import Session
 
@@ -9,10 +9,12 @@ from services.api.dependencies import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
     create_access_token,
     get_db,
+    get_current_user,
     get_password_hash,
     pwd_context,
 )
-from services.api.models import User
+from services.api.models import Alert, User
+from services.api.tracked_items_models import TrackedItem
 
 router = APIRouter()
 
@@ -67,7 +69,11 @@ def register(user: UserRegister, db: Session = Depends(get_db)):
 
 @router.post("/login", response_model=Token)
 def login(user: UserRegister, db: Session = Depends(get_db)):
-    db_user = db.query(User).filter(User.phone == user.phone).first()
+    db_user = (
+        db.query(User)
+        .filter(User.phone == user.phone, User.status == "ACTIVE")
+        .first()
+    )
     if not db_user or not pwd_context.verify(user.password, db_user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
@@ -76,3 +82,23 @@ def login(user: UserRegister, db: Session = Depends(get_db)):
         data={"sub": user.phone}, expires_delta=access_token_expires
     )
     return {"access_token": access_token, "token_type": "bearer"}
+
+
+@router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
+def delete_account(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Anonymize the operational account while preserving its analytical identity."""
+    db.query(Alert).filter(Alert.user_id == current_user.id).delete(
+        synchronize_session=False
+    )
+    db.query(TrackedItem).filter(TrackedItem.user_id == current_user.id).delete(
+        synchronize_session=False
+    )
+    current_user.phone = f"deleted:{current_user.id}"
+    current_user.name = "Deleted user"
+    current_user.password_hash = get_password_hash(secrets.token_urlsafe(32))
+    current_user.salt = secrets.token_hex(16)
+    current_user.status = "DELETED"
+    current_user.deleted_at = datetime.utcnow()
+    current_user.valid_until = None
+    db.commit()
+    return None

@@ -16,7 +16,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from services.api.dependencies import get_db
+from services.api.dependencies import get_timescale_db
 from services.api.routers import public_api
 from services.api.seed_demo_data import _PRICE_HISTORY_DDL
 
@@ -78,7 +78,7 @@ def _make_client(seed: bool = True):
         finally:
             pass
 
-    app.dependency_overrides[get_db] = _get_db
+    app.dependency_overrides[get_timescale_db] = _get_db
     return TestClient(app), session, engine
 
 
@@ -175,7 +175,7 @@ def test_fail_soft_when_table_missing():
     def _get_db():
         yield session
 
-    app.dependency_overrides[get_db] = _get_db
+    app.dependency_overrides[get_timescale_db] = _get_db
     client = TestClient(app)
     try:
         assert client.get("/stats").json()["total_trackers"] == 0

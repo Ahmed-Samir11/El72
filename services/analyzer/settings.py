@@ -1,10 +1,20 @@
 from typing import Optional
 
 from pydantic import Field
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class AnalyzerSettings(BaseSettings):
+    # The repository uses one shared .env for several services. Ignore keys
+    # owned by those other services when loading that dotenv file; process
+    # environment values for declared analyzer settings remain validated.
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        protected_namespaces=("settings_",),
+    )
+
     service_name: str = Field("analyzer", env="SERVICE_NAME")
 
     # Redis / Streams
@@ -26,22 +36,14 @@ class AnalyzerSettings(BaseSettings):
     # Concurrency / performance
     concurrency: int = Field(4, env="SCRAPER_CONCURRENCY")
     consumer_count: int = Field(10, env="ANALYZER_CONSUMER_COUNT")
-
-    # Browser / scraper-specific defaults (kept for parity)
     scraper_nav_timeout_ms: int = Field(20000, env="SCRAPER_NAV_TIMEOUT_MS")
 
     # Misc
     xadd_retries: int = Field(3, env="XADD_RETRIES")
     xadd_backoff_s: float = Field(0.5, env="XADD_BACKOFF_S")
-
     ml_cpu_sample_interval: int = Field(5, env="ML_CPU_SAMPLE_INTERVAL")
-    # Publisher batching
     publish_batch_size: int = Field(20, env="PUBLISH_BATCH_SIZE")
     publish_batch_interval_s: float = Field(0.25, env="PUBLISH_BATCH_INTERVAL_S")
     publish_retry_attempts: int = Field(3, env="PUBLISH_RETRY_ATTEMPTS")
     publish_retry_backoff_s: float = Field(0.5, env="PUBLISH_RETRY_BACKOFF_S")
     dlq_stream: str = Field("stream:dlq:analyzer", env="DLQ_STREAM")
-
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"

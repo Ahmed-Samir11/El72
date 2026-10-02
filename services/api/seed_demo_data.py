@@ -17,10 +17,10 @@ Design constraints
 ------------------
 * **Idempotent** — safe to run on every startup. Existing rows are left
   untouched; missing rows are inserted.
-* **Portable** — the ``price_history`` DDL uses only types that work on both
-  SQLite (local demo) and PostgreSQL/TimescaleDB (production).
-* **Fail-soft** — any error is raised to the caller; the caller (app startup)
-  decides whether to treat it as fatal. The CLI entry point exits non-zero.
+* **Canonical history target** — operational user state uses ``DATABASE_URL``;
+    price history always uses the required ``TIMESCALE_URL``.
+* **Fail loudly** — connection and schema errors are raised to the caller and
+    the CLI exits non-zero. Credentials are never included in error messages.
 
 Note on ``tracked_items``
 -------------------------
@@ -58,7 +58,8 @@ except Exception:  # pragma: no cover - optional dependency
 # --------------------------------------------------------------------------- #
 # Configuration
 # --------------------------------------------------------------------------- #
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./elhaq.db")
+DATABASE_URL = os.getenv("DATABASE_URL")
+TIMESCALE_URL = os.getenv("TIMESCALE_URL")
 
 DEMO_PHONE = "+201000000000"
 DEMO_PASSWORD = "ElhaqDemo123"  # demo-only; never used in production
@@ -171,7 +172,7 @@ REMOVED_DEMO_SKUS = (
     "town-team-classic-polo",
 )
 
-# Portable DDL: works on SQLite and PostgreSQL/TimescaleDB.
+# Kept for local API test fixtures; production history is never created here.
 _PRICE_HISTORY_DDL = """
 CREATE TABLE IF NOT EXISTS price_history (
     time TIMESTAMP NOT NULL,
@@ -180,7 +181,7 @@ CREATE TABLE IF NOT EXISTS price_history (
     price_usd NUMERIC NOT NULL,
     price_local NUMERIC NOT NULL,
     currency VARCHAR(10) NOT NULL DEFAULT 'USD',
-    in_stock BOOLEAN NOT NULL DEFAULT 1,
+    in_stock BOOLEAN NOT NULL DEFAULT TRUE,
     source_url TEXT,
     image_url TEXT,
     PRIMARY KEY (time, sku, store_id)
@@ -225,14 +226,21 @@ def _generate_series(
 # --------------------------------------------------------------------------- #
 # Seeding steps
 # --------------------------------------------------------------------------- #
-def _ensure_price_history_table(engine: Engine) -> None:
-    """Create ``price_history`` if it does not already exist (portable)."""
-    with engine.begin() as conn:
-        conn.execute(text(_PRICE_HISTORY_DDL))
-        try:
-            conn.execute(text("ALTER TABLE price_history ADD COLUMN image_url TEXT"))
-        except Exception:
-            pass
+def _safe_engine_target(engine: Engine) -> str:
+    """Describe an engine without exposing credentials."""
+    url = engine.url
+    return f"{url.drivername}://{url.host or 'local'}:{url.port or ''}/{url.database or ''}"
+
+
+def _validate_price_history_target(engine: Engine) -> None:
+    """Require the configured history database to already contain its table."""
+    from sqlalchemy import inspect
+
+    if not inspect(engine).has_table("price_history"):
+        raise RuntimeError(
+            "Canonical price_history target "
+            f"{_safe_engine_target(engine)} is missing table price_history"
+        )
 
 
 def _seed_price_history(session: Session) -> int:
@@ -326,7 +334,10 @@ def _seed_demo_user(session: Session) -> bool:
 # --------------------------------------------------------------------------- #
 # Public entry point
 # --------------------------------------------------------------------------- #
-def run_seed(engine: Optional[Engine] = None) -> Dict:
+def run_seed(
+    engine: Optional[Engine] = None,
+    history_engine: Optional[Engine] = None,
+) -> Dict:
     """Run the full idempotent seed. Returns a summary dict.
 
     Parameters
@@ -335,30 +346,44 @@ def run_seed(engine: Optional[Engine] = None) -> Dict:
         Optional SQLAlchemy engine to reuse (e.g. the app's engine). If
         omitted, one is created from ``DATABASE_URL``.
     """
+    if engine is None and not DATABASE_URL:
+        raise RuntimeError("DATABASE_URL is required for operational demo data")
+    if history_engine is None and not TIMESCALE_URL:
+        raise RuntimeError("TIMESCALE_URL is required for canonical price_history")
     own_engine = engine is None
+    own_history_engine = history_engine is None
     if engine is None:
         engine = create_engine(DATABASE_URL)
+    if history_engine is None:
+        history_engine = create_engine(TIMESCALE_URL)
+    _validate_price_history_target(history_engine)
 
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    HistorySessionLocal = sessionmaker(bind=history_engine)
     session: Session = SessionLocal()
+    history_session: Session = HistorySessionLocal()
     summary: Dict = {"price_history_rows": 0, "demo_user_created": False}
 
     try:
         # Ensure ORM-managed tables (users, alerts) exist so the demo user can
         # be created. Idempotent.
         Base.metadata.create_all(bind=engine)
-        _ensure_price_history_table(engine)
-        session.begin()
-        summary["price_history_rows"] = _seed_price_history(session)
+        history_session.begin()
+        summary["price_history_rows"] = _seed_price_history(history_session)
         summary["demo_user_created"] = _seed_demo_user(session)
+        history_session.commit()
         session.commit()
     except Exception:
         session.rollback()
+        history_session.rollback()
         raise
     finally:
         session.close()
+        history_session.close()
         if own_engine:
             engine.dispose()
+        if own_history_engine:
+            history_engine.dispose()
 
     return summary
 

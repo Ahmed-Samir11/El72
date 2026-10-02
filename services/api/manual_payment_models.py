@@ -26,7 +26,7 @@ from sqlalchemy import (
     Text,
 )
 
-from services.api.models import Base
+from services.api.models import Base, OperationalIdType
 
 
 def _utcnow() -> datetime:
@@ -55,7 +55,7 @@ class ManualPayment(Base):
     # SET NULL (not CASCADE): payment history is a financial record and must
     # survive user deletion for auditing.
     user_id = Column(
-        String(36),
+        OperationalIdType(),
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
@@ -118,7 +118,7 @@ class PaymentAuditLog(Base):
     # SET NULL (not CASCADE): audit rows are forensic records and must survive
     # user deletion.
     target_user_id = Column(
-        String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+        OperationalIdType(), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     # Snapshot of the target user's phone at action time.
     target_user_phone = Column(String(20), nullable=True)
