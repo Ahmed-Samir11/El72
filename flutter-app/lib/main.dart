@@ -8,6 +8,8 @@ import 'l10n/app_localizations.dart';
 import 'src/routing/app_router.dart';
 import 'src/core/styles/app_theme.dart';
 import 'src/data/config.dart';
+import 'src/data/services/api_client.dart';
+import 'src/data/services/unauthorized_handler.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -22,21 +24,43 @@ Future<void> main() async {
   } catch (e) {
     debugPrint('Theme preference unavailable, using system mode: $e');
   }
-  runApp(ProviderScope(child: ElhaqApp(themePreference: themePreference)));
+  // 401 resilience (MS5): when the API reports an expired/invalid token, clear
+  // it and route back to login. The backend has no refresh endpoint, so
+  // re-login is the only path. Wired through a navigator key owned by the app;
+  // the handler dedupes concurrent 401s and swallows navigation errors.
+  final navigatorKey = GlobalKey<NavigatorState>();
+  ApiClient.onUnauthorized = buildUnauthorizedHandler(
+    navigatorKey,
+    loginRoute: AppRoutes.login,
+  );
+  runApp(
+    ProviderScope(
+      child: ElhaqApp(
+        themePreference: themePreference,
+        navigatorKey: navigatorKey,
+      ),
+    ),
+  );
 }
 
 class ElhaqApp extends StatelessWidget {
-  const ElhaqApp({super.key, this.themePreference});
+  const ElhaqApp({super.key, this.themePreference, this.navigatorKey});
 
   /// Nullable for backward compatibility with tests/embeds that construct
   /// [ElhaqApp] directly; defaults to the system theme mode.
   final ThemePreferenceStore? themePreference;
+
+  /// Optional navigator key so data-layer code (e.g. the 401 handler) can
+  /// navigate programmatically, such as routing back to login on an expired
+  /// token. Null in tests that construct [ElhaqApp] directly.
+  final GlobalKey<NavigatorState>? navigatorKey;
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'إلحق',
       debugShowCheckedModeBanner: false,
+      navigatorKey: navigatorKey,
       // Edge-to-edge / system UI (WS3): the status and navigation bars
       // follow the active theme — surface color with light icons on dark
       // and dark icons on light. On API 35+ apps draw edge-to-edge by

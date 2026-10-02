@@ -205,3 +205,39 @@ Total: **~2.5–3 weeks** single developer, MS5 parallelizable with MS2.
 - [ ] Release build hits a real HTTPS endpoint; startup guard active; 401 → clean re-login.
 - [ ] Crash reporting live; privacy policy + data-safety form + EN/AR listing complete in `docs/play-store/`.
 - [ ] Physical-device smoke test passed on 3 device classes; store submission ready.
+
+---
+
+## 9. MS5 Kickoff — Production Runtime Readiness (in progress)
+
+**Started:** after MS4 merged (PR #17). **Scope:** WS5 — prod API config + startup guard, 401 auth flow, crash reporting, notifications decision, demo-mode default.
+
+### Tasks
+1. **API config + startup guard** — ✅ **Done** (PR #19): release builds fail fast if `API_BASE_URL` is not a production HTTPS endpoint (emulator default, cleartext HTTP, or malformed URL all rejected via `AppConfig.validateApiBaseUrlForRelease` + `isProductionEndpoint`). Prod URL still injected via `--dart-define` in CI once H1 lands.
+2. **Auth resilience** — ✅ **Done** (PR #19): 401 interceptor clears the stored token, then routes to login fire-and-forget via `buildUnauthorizedHandler` (dedupes concurrent 401s, swallows navigation errors, skips credential endpoints even behind a path-prefixed base URL). Backend has no refresh endpoint, so re-login is the path.
+
+   **HGM review round 3 (2026-10-02, 11 findings) — all addressed:** token-identity check in the interceptor so a delayed 401 from an old in-flight request can no longer clear a freshly issued token after re-login (CRITICAL) or re-push login on top of a filled form; token deletion wrapped so a secure-storage failure can't mask the original 401; credential-path match anchored on the base path (exact root paths + prefix-retaining relative calls) so `/admin/auth/login` no longer false-matches; HTTPS scheme check case-insensitive; release-guard error messages now point at the plan (H1) instead of an un-wired CI workflow; handler layering/contract documented; 64 tests passing (4 new).
+
+   **HGM review round 4 (2026-10-02): APPROVE, confidence 0.84.** Post-approval notes addressed: secure-storage READ failure in the interceptor can no longer mask the original 401 (wrapped; on failure the flow proceeds to clear+navigate — the 401 is real); unauthenticated 401s with no stored token no longer trigger sign-out (no session to sign out); credential-path match is exact-only (`/admin/api/auth/login` no longer false-matches a `/api` base); list-valued Authorization headers handled; malformed base URL can't throw inside the interceptor. Accepted trade-offs documented (static `onUnauthorized` hook, URL in the dev-only error message, in-flight guard timing). 66 tests passing.
+3. **Crash reporting** — ⏳ Blocked on H2 (provider + config).
+4. **Notifications decision** — ⏳ Blocked on H3 (owner decision).
+5. **Demo mode** — ✅ **Done** (PR #19): defaults to live mode, persisted in SharedPreferences, locked by tests.
+
+### ⚠️ Human intervention / decisions needed BEFORE full implementation
+These block parts of MS5 and need owner input:
+
+| # | Item | Why it needs a human | Status |
+|---|------|----------------------|--------|
+| H1 | **Production API base URL** (real HTTPS endpoint) | Not finalized (see Risks). Needed for the CI release build's `--dart-define=API_BASE_URL=<prod>` and to verify the startup guard + 401 flow against a live backend. | ⏳ pending owner/backend |
+| H2 | **Crash-reporting provider + config** | Requires creating a Firebase project + `google-services.json` (or a Sentry account + DSN). Cannot be generated in-repo. | ⏳ pending owner |
+| H3 | **Notifications in v1?** | Explicit owner decision. Plan recommendation: defer to v1.1 and remove `POST_NOTIFICATIONS` now. | ⏳ pending owner |
+
+### Can proceed WITHOUT human input (independent)
+- Startup guard logic — checks the known emulator-default value; no prod URL required to write it.
+- 401 → clear-token → login flow — code-only; verify against current `api_client.dart`.
+- Demo-mode default-path UX — code-only.
+
+### Blocked on human input
+- CI release build wiring the real prod `API_BASE_URL` (needs **H1**).
+- Crash-reporting init with a real config (needs **H2**).
+- Final permission set / notifications scope (needs **H3**).
