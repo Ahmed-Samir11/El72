@@ -48,8 +48,14 @@ class AppConfig {
   /// point at such a URL — cleartext (`http://`) endpoints are rejected because
   /// Android blocks cleartext traffic by default and a release must be
   /// tamper-resistant.
+  ///
+  /// Scheme comparison is case-insensitive (URI schemes are case-insensitive
+  /// per RFC 3986), so `HTTPS://host` is accepted. This intentionally does
+  /// NOT block `https://localhost` or private-network hosts: a LAN deployment
+  /// is a legitimate target; the guard exists to stop the dev-only emulator
+  /// default and cleartext endpoints leaking into a store build.
   static bool isProductionEndpoint(String url) {
-    if (!url.startsWith('https://')) return false;
+    if (!url.toLowerCase().startsWith('https://')) return false;
     if (isEmulatorDefaultUrl(url)) return false;
     try {
       return Uri.parse(url).host.isNotEmpty;
@@ -84,18 +90,18 @@ class AppConfig {
     // Distinguish the two failure modes for a clear, actionable message.
     if (isEmulatorDefaultUrl(url)) {
       throw StateError(
-        'Release build is configured with the emulator API base URL '
-        "'$url'. Rebuild with a production HTTPS endpoint via "
-        '--dart-define=API_BASE_URL=https://<prod-host> (see '
-        '.github/workflows/ci.yml).',
+        "Release build is configured with the emulator API base URL '$url'. "
+        'Rebuild with a production HTTPS endpoint via '
+        "'--dart-define=API_BASE_URL=https://<prod-host>' "
+        '(see plans/flutter-android-release.md, pending decision H1).',
       );
     }
     throw StateError(
       'Release build API base URL "$url" is not a valid production '
       'HTTPS endpoint (HTTPS is required, the host must be non-empty, and '
       'the dev-only emulator address is not allowed). Rebuild with '
-      '--dart-define=API_BASE_URL=https://<prod-host> (see '
-      '.github/workflows/ci.yml).',
+      "'--dart-define=API_BASE_URL=https://<prod-host>' "
+      '(see plans/flutter-android-release.md, pending decision H1).',
     );
   }
 

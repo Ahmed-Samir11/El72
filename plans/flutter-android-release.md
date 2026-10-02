@@ -215,6 +215,8 @@ Total: **~2.5–3 weeks** single developer, MS5 parallelizable with MS2.
 ### Tasks
 1. **API config + startup guard** — ✅ **Done** (PR #19): release builds fail fast if `API_BASE_URL` is not a production HTTPS endpoint (emulator default, cleartext HTTP, or malformed URL all rejected via `AppConfig.validateApiBaseUrlForRelease` + `isProductionEndpoint`). Prod URL still injected via `--dart-define` in CI once H1 lands.
 2. **Auth resilience** — ✅ **Done** (PR #19): 401 interceptor clears the stored token, then routes to login fire-and-forget via `buildUnauthorizedHandler` (dedupes concurrent 401s, swallows navigation errors, skips credential endpoints even behind a path-prefixed base URL). Backend has no refresh endpoint, so re-login is the path.
+
+   **HGM review round 3 (2026-10-02, 11 findings) — all addressed:** token-identity check in the interceptor so a delayed 401 from an old in-flight request can no longer clear a freshly issued token after re-login (CRITICAL) or re-push login on top of a filled form; token deletion wrapped so a secure-storage failure can't mask the original 401; credential-path match anchored on the base path (exact root paths + prefix-retaining relative calls) so `/admin/auth/login` no longer false-matches; HTTPS scheme check case-insensitive; release-guard error messages now point at the plan (H1) instead of an un-wired CI workflow; handler layering/contract documented; 64 tests passing (4 new).
 3. **Crash reporting** — ⏳ Blocked on H2 (provider + config).
 4. **Notifications decision** — ⏳ Blocked on H3 (owner decision).
 5. **Demo mode** — ✅ **Done** (PR #19): defaults to live mode, persisted in SharedPreferences, locked by tests.

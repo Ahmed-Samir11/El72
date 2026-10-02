@@ -76,34 +76,42 @@ void main() {
     expect(find.text('home'), findsNothing);
   });
 
-  testWidgets('a later 401 while already on login does not re-push', (
-    tester,
-  ) async {
-    final navigatorKey = GlobalKey<NavigatorState>();
-    final handler = buildUnauthorizedHandler(
-      navigatorKey,
-      loginRoute: loginRoute,
-    );
+  testWidgets(
+    'a later, non-concurrent 401 while on login re-pushes in place (single '
+    'login at rest)',
+    (tester) async {
+      final navigatorKey = GlobalKey<NavigatorState>();
+      final handler = buildUnauthorizedHandler(
+        navigatorKey,
+        loginRoute: loginRoute,
+      );
 
-    await tester.pumpWidget(_testApp(navigatorKey));
-    final pending = handler();
-    await tester.pump();
-    await tester.pumpAndSettle();
-    await expectLater(pending, completes);
-    expect(_loginBuilds, 1);
+      await tester.pumpWidget(_testApp(navigatorKey));
+      final pending = handler();
+      await tester.pump();
+      await tester.pumpAndSettle();
+      await expectLater(pending, completes);
+      expect(_loginBuilds, 1);
 
-    // A request that outlived the burst also 401s: we are already on the
-    // login screen. pushNamedAndRemoveUntil with a never-true predicate
-    // replaces the history in place, so the navigation is idempotent —
-    // exactly one login screen at rest, never a stacked duplicate.
-    final second = handler();
-    await tester.pump();
-    await tester.pumpAndSettle();
-    await expectLater(second, completes);
+      // A request that outlived the burst also 401s: we are already on the
+      // login screen. pushNamedAndRemoveUntil with a never-true predicate
+      // replaces the whole history in place — one login route at rest, never
+      // a stacked duplicate — but the login route IS rebuilt (its form state
+      // resets). In production this path is effectively unreachable for stale
+      // 401s: ApiClient's token-identity check only fires the handler while
+      // the stored token still matches the one the failed request carried,
+      // so a delayed 401 arriving after re-login is ignored entirely.
+      final second = handler();
+      await tester.pump();
+      await tester.pumpAndSettle();
+      await expectLater(second, completes);
 
-    expect(find.text('login'), findsOneWidget);
-    expect(find.text('home'), findsNothing);
-  });
+      expect(find.text('login'), findsOneWidget);
+      expect(find.text('home'), findsNothing);
+      // Pin the actual contract: the route was re-pushed (rebuilt), in place.
+      expect(_loginBuilds, 2);
+    },
+  );
 
   testWidgets('a null navigator state is swallowed, not thrown', (
     tester,

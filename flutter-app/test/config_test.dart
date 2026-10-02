@@ -101,6 +101,23 @@ void main() {
         );
       });
 
+      test(
+        'accepts an uppercase HTTPS scheme (schemes are case-insensitive)',
+        () {
+          expect(
+            () => AppConfig.validateApiBaseUrlForRelease(
+              'HTTPS://API.Example.com',
+              isRelease: true,
+            ),
+            returnsNormally,
+          );
+          expect(
+            AppConfig.isProductionEndpoint('HTTPS://API.Example.com'),
+            isTrue,
+          );
+        },
+      );
+
       test('never throws in debug/profile mode, even for the emulator URL', () {
         expect(
           () => AppConfig.validateApiBaseUrlForRelease(

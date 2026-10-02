@@ -11,6 +11,10 @@ import 'package:elhaq_tracker/src/data/services/api_client.dart';
 class _FakeSecureStorage extends FlutterSecureStorage {
   final Map<String, String> _map = {};
 
+  /// When true, [delete] throws — to prove a storage failure never masks the
+  /// original 401.
+  bool deleteShouldThrow = false;
+
   @override
   Future<String?> read({
     required String key,
@@ -50,7 +54,32 @@ class _FakeSecureStorage extends FlutterSecureStorage {
     MacOsOptions? mOptions,
     WindowsOptions? wOptions,
   }) async {
+    if (deleteShouldThrow) {
+      throw StateError('storage failure');
+    }
     _map.remove(key);
+  }
+}
+
+/// Dio adapter that answers 401 and rewrites the Authorization header to a
+/// fixed stale token — simulating a DELAYED 401 response from a request that
+/// was sent with an older token (the in-flight request keeps its original
+/// headers while a newer token is stored in the meantime).
+class _StaleTokenAdapter implements HttpClientAdapter {
+  _StaleTokenAdapter(this.staleToken);
+  final String staleToken;
+
+  @override
+  void close({bool force = false}) {}
+
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<Uint8List>? requestStream,
+    Future<void>? cancelFuture,
+  ) async {
+    options.headers['Authorization'] = 'Bearer $staleToken';
+    return ResponseBody.fromBytes(<int>[], 401);
   }
 }
 
@@ -178,8 +207,10 @@ void main() {
 
   group('with a path-prefixed base URL', () {
     // When API_BASE_URL carries a path prefix (e.g. a reverse proxy at
-    // /api), the absolute request paths become /api/auth/... — the
-    // credential-endpoint skip must still match.
+    // /api), the credential-endpoint skip must still match. Note that Dio
+    // resolves absolute request paths against the host root (URI resolve
+    // semantics), so '/auth/login' keeps its path even with a prefixed base;
+    // the matcher handles both that and prefix-retaining relative calls.
     final String baseUrl = 'https://api.example.com/api';
 
     test(
@@ -268,6 +299,108 @@ void main() {
       await pumpEventQueue();
 
       // Token deletion (security-critical) still happened.
+      expect(await storage.read(key: 'access_token'), isNull);
+    },
+  );
+
+  test(
+    'a delayed 401 from an old request does not clobber a new token',
+    () async {
+      final storage = _FakeSecureStorage();
+      await storage.write(key: 'access_token', value: 'old-token');
+
+      var unauthorizedCalls = 0;
+      ApiClient.onUnauthorized = () async {
+        unauthorizedCalls++;
+      };
+      addTearDown(() => ApiClient.onUnauthorized = null);
+
+      final client = ApiClient.withStorage(storage);
+      client.dio.httpClientAdapter = _StaleTokenAdapter('old-token');
+
+      // First wave: the 401 was sent with the stored token — clear + navigate.
+      await expectLater(
+        client.dio.get('/api/prices'),
+        throwsA(isA<DioException>()),
+      );
+      await pumpEventQueue();
+      expect(unauthorizedCalls, 1);
+      expect(await storage.read(key: 'access_token'), isNull);
+
+      // The user re-authenticates and a new token is stored.
+      await storage.write(key: 'access_token', value: 'new-token');
+
+      // A delayed 401 from the older in-flight request arrives.
+      await expectLater(
+        client.dio.get('/api/prices'),
+        throwsA(isA<DioException>()),
+      );
+      await pumpEventQueue();
+
+      // The new token must survive and the user must not be routed back to
+      // login a second time.
+      expect(await storage.read(key: 'access_token'), 'new-token');
+      expect(unauthorizedCalls, 1);
+    },
+  );
+
+  test('a token-delete failure does not mask the original 401', () async {
+    final storage = _FakeSecureStorage();
+    storage.deleteShouldThrow = true;
+    await storage.write(key: 'access_token', value: 'expired-token');
+
+    var unauthorizedCalled = false;
+    ApiClient.onUnauthorized = () async {
+      unauthorizedCalled = true;
+    };
+    addTearDown(() => ApiClient.onUnauthorized = null);
+
+    final client = ApiClient.withStorage(storage);
+    client.dio.httpClientAdapter = _StatusAdapter(401);
+
+    // The original 401 must still reach the caller with its own status even
+    // though the secure-storage delete threw.
+    await expectLater(
+      client.dio.get('/auth/me'),
+      throwsA(
+        isA<DioException>().having(
+          (e) => e.response?.statusCode,
+          'statusCode',
+          401,
+        ),
+      ),
+    );
+    await pumpEventQueue();
+
+    // The storage failure was swallowed; the callback still fired.
+    expect(unauthorizedCalled, isTrue);
+  });
+
+  test(
+    'a 401 on a non-credential /auth-looking path still signs out',
+    () async {
+      // /admin/auth/login is NOT this client's login endpoint (root base URL):
+      // the anchored credential match must not skip sign-out for it (a bare
+      // suffix match would have).
+      final storage = _FakeSecureStorage();
+      await storage.write(key: 'access_token', value: 'expired-token');
+
+      var unauthorizedCalled = false;
+      ApiClient.onUnauthorized = () async {
+        unauthorizedCalled = true;
+      };
+      addTearDown(() => ApiClient.onUnauthorized = null);
+
+      final client = ApiClient.withStorage(storage);
+      client.dio.httpClientAdapter = _StatusAdapter(401);
+
+      await expectLater(
+        client.dio.get('/admin/auth/login'),
+        throwsA(isA<DioException>()),
+      );
+      await pumpEventQueue();
+
+      expect(unauthorizedCalled, isTrue);
       expect(await storage.read(key: 'access_token'), isNull);
     },
   );
