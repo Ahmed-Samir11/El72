@@ -242,4 +242,28 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get liveDeals => 'Live Deals';
+
+  @override
+  String creditsRemaining(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'You have $count trackers left',
+      one: 'You have 1 tracker left',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get reachedLimitTitle => 'You\'ve reached your limit';
+
+  @override
+  String get reachedLimitBody =>
+      'You\'ve used all your available price trackers. Upgrade your plan to keep tracking prices and get more trackers.';
+
+  @override
+  String get upgradePlan => 'Upgrade plan';
+
+  @override
+  String get notNow => 'Not now';
 }

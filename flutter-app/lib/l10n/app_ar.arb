@@ -138,5 +138,29 @@
     }
   },
 
-  "liveDeals": "الصفقات الحية"
+  "liveDeals": "الصفقات الحية",
+
+  "creditsRemaining": "{count, plural, zero{لا توجد متتبعات متبقية لديك} one{لديك متتبع واحد متبقٍ} two{لديك متتبعان متبقيان} few{لديك {count} متتبعات متبقية} many{لديك {count} متتبعًا متبقية} other{لديك {count} متتبعًا متبقية}}",
+  "@creditsRemaining": {
+    "description": "تبويب الملف الشخصي: المتتبعات المتبقية للمستخدم المسجل.",
+    "placeholders": {
+      "count": { "type": "int" }
+    }
+  },
+  "reachedLimitTitle": "لقد وصلت إلى الحد الأقصى",
+  "@reachedLimitTitle": {
+    "description": "عنوان النافذة عند فشل إنشاء المتتبع بسبب نفاد الرصيد (HTTP 402)."
+  },
+  "reachedLimitBody": "لقد استنفدت جميع متتبعات الأسعار المتاحة لديك. قم بترقية خطتك لمواصلة تتبع الأسعار والحصول على متتبعات إضافية.",
+  "@reachedLimitBody": {
+    "description": "نص النافذة الذي يشرح حد الرصيد ويقترح الترقية."
+  },
+  "upgradePlan": "قم بالترقية",
+  "@upgradePlan": {
+    "description": "زر الانتقال إلى شاشة خطط الاشتراك."
+  },
+  "notNow": "ليس الآن",
+  "@notNow": {
+    "description": "إجراء إغلاق نافذة نفاد الرصيد."
+  }
 }
