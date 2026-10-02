@@ -80,7 +80,9 @@ class SecurityMonitor:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._windows: dict[str, deque] = {}
-        self._alerted_at: dict[str, datetime] = {}
+        # Events currently in the "already alerted" state (re-armed only
+        # after the count drops back below the threshold).
+        self._alerting: dict[str, bool] = {}
 
     def record_failure(self, event: str, now: Optional[datetime] = None) -> bool:
         """Record one failure for ``event``; return True if the threshold
@@ -106,19 +108,23 @@ class SecurityMonitor:
                 window.popleft()
             count = len(window)
             if count >= threshold:
-                last_alert = self._alerted_at.get(event)
-                # Re-alert only after the window has fully reset (count back
-                # below threshold) so a sustained attack does not spam.
-                if last_alert is None or count < threshold + 1:
-                    self._alerted_at[event] = now
+                # Alert once per attack: stay in the alerted state for as long
+                # as the window keeps meeting the threshold (a sustained
+                # attack does not spam), and re-arm only after the count has
+                # dropped back below the threshold.
+                if not self._alerting.get(event, False):
+                    self._alerting[event] = True
                     return True
+                return False
+            # Below threshold again: re-arm for a future attack.
+            self._alerting.pop(event, None)
             return False
 
     def reset(self) -> None:
-        """Clear all counters (tests)."""
+        """Clear all counters and alert states (tests)."""
         with self._lock:
             self._windows.clear()
-            self._alerted_at.clear()
+            self._alerting.clear()
 
 
 # Module-level singleton shared by the API process.
@@ -150,12 +156,16 @@ def record_payment_event(
     payment_ref: Optional[str] = None,
     detail: Optional[str] = None,
     ip_address: Optional[str] = None,
+    actor_id: Optional[str] = None,
     actor_username: Optional[str] = None,
 ) -> PaymentAuditLog:
     """Append one row to the append-only payment audit log.
 
     ``detail`` must already be sanitized via :func:`sanitize_for_log`; this
     helper enforces it defensively so no caller can leak sensitive data.
+
+    Admin-attributed events pass both ``actor_id`` (FK admins) and
+    ``actor_username`` (snapshot that survives admin deletion).
     """
     if event_type not in PAYMENT_EVENT_TYPES:
         raise ValueError(f"Unknown payment event type: {event_type}")
@@ -165,6 +175,7 @@ def record_payment_event(
         order_ref=payment_ref,
         detail=sanitize_for_log(detail) if detail else None,
         client_ip=ip_address,
+        actor_id=actor_id,
         actor_username=actor_username,
     )
     db.add(entry)

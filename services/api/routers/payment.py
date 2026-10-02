@@ -186,8 +186,8 @@ def get_current_admin(
     return admin
 
 
-@limiter.limit("20/minute")
 @router.post("/admin/login", response_model=Token, include_in_schema=False)
+@limiter.limit("20/minute")
 def admin_login(
     body: AdminLogin,
     request: Request,
@@ -302,8 +302,8 @@ def create_manual_payment(
     )
 
 
-@limiter.limit("30/minute")
 @router.get("/payment/manual/{order_ref}", response_model=ManualPaymentResponse)
+@limiter.limit("30/minute")
 def get_manual_payment(
     request: Request,
     order_ref: str,
@@ -352,12 +352,12 @@ class AdminPaymentResponse(BaseModel):
     resolved_at: Optional[str] = None
 
 
-@limiter.limit("20/minute")
 @router.get(
     "/admin/payments",
     response_model=list[AdminPaymentResponse],
     include_in_schema=False,
 )
+@limiter.limit("20/minute")
 def list_manual_payments(
     request: Request,
     db: Session = Depends(get_db),
@@ -402,10 +402,10 @@ def list_manual_payments(
     ]
 
 
-@limiter.limit("20/minute")
 @router.get(
     "/admin/payments/{order_ref}/contact", response_model=dict, include_in_schema=False
 )
+@limiter.limit("20/minute")
 def reveal_payment_contact(
     request: Request,
     order_ref: str,
@@ -437,10 +437,10 @@ class RejectBody(BaseModel):
     reason: str
 
 
-@limiter.limit("20/minute")
 @router.post(
     "/admin/payments/{order_ref}/approve", response_model=dict, include_in_schema=False
 )
+@limiter.limit("20/minute")
 def approve_manual_payment(
     request: Request,
     order_ref: str,
@@ -521,10 +521,10 @@ def approve_manual_payment(
     }
 
 
-@limiter.limit("20/minute")
 @router.post(
     "/admin/payments/{order_ref}/reject", response_model=dict, include_in_schema=False
 )
+@limiter.limit("20/minute")
 def reject_manual_payment(
     request: Request,
     order_ref: str,

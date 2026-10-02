@@ -9,11 +9,13 @@ Covers:
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from services.api.dependencies import get_db
+from services.api.admin_models import Admin
+from services.api.dependencies import get_db, get_password_hash
 from services.api.main import app
 from services.api.manual_payment_models import PaymentAuditLog
 from services.api.models import Base
@@ -66,6 +68,13 @@ class TestSanitizeForLog:
 
     def test_empty_string_unchanged(self):
         assert sanitize_for_log("") == ""
+
+    def test_unlabeled_short_numbers_pass_through(self):
+        # Documented behavior: only labeled OTPs ("OTP: 123456") are
+        # redacted; bare short numbers (amounts, counts) must not be.
+        assert sanitize_for_log("amount 30.0 retries 5 code 123456") == (
+            "amount 30.0 retries 5 code 123456"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -139,6 +148,35 @@ class TestSecurityMonitor:
             self.monitor.record_failure("otp_failed", now=base + timedelta(seconds=1))
             is False
         )
+
+    def test_sustained_attack_alerts_exactly_once(self):
+        base = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        alerts = [
+            self.monitor.record_failure(
+                "webhook_signature_failed", now=base + timedelta(seconds=i)
+            )
+            for i in range(10)
+        ]
+        # One alert for the whole sustained attack (count stays >= threshold).
+        assert sum(alerts) == 1
+        assert alerts[WEBHOOK_SIGNATURE_FAILURE_THRESHOLD - 1] is True
+
+    def test_rearms_after_window_drains_below_threshold(self):
+        base = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        for i in range(WEBHOOK_SIGNATURE_FAILURE_THRESHOLD):
+            self.monitor.record_failure(
+                "webhook_signature_failed", now=base + timedelta(seconds=i)
+            )
+        # Two minutes later the whole first window has expired.
+        second_wave = [
+            self.monitor.record_failure(
+                "webhook_signature_failed",
+                now=base + timedelta(minutes=2, seconds=i),
+            )
+            for i in range(WEBHOOK_SIGNATURE_FAILURE_THRESHOLD)
+        ]
+        # A fresh attack re-arms and alerts again.
+        assert sum(second_wave) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -227,3 +265,86 @@ class TestRecordPaymentEvent:
             )
         db_session.commit()
         assert db_session.query(PaymentAuditLog).count() == len(PAYMENT_EVENT_TYPES)
+
+    def test_actor_attribution_persisted(self, db_session):
+        record_payment_event(
+            db_session,
+            event_type="approve",
+            user_id="u1",
+            payment_ref="ELH-20250101-c7d8e9",
+            actor_id="admin-uuid-123",
+            actor_username="admin1",
+        )
+        db_session.commit()
+        row = (
+            db_session.query(PaymentAuditLog)
+            .filter_by(order_ref="ELH-20250101-c7d8e9")
+            .one()
+        )
+        assert row.actor_id == "admin-uuid-123"
+        assert row.actor_username == "admin1"
+
+
+# ---------------------------------------------------------------------------
+# Rate limiting on payment endpoints
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def client():
+    """Test client with a fresh in-memory DB (mirrors test_manual_payment)."""
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+    with TestingSessionLocal() as db:
+        db.add(
+            Admin(username="admin1", password_hash=get_password_hash("admin-secret"))
+        )
+        db.commit()
+
+    def override_get_db():
+        db = TestingSessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = override_get_db
+    with TestClient(app) as c:
+        yield c
+    app.dependency_overrides.clear()
+
+
+class TestRateLimits:
+    # (rate-limiter state is reset per test by the autouse fixture in
+    # services/api/conftest.py)
+
+    def test_status_endpoint_returns_429_after_limit(self, client):
+        reg = client.post(
+            "/auth/register", json={"phone": "+201011111111", "password": "pw12345678"}
+        )
+        assert reg.status_code == 200, reg.text
+        login = client.post(
+            "/auth/login", json={"phone": "+201011111111", "password": "pw12345678"}
+        )
+        token = login.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        created = client.post(
+            "/payment/manual", json={"package": "standard"}, headers=headers
+        )
+        assert created.status_code == 200, created.text
+        order_ref = created.json()["order_ref"]
+
+        responses = [
+            client.get(f"/payment/manual/{order_ref}", headers=headers)
+            for _ in range(31)
+        ]
+        # The endpoint is limited to 30/minute per IP: the 31st call is 429.
+        assert all(r.status_code == 200 for r in responses[:30])
+        assert responses[30].status_code == 429
