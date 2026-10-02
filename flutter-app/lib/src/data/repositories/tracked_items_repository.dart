@@ -61,7 +61,8 @@ class TrackedItemsRepository {
         '/tracked-items/from-url',
         data: {
           'url': url,
-          if (targetPrice != null && targetPrice > 0) 'target_price': targetPrice,
+          if (targetPrice != null && targetPrice > 0)
+            'target_price': targetPrice,
         },
       );
     } on DioException catch (e) {

@@ -66,7 +66,9 @@ void main() {
     expect(find.text('You have 0 trackers left'), findsOneWidget);
   });
 
-  testWidgets('loading state falls back to the free-plan label', (tester) async {
+  testWidgets('loading state falls back to the free-plan label', (
+    tester,
+  ) async {
     // A never-completing future keeps the provider in the loading state.
     final completer = Completer<CreditBalance>();
     await tester.pumpWidget(_wrap(completer.future));
@@ -105,8 +107,9 @@ void main() {
     expect(find.text('Free plan'), findsOneWidget);
   });
 
-  testWidgets('Arabic uses the correct plural form for a balance of 1',
-      (tester) async {
+  testWidgets('Arabic uses the correct plural form for a balance of 1', (
+    tester,
+  ) async {
     await tester.pumpWidget(
       _wrap(
         Future.value(const CreditBalance(balance: 1, tier: 'free')),

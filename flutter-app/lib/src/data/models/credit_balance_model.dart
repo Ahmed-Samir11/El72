@@ -3,10 +3,7 @@
 /// Mirrors the `GET /credits/balance` payload:
 /// `{"balance": <int>, "tier": "<str>"}`.
 class CreditBalance {
-  const CreditBalance({
-    required this.balance,
-    required this.tier,
-  });
+  const CreditBalance({required this.balance, required this.tier});
 
   /// Remaining tracker credits (each tracker costs one credit).
   final int balance;

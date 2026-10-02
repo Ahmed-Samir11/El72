@@ -67,7 +67,9 @@ class _DetailAdapter implements HttpClientAdapter {
     return ResponseBody.fromBytes(
       Uint8List.fromList(body),
       statusCode,
-      headers: const {'content-type': ['application/json']},
+      headers: const {
+        'content-type': ['application/json'],
+      },
     );
   }
 }
@@ -81,41 +83,48 @@ String jsonEncodeDetail(Object? value) {
 
 void main() {
   group('createFromUrl error mapping', () {
-    test('HTTP 402 raises InsufficientCreditsException with API detail',
-        () async {
-      final client = ApiClient.withStorage(_FakeSecureStorage());
-      client.dio.httpClientAdapter = _DetailAdapter(402, 'Not enough credits');
-      final repo = TrackedItemsRepository(apiClient: client);
+    test(
+      'HTTP 402 raises InsufficientCreditsException with API detail',
+      () async {
+        final client = ApiClient.withStorage(_FakeSecureStorage());
+        client.dio.httpClientAdapter = _DetailAdapter(
+          402,
+          'Not enough credits',
+        );
+        final repo = TrackedItemsRepository(apiClient: client);
 
-      await expectLater(
-        repo.createFromUrl('https://example.com/x'),
-        throwsA(
-          isA<InsufficientCreditsException>().having(
-            (e) => e.message,
-            'message',
-            'Not enough credits',
+        await expectLater(
+          repo.createFromUrl('https://example.com/x'),
+          throwsA(
+            isA<InsufficientCreditsException>().having(
+              (e) => e.message,
+              'message',
+              'Not enough credits',
+            ),
           ),
-        ),
-      );
-    });
+        );
+      },
+    );
 
-    test('HTTP 402 with a non-string detail falls back safely (no TypeError)',
-        () async {
-      final client = ApiClient.withStorage(_FakeSecureStorage());
-      client.dio.httpClientAdapter = _DetailAdapter(402, 42);
-      final repo = TrackedItemsRepository(apiClient: client);
+    test(
+      'HTTP 402 with a non-string detail falls back safely (no TypeError)',
+      () async {
+        final client = ApiClient.withStorage(_FakeSecureStorage());
+        client.dio.httpClientAdapter = _DetailAdapter(402, 42);
+        final repo = TrackedItemsRepository(apiClient: client);
 
-      await expectLater(
-        repo.createFromUrl('https://example.com/x'),
-        throwsA(
-          isA<InsufficientCreditsException>().having(
-            (e) => e.message,
-            'message',
-            'Insufficient credits',
+        await expectLater(
+          repo.createFromUrl('https://example.com/x'),
+          throwsA(
+            isA<InsufficientCreditsException>().having(
+              (e) => e.message,
+              'message',
+              'Insufficient credits',
+            ),
           ),
-        ),
-      );
-    });
+        );
+      },
+    );
 
     test('HTTP 402 with no body falls back to the default message', () async {
       final client = ApiClient.withStorage(_FakeSecureStorage());
@@ -151,21 +160,23 @@ void main() {
       );
     });
 
-    test('HTTP 400 raises a generic Exception, not a credits exception',
-        () async {
-      final client = ApiClient.withStorage(_FakeSecureStorage());
-      client.dio.httpClientAdapter = _DetailAdapter(400, 'Bad URL');
-      final repo = TrackedItemsRepository(apiClient: client);
+    test(
+      'HTTP 400 raises a generic Exception, not a credits exception',
+      () async {
+        final client = ApiClient.withStorage(_FakeSecureStorage());
+        client.dio.httpClientAdapter = _DetailAdapter(400, 'Bad URL');
+        final repo = TrackedItemsRepository(apiClient: client);
 
-      Object? caught;
-      try {
-        await repo.createFromUrl('https://example.com/x');
-      } catch (e) {
-        caught = e;
-      }
+        Object? caught;
+        try {
+          await repo.createFromUrl('https://example.com/x');
+        } catch (e) {
+          caught = e;
+        }
 
-      expect(caught, isA<Exception>());
-      expect(caught, isNot(isA<InsufficientCreditsException>()));
-    });
+        expect(caught, isA<Exception>());
+        expect(caught, isNot(isA<InsufficientCreditsException>()));
+      },
+    );
   });
 }
