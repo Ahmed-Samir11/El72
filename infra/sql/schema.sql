@@ -137,6 +137,24 @@ CREATE TABLE IF NOT EXISTS credit_transactions (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+-- Manual payments (bridge flow, pre-Paymob): user submits "I've paid",
+-- admin verifies the transfer and approves/rejects. Approval grants credits.
+CREATE TABLE IF NOT EXISTS manual_payments (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    order_ref VARCHAR(32) UNIQUE NOT NULL,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    package VARCHAR(20) NOT NULL,
+    amount_egp NUMERIC(10, 2) NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'pending',
+    reject_reason TEXT,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    resolved_at TIMESTAMP WITH TIME ZONE,
+    resolved_by UUID
+);
+
+CREATE INDEX IF NOT EXISTS idx_manual_payments_user_id ON manual_payments(user_id);
+CREATE INDEX IF NOT EXISTS idx_manual_payments_status ON manual_payments(status);
+
 -- Affiliate clicks for merchant revenue attribution
 CREATE TABLE IF NOT EXISTS affiliate_clicks (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

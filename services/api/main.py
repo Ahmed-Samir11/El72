@@ -12,10 +12,12 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from services.api.dependencies import get_current_user, get_db
+from services.api.manual_payment_models import ManualPayment  # noqa: F401
 from services.api.models import Alert, Base, User
 from services.api.routers import affiliate as affiliate_router
 from services.api.routers import auth, public_api
 from services.api.routers import credits as credits_router
+from services.api.routers import payment as payment_router
 from services.api.tracked_items_api import router as tracked_items_router
 from services.api.tracked_items_models import Base as TrackedBase
 from services.common.redis_client import RedisStreamClient
@@ -86,6 +88,9 @@ app.include_router(affiliate_router.router)
 
 # Tracked-item lifecycle, including one-credit deduction per new tracker.
 app.include_router(tracked_items_router)
+
+# Manual payment flow (bridge to Paymob).
+app.include_router(payment_router.router)
 
 # Demo mode: seed realistic demo data on startup (idempotent).
 # Toggle with DEMO_MODE=True (default) for the investor demo.
