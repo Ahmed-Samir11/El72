@@ -26,9 +26,13 @@ El72 (Elhaq) is a **real-time price tracking & deal detection platform** for the
 
 ## Review
 - PRs are reviewed by the Copilot agent in VS Code via `/review-pr <owner/repo#N>`.
-- The automated HGM review agent runs via `scripts/review-pr.sh <owner/repo#N>`
-  against the local llama-server (qwen-27b). Its LLM config is independent of
-  the coding agent's model — no tunnel, local endpoint only.
+  - The automated HGM review agent runs via `scripts/review-pr.sh <owner/repo#N>`.
+    Its LLM config is independent of the coding agent's model. Default mode is
+    the local llama-server (qwen-27b); when the local server is unavailable,
+    run it in tunnel mode against an OpenAI-compatible endpoint:
+    `REVIEW_LLM_MODE=tunnel REVIEW_LLM_BASE_URL=https://<tunnel>/v1 [
+    REVIEW_LLM_API_KEY=...] bash scripts/review-pr.sh <owner/repo#N>`
+    (see `plans/review-agent-tunnel.md`).
 - Address all review findings, push, then merge.
 
 ## Constraints
