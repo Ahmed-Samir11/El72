@@ -24,6 +24,7 @@ from services.api.price_fetcher import (
     FETCH_NO_PRICE,
     FETCH_OK,
     FetchResult,
+    _safe_fetch_error,
     _to_usd,
     fetch_price_sync,
 )
@@ -686,7 +687,9 @@ def _persist_fetched_price(tracked_item_id, store_id: str, url: str, canonical_i
                 final_reason,
             )
             store_row.last_fetch_status = final_status
-            store_row.last_fetch_error = final_reason
+            # Sanitization boundary: only short, client-safe reasons are
+            # persisted (this value is returned by the list/detail APIs).
+            store_row.last_fetch_error = _safe_fetch_error(final_reason)
             db.commit()
             return
 

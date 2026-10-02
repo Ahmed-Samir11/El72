@@ -17,15 +17,20 @@ from services.api.price_fetcher import (
     FETCH_NO_PRICE,
     FETCH_OK,
     _absolutize,
+    _best_srcset_url,
     _extract_from_html,
     _extract_image_from_imgs,
     _extract_image_from_meta,
     _extract_woocommerce_price,
+    _first_image_url,
+    _is_blocked_ip,
     _jsonld_product,
     _looks_like_bot_wall,
     _parse_amount,
     _parse_jsonld,
+    _safe_fetch_error,
     _url_candidates,
+    _validate_public_url,
     fetch_price,
     fetch_price_sync,
 )
@@ -496,6 +501,10 @@ class TestFetchPriceClassification:
             "_fetch_html_playwright",
             lambda url, timeout_ms=25000: playwright_result,
         )
+        # These tests exercise classification, not URL policy: skip the real
+        # SSRF validator (it resolves DNS; tests use fake domains and must
+        # run offline). The SSRF group below tests the validator itself.
+        monkeypatch.setattr(pf, "_validate_public_url", lambda url: None)
 
     def test_ok_with_price(self, monkeypatch):
         self._patch(
@@ -570,3 +579,195 @@ class TestFetchPriceClassification:
         monkeypatch.setattr(pf, "_fetch_html_playwright", boom)
         result = fetch_price_sync("https://store.com/p")
         assert result.status == FETCH_FAILED
+
+
+class TestSsrfProtection:
+    """SSRF validation for user-supplied URLs.
+
+    Uses IP-literal hosts so the resolver needs no network (getaddrinfo on
+    an IP literal never touches DNS).
+    """
+
+    def test_public_ip_literal_passes_validation(self):
+        _validate_public_url("https://8.8.8.8/")  # must not raise
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "http://127.0.0.1:8000/admin",
+            "https://localhost/admin",
+            "http://10.0.0.5/x",
+            "http://172.16.3.4/x",
+            "http://192.168.1.106:8000/x",
+            "http://169.254.169.254/latest/meta-data/",
+            "http://0.0.0.0/x",
+            "http://[::1]/x",
+            "http://[fc00::1]/x",
+            "http://[fe80::1]/x",
+        ],
+    )
+    def test_non_public_addresses_are_rejected(self, url):
+        with pytest.raises(ValueError):
+            _validate_public_url(url)
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "ftp://8.8.8.8/file",
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "https:///no-host",
+            "notaurl",
+        ],
+    )
+    def test_bad_schemes_and_missing_hosts_are_rejected(self, url):
+        with pytest.raises(ValueError):
+            _validate_public_url(url)
+
+    @pytest.mark.parametrize(
+        "ip,blocked",
+        [
+            ("127.0.0.1", True),
+            ("10.1.2.3", True),
+            ("192.168.0.1", True),
+            ("169.254.169.254", True),
+            ("8.8.8.8", False),
+            ("93.184.216.34", False),
+            ("::1", True),
+            ("2001:4860:4860::8888", False),
+            ("not-an-ip", True),
+        ],
+    )
+    def test_is_blocked_ip(self, ip, blocked):
+        assert _is_blocked_ip(ip) is blocked
+
+    def test_fetch_price_refuses_private_url_without_fetching(self, monkeypatch):
+        from services.api import price_fetcher as pf
+
+        calls = []
+        monkeypatch.setattr(
+            pf,
+            "_fetch_html_requests",
+            lambda url, timeout=30: (calls.append(url), ("", None))[1],
+        )
+        monkeypatch.setattr(
+            pf, "_fetch_html_playwright", lambda url, timeout_ms=25000: None
+        )
+        result = fetch_price("http://127.0.0.1:8000/admin")
+        assert result.status == FETCH_BLOCKED
+        assert "rejected" in result.reason.lower()
+        assert calls == []  # never reached the network
+
+    def test_redirect_to_internal_address_is_blocked(self, monkeypatch):
+        requests_lib = pytest.importorskip("requests")
+
+        from services.api import price_fetcher as pf
+
+        class _RedirectResp:
+            status_code = 302
+            headers = {"Location": "http://127.0.0.1:8000/secret"}
+            text = ""
+
+        monkeypatch.setattr(requests_lib, "get", lambda url, **kw: _RedirectResp())
+        monkeypatch.setattr(
+            pf, "_fetch_html_playwright", lambda url, timeout_ms=25000: None
+        )
+        # Public IP literal: passes the initial validation without DNS.
+        result = fetch_price("https://8.8.8.8/product")
+        assert result.status == FETCH_BLOCKED
+        assert "redirect" in result.reason
+
+
+class TestImageHardening:
+    """Image-cascade hardening: data URIs, uppercase schemes, srcset."""
+
+    def test_data_uri_is_rejected_by_absolutize(self):
+        assert _absolutize("data:image/png;base64,AAA", "https://page.com/p") is None
+
+    def test_javascript_uri_is_rejected_by_absolutize(self):
+        assert _absolutize("javascript:alert(1)", "https://page.com/p") is None
+
+    def test_uppercase_http_scheme_is_upgraded(self):
+        assert (
+            _absolutize("HTTP://cdn.example.com/x.jpg", "https://page.com/p")
+            == "https://cdn.example.com/x.jpg"
+        )
+
+    def test_jsonld_data_uri_image_is_skipped(self):
+        # data: entry first, real URL second — the usable one must win.
+        url = _first_image_url(
+            ["data:image/png;base64,AAA", "https://cdn.example.com/ok.jpg"]
+        )
+        assert url == "https://cdn.example.com/ok.jpg"
+
+    def test_meta_data_uri_falls_back_to_img_scan(self):
+        html = (
+            '<html><head>'
+            '<meta property="og:image" content="data:image/png;base64,AAA">'
+            "</head><body>"
+            '<img src="/product/real.jpg">'
+            "</body></html>"
+        )
+        image = _extract_image_from_meta(html, "https://page.com/p")
+        assert image is None  # meta produced nothing usable
+        assert (
+            _extract_image_from_imgs(html, "https://page.com/p")
+            == "https://page.com/product/real.jpg"
+        )
+
+    def test_srcset_prefers_largest_width_entry(self):
+        html = '<img src="/small.jpg" srcset="/small.jpg 100w, /large.jpg 800w">'
+        assert (
+            _extract_image_from_imgs(html, "https://page.com/p")
+            == "https://page.com/large.jpg"
+        )
+
+    def test_srcset_prefers_highest_density_entry(self):
+        html = '<img src="/a.jpg" srcset="/a.jpg 1x, /b.jpg 2x">'
+        assert (
+            _extract_image_from_imgs(html, "https://page.com/p")
+            == "https://page.com/b.jpg"
+        )
+
+    def test_srcset_falls_back_to_src_when_unparseable(self):
+        assert _best_srcset_url("") is None
+        assert _best_srcset_url("/only.jpg") == "/only.jpg"
+
+
+class TestBotWallRefinement:
+    """Challenge markers override; legacy word markers keep working."""
+
+    def test_challenge_page_quoting_price_is_still_a_wall(self):
+        html = (
+            "<html><head><title>Just a moment...</title></head><body>"
+            + 'cf-chl <div>Checking your browser... price</div>' * 3
+            + "</body></html>"
+        )
+        assert _looks_like_bot_wall(html) is True
+
+    def test_cloudflare_521_page_is_a_wall(self):
+        html = "<html><body>Error 521 Web server is down. product price</body></html>"
+        assert _looks_like_bot_wall(html) is True
+
+    def test_plain_page_without_markers_is_a_wall(self):
+        assert _looks_like_bot_wall("<html><body>hi</body></html>") is True
+
+    def test_word_markers_still_prevent_wall(self):
+        # Portfolio-style page the user mis-linked: no price, but not a wall
+        # either — it must surface as no_price_found, not blocked.
+        html = "<html><body>This is my portfolio, no prices here.</body></html>"
+        assert _looks_like_bot_wall(html) is False
+
+
+class TestSafeFetchError:
+    def test_long_reasons_are_truncated(self):
+        assert len(_safe_fetch_error("x" * 500)) == 200
+
+    def test_control_chars_are_stripped(self):
+        assert "\x00" not in _safe_fetch_error("bad\x00\x01reason")
+
+    def test_none_passes_through(self):
+        assert _safe_fetch_error(None) is None
+
+    def test_short_reasons_are_unchanged(self):
+        assert _safe_fetch_error("HTTP 521") == "HTTP 521"

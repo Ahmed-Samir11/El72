@@ -232,6 +232,10 @@ class AppLocalizationsAr extends AppLocalizations {
       'هذه الصفحة لا تبدو كصفحة منتج - تحقق من الرابط.';
 
   @override
+  String get priceRefreshFailed =>
+      'تعذّر تحديث السعر الآن - حاول مرة أخرى بعد قليل.';
+
+  @override
   String genericLoadError(String error) {
     return 'فشل في التحميل.\n$error';
   }

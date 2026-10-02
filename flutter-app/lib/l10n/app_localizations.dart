@@ -500,6 +500,12 @@ abstract class AppLocalizations {
   /// **'This page doesn\'t look like a product - check the link.'**
   String get notAProductPage;
 
+  /// No description provided for @priceRefreshFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t refresh the price right now - try again in a moment.'**
+  String get priceRefreshFailed;
+
   /// No description provided for @genericLoadError.
   ///
   /// In en, this message translates to:

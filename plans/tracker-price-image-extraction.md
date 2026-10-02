@@ -124,3 +124,24 @@ Compumarts product page extracting price **and** image), analyze/format clean,
 dev DB upgrades in place, app shows an actionable message for non-product and
 failed links. If the Compumarts/WooCommerce fixture tests fail despite the
 passes above → proceed to Phase 2.
+
+## 6. HGM Review Responses (round 1, 2026-10-02 — 10 findings, all addressed)
+
+| # | Severity | Finding | Resolution |
+|---|----------|---------|------------|
+| 1 | CRITICAL | SSRF: user-supplied URLs fetched without egress control | Added `_validate_public_url` (http/https only; every resolved IP must be public — loopback/private/link-local incl. 169.254.169.254 metadata/multicast/reserved/unspecified refused; DNS resolved so obfuscated hosts are caught) enforced before fetch, on **every redirect hop** (requests follows redirects manually, validating each `Location`), and in the Playwright route guard (navigations to non-public URLs aborted). New status path: rejected URLs → `blocked` with a fixed reason; redirect-to-internal → `blocked`. Tests: private/loopback/metadata/IPv6 literals, bad schemes, no-fetch assertion, redirect-to-internal. |
+| 2 | WARNING | Retry failures silently swallowed | Retry tap now shows a localized SnackBar (`priceRefreshFailed`, en+ar) when the refresh request itself fails (429/offline); card stays in its failure state. |
+| 3 | WARNING | Headless Chromium in a root container may fail (sandbox) | Playwright launches with `--no-sandbox --disable-dev-shm-usage` (documented in the function: the API image runs as root). |
+| 4 | INFO | img fallback ignores srcset (plan said prefer largest) | `_best_srcset_url` parses `w`/`x` descriptors; the largest declared entry wins over `src`; falls back to `src` when absent/unparseable. Tests cover width, density, and fallback. |
+| 5 | INFO | Uppercase `HTTP://` not upgraded | Scheme checks in `_absolutize` and `_url_candidates` are now case-insensitive; test added. |
+| 6 | WARNING | `data:` URIs could be persisted as image URLs | `_absolutize` and `_first_image_url` reject `data:`/`javascript:` URLs (next cascade level or placeholder wins); the `<img>` scan already skipped them. Tests: JSON-LD list with data: first, meta data: → img fallback. |
+| 7 | INFO | Bot-wall heuristic too broad (generic "product"/"price") | Challenge markers (cf-chl/turnstile/captcha/Just a moment/access denied/Error 521/Web server is down/…) now win outright; strong product markers (JSON-LD, OG image/price, WooCommerce, price__current, EGP/جنيه) clear the page; the legacy word check remains as a last resort so mislinked plain pages (portfolio) still surface as `no_price_found`, not `blocked`. Tests: wall quoting "price", CF 521, markerless page, portfolio page. |
+| 8 | WARNING | fetch_error exposure/sanitization | `_safe_fetch_error` (200-char cap, control chars stripped) is the single persistence boundary for `last_fetch_error`; reasons were already short fixed strings (HTTP codes / exception class names, no raw messages or URLs). Tests for truncation/stripping/None. |
+| 9 | INFO | Column migration only ran from the script | `_ensure_columns(engine)` now runs at API import/startup (fail-soft, logged) so upgraded DBs get the columns automatically; the script still works standalone. |
+| 10 | INFO | Hardcoded fetch-status strings in Dart | New `FetchStatus` constants class in the model layer (mirrors the Python FETCH_* constants) with `isRetryable`; card uses it. |
+
+**Also:** trimmed the Compumarts fixture from ~400KB to the markup the
+pipeline consumes (values verbatim, including the `http://` og:image +
+`secure_url` quirk) so the PR diff stays reviewable; extraction results
+unchanged. Phase 2 (ML) remains a contingency only — Phase 1 fixture tests
+pass.

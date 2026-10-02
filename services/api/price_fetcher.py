@@ -15,12 +15,14 @@ visible text); there is intentionally no LLM/agent involved.
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import logging
 import re
+import socket
 from dataclasses import dataclass
 from typing import Optional, Tuple
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +73,70 @@ class FetchResult:
     status: str
     reason: str = ""
     price: Optional[FetchedPrice] = None
+
+
+def _is_blocked_ip(ip: str) -> bool:
+    """True if [ip] must never be fetched (SSRF protection).
+
+    Blocks loopback, private (RFC1918 + ULA), link-local (including the
+    169.254.169.254 cloud-metadata address), multicast, reserved and
+    unspecified ranges — for both IPv4 and IPv6.
+    """
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return True  # unparseable → refuse
+    return any(
+        (
+            addr.is_loopback,
+            addr.is_private,
+            addr.is_link_local,
+            addr.is_multicast,
+            addr.is_reserved,
+            addr.is_unspecified,
+        ),
+    )
+
+
+def _validate_public_url(url: str) -> None:
+    """Raise :class:`ValueError` unless [url] is a fetchable public URL.
+
+    Enforced before any user-supplied URL is fetched (SSRF protection):
+    only http/https, and every IP the host resolves to must be public —
+    loopback, private, link-local (cloud metadata), multicast, reserved and
+    unspecified addresses are refused. DNS is resolved here so obfuscated
+    hosts (decimal/octal IP literals, DNS-rebinding to private ranges) are
+    caught too.
+    """
+    parts = urlsplit(url)
+    if parts.scheme.lower() not in ("http", "https"):
+        raise ValueError(f"scheme not allowed: {parts.scheme!r}")
+    host = parts.hostname
+    if not host:
+        raise ValueError("missing host")
+    try:
+        infos = socket.getaddrinfo(
+            host, parts.port or (443 if parts.scheme.lower() == "https" else 80)
+        )
+    except socket.gaierror as exc:
+        raise ValueError(f"unresolvable host: {exc}") from exc
+    for info in infos:
+        ip = info[4][0]
+        if _is_blocked_ip(ip):
+            raise ValueError("host resolves to a non-public address")
+
+
+def _safe_fetch_error(reason: Optional[str], limit: int = 200) -> Optional[str]:
+    """Sanitize a fetch reason before it is persisted / exposed via the API.
+
+    Reasons are already short fixed strings (HTTP codes, exception class
+    names, fixed messages), but this is the single boundary that guarantees
+    nothing longer or non-printable ever reaches the client.
+    """
+    if reason is None:
+        return None
+    cleaned = "".join(ch if ch.isprintable() else " " for ch in str(reason)).strip()
+    return cleaned[:limit] or None
 
 
 def _to_usd(price: float, currency: str) -> float:
@@ -181,17 +247,25 @@ def _parse_amount(raw) -> Optional[float]:
 
 
 def _first_image_url(image) -> Optional[str]:
-    """First usable URL from a JSON-LD ``image`` value (str, list, or dict)."""
+    """First usable URL from a JSON-LD ``image`` value (str, list, or dict).
+
+    Inline ``data:`` URIs are not usable by the app's ``Image.network`` and
+    are rejected (the next cascade level wins).
+    """
+    candidates: list = []
     if isinstance(image, str):
-        return image
-    if isinstance(image, list) and image:
-        first = image[0]
-        if isinstance(first, str):
-            return first
-        if isinstance(first, dict) and isinstance(first.get("url"), str):
-            return first["url"]
-    if isinstance(image, dict) and isinstance(image.get("url"), str):
-        return image["url"]
+        candidates.append(image)
+    elif isinstance(image, list):
+        for entry in image:
+            if isinstance(entry, str):
+                candidates.append(entry)
+            elif isinstance(entry, dict) and isinstance(entry.get("url"), str):
+                candidates.append(entry["url"])
+    elif isinstance(image, dict) and isinstance(image.get("url"), str):
+        candidates.append(image["url"])
+    for cand in candidates:
+        if not cand.strip().lower().startswith(("data:", "javascript:")):
+            return cand
     return None
 
 
@@ -209,13 +283,17 @@ def _absolutize(url: Optional[str], page_url: str) -> Optional[str]:
     url = url.strip()
     if not url:
         return None
+    if url.lower().startswith(("data:", "javascript:")):
+        # Not network-loadable; treat as missing so the next cascade level
+        # (or the placeholder) is used instead.
+        return None
     if url.startswith("//"):
         scheme = "https:" if page_url.startswith("https") else "http:"
         url = scheme + url
     elif not url.lower().startswith(("http://", "https://")):
         if page_url:
             url = urljoin(page_url, url)
-    if page_url.startswith("https") and url.startswith("http://"):
+    if page_url.startswith("https") and url.lower().startswith("http://"):
         url = "https://" + url[len("http://") :]
     return url or None
 
@@ -250,23 +328,59 @@ def _extract_image_from_meta(html: str, page_url: str) -> Optional[str]:
     return None
 
 
+def _best_srcset_url(srcset: str) -> Optional[str]:
+    """Largest-declared image from a ``srcset`` attribute, else None.
+
+    Entries look like ``"url 800w"``, ``"url 2x"`` or a bare ``"url"``. The
+    entry with the largest declared width/density wins (the plan: prefer the
+    largest resolution when the page offers several).
+    """
+    best: Optional[Tuple[float, str]] = None
+    for entry in srcset.split(","):
+        parts = entry.strip().split()
+        if not parts:
+            continue
+        url = parts[0]
+        weight = 0.0
+        if len(parts) > 1:
+            descriptor = parts[1]
+            try:
+                if descriptor.endswith("w"):
+                    weight = float(descriptor[:-1])
+                elif descriptor.endswith("x"):
+                    weight = float(descriptor[:-1]) * 1000.0
+            except ValueError:
+                pass
+        if best is None or weight > best[0]:
+            best = (weight, url)
+    return best[1] if best else None
+
+
 def _extract_image_from_imgs(html: str, page_url: str) -> Optional[str]:
     """First plausible product image from ``<img>`` tags, absolutized.
 
     Last-resort fallback: skips obvious non-product assets (logos, icons,
-    flags, sprites, inline data-URIs, SVGs) by URL heuristics.
+    flags, sprites, inline data-URIs, SVGs) by URL heuristics. When an img
+    carries a ``srcset`` (multiple resolutions), the largest declared entry
+    is preferred over ``src``.
     """
     for tag in re.findall(r"<img[^>]+>", html, re.IGNORECASE):
+        srcset = re.search(r'\bsrcset=["\']([^"\']+)["\']', tag, re.IGNORECASE)
+        candidates: list = []
+        if srcset:
+            best = _best_srcset_url(srcset.group(1))
+            if best:
+                candidates.append(best)
         m = re.search(r'\bsrc=["\']([^"\']+)["\']', tag, re.IGNORECASE)
-        if not m:
-            continue
-        url = m.group(1).strip()
-        if not url:
-            continue
-        low = url.lower()
-        if low.startswith("data:") or any(h in low for h in _IMG_SKIP_HINTS):
-            continue
-        return _absolutize(url, page_url)
+        if m and m.group(1).strip():
+            candidates.append(m.group(1).strip())
+        for url in candidates:
+            if not url:
+                continue
+            low = url.lower()
+            if low.startswith("data:") or any(h in low for h in _IMG_SKIP_HINTS):
+                continue
+            return _absolutize(url, page_url)
     return None
 
 
@@ -439,26 +553,58 @@ def _extract_meta(html: str, prop: str) -> Optional[str]:
 
 
 def _looks_like_bot_wall(html: str) -> bool:
-    """Heuristic: a very small page with none of the usual product markers.
+    """Heuristic: a very small page that is a challenge/wall, not a product.
 
     Cloudflare challenge/5xx landing pages and thin bot-walls are typically
-    well under 50 KB and contain no JSON-LD, no price markup and no EGP
-    markers. A real (even minimal) product page almost always carries at
-    least one of them.
+    well under 50 KB. Signals, checked in priority order:
+
+    1. **Challenge markers** win outright: Cloudflare/Turnstile tokens,
+       "Just a moment", captcha, access-denied phrasing. This fixes the
+       earlier gap where a block page quoting the words "product"/"price" in
+       boilerplate slipped through as a product page.
+    2. **Strong product markers** (JSON-LD, OG price/image, WooCommerce
+       price markup, EGP/جنيه amounts) mean a real page — even a minimal
+       one.
+    3. Otherwise the legacy word check ("product"/"price") keeps thin real
+       pages — and user-mislinked plain pages such as a portfolio —
+       classified as "no price found", which is the actionable answer for
+       both.
+
+    A page under 50 KB with none of the above is a wall.
     """
     if len(html) > 50_000:
         return False
     low = html.lower()
-    markers = (
+    challenge_markers = (
+        "cf-chl",
+        "challenge-platform",
+        "challenge-running",
+        "turnstile",
+        "captcha",
+        "just a moment",
+        "are you a robot",
+        "access denied",
+        "attention required",
+        "unusual traffic",
+        "error 1015",
+        "error 521",
+        "web server is down",
+    )
+    if any(marker in low for marker in challenge_markers):
+        return True
+    product_markers = (
         "ld+json",
+        "og:image",
         "og:price",
+        "product:price",
         "woocommerce-price",
+        "price__current",
         "product",
         "price",
         "egp",
         "جنيه",
     )
-    return not any(marker in low for marker in markers)
+    return not any(marker in low for marker in product_markers)
 
 
 _HEADERS = {
@@ -476,34 +622,55 @@ def _url_candidates(url: str) -> list:
 
     For non-secure ``http://`` links the HTTPS upgrade is tried **first**
     (many stores redirect or block cleartext); the original URL is the
-    fallback.
+    fallback. Scheme comparison is case-insensitive.
     """
-    if url.startswith("http://"):
-        return [url.replace("http://", "https://", 1), url]
+    if url.lower().startswith("http://"):
+        return ["https://" + url[len("http://") :], url]
     return [url]
 
 
 def _fetch_html_requests(
-    url: str, timeout: int = 30
+    url: str, timeout: int = 30, max_redirects: int = 5
 ) -> Tuple[Optional[str], Optional[str]]:
     """Fetch page HTML with a standard browser User-Agent.
 
     Returns ``(html, None)`` on success or ``(None, reason)`` on any
     failure — the reason is a short log-safe string such as ``"HTTP 521"``.
+
+    Redirects are followed **manually** so every hop's target is re-validated
+    by :func:`_validate_public_url` — a public domain that 302s to an
+    internal address is refused (redirect-based SSRF).
     """
     try:
         import requests
     except ImportError:
         return None, "requests not installed"
-    try:
-        r = requests.get(url, headers=_HEADERS, timeout=timeout)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("requests fetch failed for %s: %s", url, exc)
-        return None, f"request error: {type(exc).__name__}"
-    if r.status_code == 200:
-        return r.text, None
-    logger.warning("HTTP %s fetching %s", r.status_code, url)
-    return None, f"HTTP {r.status_code}"
+    current = url
+    for _ in range(max_redirects + 1):
+        try:
+            r = requests.get(
+                current, headers=_HEADERS, timeout=timeout, allow_redirects=False
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("requests fetch failed for %s: %s", current, exc)
+            return None, f"request error: {type(exc).__name__}"
+        if r.status_code in (301, 302, 303, 307, 308):
+            location = r.headers.get("Location")
+            if not location:
+                return None, f"HTTP {r.status_code}"
+            target = urljoin(current, location)
+            try:
+                _validate_public_url(target)
+            except ValueError:
+                logger.warning("Blocked redirect to %s from %s", target, current)
+                return None, "blocked: redirect to non-public address"
+            current = target
+            continue
+        if r.status_code == 200:
+            return r.text, None
+        logger.warning("HTTP %s fetching %s", r.status_code, current)
+        return None, f"HTTP {r.status_code}"
+    return None, "too many redirects"
 
 
 # JS predicate for Playwright: true once a price indicator is in the DOM.
@@ -526,6 +693,10 @@ def _fetch_html_playwright(url: str, timeout_ms: int = 25000) -> Optional[str]:
     """Fetch page HTML via headless Chromium (JS-rendered pages).
 
     Returns ``None`` on failure.
+
+    Runs with ``--no-sandbox``/``--disable-dev-shm-usage``: the API image
+    runs as root in a container, where Chromium's sandbox fails without
+    them. A route guard aborts navigations to non-public URLs (SSRF).
     """
     try:
         from playwright.sync_api import sync_playwright
@@ -535,9 +706,24 @@ def _fetch_html_playwright(url: str, timeout_ms: int = 25000) -> Optional[str]:
     try:
         logger.info("Launching Playwright browser for %s", url)
         with sync_playwright() as pw:
-            browser = pw.chromium.launch(headless=True)
+            browser = pw.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-dev-shm-usage"],
+            )
             try:
                 context = browser.new_context(user_agent=_HEADERS["User-Agent"])
+
+                def _ssrf_guard(route):
+                    if route.request.resource_type == "document":
+                        target = route.request.url
+                        try:
+                            _validate_public_url(target)
+                        except ValueError:
+                            logger.warning("Blocked navigation to %s", target)
+                            return route.abort()
+                    return route.continue_()
+
+                context.route("**/*", _ssrf_guard)
                 page = context.new_page()
                 page.goto(url, timeout=timeout_ms, wait_until="domcontentloaded")
                 # Wait (capped) for a price indicator instead of a blind
@@ -564,6 +750,15 @@ def fetch_price(url: str) -> FetchResult:
     are attempted over HTTPS first.
     """
     logger.info("Starting price fetch for %s", url)
+    # SSRF guard: user-supplied URLs must be public http/https before
+    # anything is fetched (requests or browser).
+    try:
+        _validate_public_url(url)
+    except ValueError as exc:
+        logger.warning("Rejected URL %s: %s", url, exc)
+        return FetchResult(
+            FETCH_BLOCKED, "URL rejected (must be a public http/https address)"
+        )
     candidates = _url_candidates(url)
 
     html: Optional[str] = None
@@ -591,6 +786,10 @@ def fetch_price(url: str) -> FetchResult:
             if code in _BLOCKED_HTTP_CODES:
                 logger.warning("Blocked (HTTP %s) fetching %s", code, url)
                 return FetchResult(FETCH_BLOCKED, f"HTTP {code} from server")
+        if last_reason and last_reason.startswith("blocked:"):
+            # Policy refusal (e.g. redirect to a non-public address).
+            logger.warning("Blocked fetching %s: %s", url, last_reason)
+            return FetchResult(FETCH_BLOCKED, last_reason)
         logger.warning("Fetch failed for %s: %s", url, reason)
         return FetchResult(FETCH_FAILED, reason)
 

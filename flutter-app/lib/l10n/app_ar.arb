@@ -129,6 +129,8 @@
 
   "notAProductPage": "هذه الصفحة لا تبدو كصفحة منتج - تحقق من الرابط.",
 
+  "priceRefreshFailed": "تعذّر تحديث السعر الآن - حاول مرة أخرى بعد قليل.",
+
   "genericLoadError": "فشل في التحميل.\n{error}",
   "@genericLoadError": {
     "placeholders": {

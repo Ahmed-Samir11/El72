@@ -4,6 +4,7 @@ import '../../../l10n/app_localizations.dart';
 import '../../core/format/price_format.dart';
 import '../../core/styles/app_colors.dart';
 import '../../core/styles/app_theme.dart';
+import '../../data/models/tracked_item_model.dart';
 import 'product_image.dart';
 
 /// Product tracker row.
@@ -43,7 +44,7 @@ class TrackerCard extends StatelessWidget {
 
   /// True when the card shows a retryable failure (tap triggers [onRetry]).
   bool get _retryableFailure =>
-      !hasPrice && (fetchStatus == 'blocked' || fetchStatus == 'fetch_failed');
+      !hasPrice && FetchStatus.isRetryable(fetchStatus);
 
   /// Status chip shown while a tracker has no price: a spinner for the
   /// in-flight "fetching" state, an alert icon for the error states.
@@ -131,7 +132,7 @@ class TrackerCard extends StatelessWidget {
                               shape: BoxShape.circle,
                             ),
                           ),
-                        ] else if (fetchStatus == 'no_price_found') ...[
+                        ] else if (fetchStatus == FetchStatus.noPriceFound) ...[
                           // Flexible so the message wraps on narrow screens
                           // instead of overflowing the row.
                           Flexible(

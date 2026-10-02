@@ -232,6 +232,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'This page doesn\'t look like a product - check the link.';
 
   @override
+  String get priceRefreshFailed =>
+      'Couldn\'t refresh the price right now - try again in a moment.';
+
+  @override
   String genericLoadError(String error) {
     return 'Failed to load.\n$error';
   }

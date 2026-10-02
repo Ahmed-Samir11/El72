@@ -126,8 +126,23 @@ class _TrackersTab extends ConsumerWidget {
                               .read(trackedItemsRepositoryProvider)
                               .refreshPrice(item.id);
                         } on DioException catch (_) {
-                          // Throttled (429) or offline: keep the failure
-                          // state; the user can retry later.
+                          // Throttled (429) or offline: the refresh couldn't
+                          // start. Tell the user instead of swallowing the
+                          // tap silently — the card stays in its failure
+                          // state so they can retry later.
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context)
+                              ..hideCurrentSnackBar()
+                              ..showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    AppLocalizations.of(
+                                      context,
+                                    ).priceRefreshFailed,
+                                  ),
+                                ),
+                              );
+                          }
                           return;
                         }
                         ref.invalidate(trackedItemsProvider);

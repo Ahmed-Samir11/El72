@@ -35,18 +35,24 @@ _REQUIRED_COLUMNS = [
 ]
 
 
-def _ensure_columns() -> None:
-    """Add any missing columns from ``_REQUIRED_COLUMNS`` (idempotent)."""
-    dialect = engine.dialect.name
+def _ensure_columns(target_engine=None) -> None:
+    """Add any missing columns from ``_REQUIRED_COLUMNS`` (idempotent).
+
+    Accepts an explicit engine (used by the API startup hook); defaults to
+    this module's engine for standalone script runs.
+    """
+    if target_engine is None:
+        target_engine = engine
+    dialect = target_engine.dialect.name
     for table, column, sql_type in _REQUIRED_COLUMNS:
         if dialect == "postgresql":
-            with engine.begin() as conn:
+            with target_engine.begin() as conn:
                 conn.exec_driver_sql(
                     f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {sql_type}"
                 )
         else:
             try:
-                with engine.begin() as conn:
+                with target_engine.begin() as conn:
                     conn.exec_driver_sql(
                         f"ALTER TABLE {table} ADD COLUMN {column} {sql_type}"
                     )
