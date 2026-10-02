@@ -54,11 +54,17 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 limiter = Limiter(key_func=get_remote_address)
 
-# Admin tokens use a separate secret (falls back to the app secret if unset)
-# and a short 1-hour lifetime, so a leaked admin token is less useful than a
-# leaked user token.
-ADMIN_SECRET_KEY = os.getenv("ADMIN_SECRET_KEY", SECRET_KEY)
+# Admin tokens are signed with a domain-separated secret (never the raw user
+# secret) and carry a short 1-hour lifetime, so a leaked admin token is less
+# useful than a leaked user token. Set ADMIN_SECRET_KEY in production.
+ADMIN_SECRET_KEY = os.getenv("ADMIN_SECRET_KEY") or f"{SECRET_KEY}:admin"
 ADMIN_TOKEN_EXPIRE_HOURS = 1
+
+# Only peers in this (env-configured) set are trusted to supply X-Forwarded-For;
+# otherwise the header is client-spoofable and ignored for audit capture.
+TRUSTED_PROXIES = {
+    p.strip() for p in os.getenv("TRUSTED_PROXIES", "").split(",") if p.strip()
+}
 
 # Package pricing (server-determined — clients never send amounts)
 PACKAGE_PRICING = {
@@ -89,20 +95,28 @@ def _generate_order_ref() -> str:
     return f"ELH-{date_part}-{random_part}"
 
 
-def _mask_phone(phone: str) -> str:
+def _mask_phone(phone: Optional[str]) -> str:
     """Mask a phone number for admin list views (keep prefix + last 2)."""
+    if not phone:
+        return ""
     if len(phone) <= 5:
         return phone[:2] + "****"
     return phone[:3] + "*" * (len(phone) - 5) + phone[-2:]
 
 
 def _client_ip(request: Request) -> Optional[str]:
-    """Best-effort client IP: honor X-Forwarded-For behind a proxy/LB,
-    falling back to the direct socket address."""
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()[:45]
-    return request.client.host if request.client else None
+    """Best-effort client IP for audit capture.
+
+    X-Forwarded-For is only honored when the direct peer is a configured
+    trusted proxy (TRUSTED_PROXIES); otherwise it is client-spoofable and
+    we record the direct socket address instead.
+    """
+    peer = request.client.host if request.client else None
+    if peer in TRUSTED_PROXIES:
+        forwarded = request.headers.get("x-forwarded-for")
+        if forwarded:
+            return forwarded.split(",")[0].strip()[:45]
+    return peer
 
 
 def _audit_entry(
@@ -170,7 +184,7 @@ def get_current_admin(
 
 
 @limiter.limit("20/minute")
-@router.post("/admin/login", response_model=Token)
+@router.post("/admin/login", response_model=Token, include_in_schema=False)
 def admin_login(
     body: AdminLogin,
     request: Request,
@@ -186,6 +200,7 @@ def admin_login(
     access_token = create_access_token(
         data={"sub": f"admin:{admin.username}"},
         expires_delta=timedelta(hours=ADMIN_TOKEN_EXPIRE_HOURS),
+        secret_key=ADMIN_SECRET_KEY,
     )
     return {"access_token": access_token, "token_type": "bearer"}
 
@@ -331,7 +346,11 @@ class AdminPaymentResponse(BaseModel):
     resolved_at: Optional[str] = None
 
 
-@router.get("/admin/payments", response_model=list[AdminPaymentResponse])
+@router.get(
+    "/admin/payments",
+    response_model=list[AdminPaymentResponse],
+    include_in_schema=False,
+)
 def list_manual_payments(
     db: Session = Depends(get_db),
     admin: Admin = Depends(get_current_admin),
@@ -375,7 +394,9 @@ def list_manual_payments(
     ]
 
 
-@router.get("/admin/payments/{order_ref}/contact", response_model=dict)
+@router.get(
+    "/admin/payments/{order_ref}/contact", response_model=dict, include_in_schema=False
+)
 def reveal_payment_contact(
     request: Request,
     order_ref: str,
@@ -401,7 +422,9 @@ class RejectBody(BaseModel):
     reason: str
 
 
-@router.post("/admin/payments/{order_ref}/approve", response_model=dict)
+@router.post(
+    "/admin/payments/{order_ref}/approve", response_model=dict, include_in_schema=False
+)
 def approve_manual_payment(
     request: Request,
     order_ref: str,
@@ -473,7 +496,9 @@ def approve_manual_payment(
     }
 
 
-@router.post("/admin/payments/{order_ref}/reject", response_model=dict)
+@router.post(
+    "/admin/payments/{order_ref}/reject", response_model=dict, include_in_schema=False
+)
 def reject_manual_payment(
     request: Request,
     order_ref: str,

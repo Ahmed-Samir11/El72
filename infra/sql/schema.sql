@@ -155,7 +155,9 @@ CREATE TABLE IF NOT EXISTS admins (
 CREATE TABLE IF NOT EXISTS manual_payments (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     order_ref VARCHAR(32) UNIQUE NOT NULL,
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    -- SET NULL (not CASCADE): payment history is a financial record and
+    -- must survive user deletion for auditing.
+    user_id UUID REFERENCES users(id) ON DELETE SET NULL,
     package VARCHAR(20) NOT NULL
         CHECK (package IN ('standard', 'premium')),
     amount_egp NUMERIC(10, 2) NOT NULL CHECK (amount_egp > 0),
@@ -168,9 +170,10 @@ CREATE TABLE IF NOT EXISTS manual_payments (
 );
 
 CREATE INDEX IF NOT EXISTS idx_manual_payments_user_id ON manual_payments(user_id);
-CREATE INDEX IF NOT EXISTS idx_manual_payments_status ON manual_payments(status);
--- Supports the admin date-range filter (created_at range scan).
-CREATE INDEX IF NOT EXISTS idx_manual_payments_created_at ON manual_payments(created_at);
+-- Composite index for the primary admin query pattern: status filter +
+-- created_at date-range scan.
+CREATE INDEX IF NOT EXISTS idx_manual_payments_status_created
+    ON manual_payments(status, created_at);
 
 -- Append-only audit trail for admin payment actions (no UPDATE/DELETE).
 CREATE TABLE IF NOT EXISTS payment_audit_log (
@@ -178,13 +181,29 @@ CREATE TABLE IF NOT EXISTS payment_audit_log (
     action VARCHAR(50) NOT NULL
         CHECK (action IN ('approve', 'reject', 'reveal_contact')),
     actor_id VARCHAR(36) REFERENCES admins(id) ON DELETE SET NULL,
-    target_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    -- SET NULL (not CASCADE): audit rows are forensic records and must
+    -- survive user deletion.
+    target_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
     order_ref VARCHAR(32) NOT NULL,
     client_ip VARCHAR(45),
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_payment_audit_log_order_ref ON payment_audit_log(order_ref);
+
+-- DB-level append-only enforcement: no UPDATE or DELETE on the audit log,
+-- independent of application code.
+CREATE OR REPLACE FUNCTION prevent_payment_audit_modification() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION 'payment_audit_log is append-only';
+END;
+$$;
+
+DROP TRIGGER IF EXISTS payment_audit_log_append_only ON payment_audit_log;
+CREATE TRIGGER payment_audit_log_append_only
+    BEFORE UPDATE OR DELETE ON payment_audit_log
+    FOR EACH ROW EXECUTE FUNCTION prevent_payment_audit_modification();
 
 -- Affiliate clicks for merchant revenue attribution
 CREATE TABLE IF NOT EXISTS affiliate_clicks (

@@ -95,7 +95,9 @@ POST /admin/payments/{order_ref}/reject
 | 0.4 | Credit double-grant | Approval is idempotent AND concurrency-safe: pending->approved is an atomic compare-and-swap; only the winning request grants credits, in the same transaction as the audit entry. |
 | 0.5 | PII exposure in admin lists | Phone numbers are masked by default; full contact requires an explicit, audited `reveal_contact` action. |
 | 0.5 | Payment details leakage | IBAN/wallet shown only to authenticated users. Not in public API. Logged access. |
-| 0.6 | No audit trail | Every approve/reject logged with admin ID, timestamp, IP. Immutable log table. |
+| 0.6 | No audit trail | Every approve/reject logged with admin ID, timestamp, IP. Immutable log table (DB trigger enforces append-only). |
+| 0.7 | Admin token leakage | Admin tokens are signed with a domain-separated secret (`ADMIN_SECRET_KEY`, never the raw user secret) and expire after 1 hour. Login is rate-limited (20/min per IP). |
+| 0.8 | Client IP spoofing in audit log | `X-Forwarded-For` is only honored when the direct peer is a configured trusted proxy (`TRUSTED_PROXIES`); otherwise the direct socket address is recorded. |
 
 ### Database
 
@@ -106,14 +108,17 @@ Implemented in `infra/sql/schema.sql` (canonical DDL). Summary:
   bootstrapped from `ADMIN_USERNAME`/`ADMIN_PASSWORD` at startup (idempotent,
   concurrency-safe). Admins are never user tiers.
 - **manual_payments** — `id UUID PK`, `order_ref VARCHAR(32) UNIQUE`
-  (public identifier, format `ELH-{YYYYMMDD}-{random_hex_8}`), `user_id`,
-  `package` + `amount_egp` + `status` CHECK constraints, `reject_reason`,
-  `created_at` (indexed for admin date-range filters), `resolved_at`,
+  (public identifier, format `ELH-{YYYYMMDD}-{random_hex_8}`),
+  `user_id REFERENCES users(id) ON DELETE SET NULL` (financial records
+  survive user deletion), `package` + `amount_egp` + `status` CHECK
+  constraints, `reject_reason`, composite index `(status, created_at)` for
+  the admin list query, `resolved_at`,
   `resolved_by VARCHAR(36) REFERENCES admins(id) ON DELETE SET NULL`.
 - **payment_audit_log** — append-only trail of admin actions
   (`action IN ('approve','reject','reveal_contact')`, `actor_id REFERENCES
-  admins(id)`, `target_user_id`, `order_ref`, `client_ip`). No UPDATE/DELETE
-  path exists.
+  admins(id)`, `target_user_id REFERENCES users(id) ON DELETE SET NULL`,
+  `order_ref`, `client_ip`). Append-only is enforced at the database level
+  by a BEFORE UPDATE OR DELETE trigger, not only by application code.
 
 Note: the canonical DDL uses `UUID` for user ids (matching `users.id`), while
 the SQLAlchemy models map user ids as `VARCHAR(36)` dashed-UUID strings — a
@@ -121,13 +126,15 @@ pre-existing convention in this codebase; Postgres accepts dashed UUID
 literals for the `uuid` type.
 
 ### Acceptance Criteria
-- [ ] User can select package, see payment details, submit "I've Paid"
-- [ ] Order appears in admin pending list
-- [ ] Admin approves → credits added → WhatsApp notification sent
-- [ ] Admin rejects → user notified with reason
-- [ ] Double-approval is a no-op
-- [ ] Rate limiting prevents spam submissions
-- [ ] All admin actions are audited
+- [x] User can select package, see payment details, submit "I've Paid"
+- [x] Order appears in admin pending list
+- [x] Admin approves → credits added (WhatsApp notification deferred to the
+  notification feature — this bridge PR is notification-free by design)
+- [x] Admin rejects → reject reason persisted and visible to the owner
+  (user push/WhatsApp notification deferred to the notification feature)
+- [x] Double-approval is a no-op
+- [x] Rate limiting prevents spam submissions
+- [x] All admin actions are audited
 
 ### Dependencies
 - None (works standalone, no Paymob)
