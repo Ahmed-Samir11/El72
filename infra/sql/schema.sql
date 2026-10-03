@@ -180,6 +180,26 @@ CREATE INDEX IF NOT EXISTS idx_manual_payments_user_id ON manual_payments(user_i
 CREATE INDEX IF NOT EXISTS idx_manual_payments_status_created
     ON manual_payments(status, created_at);
 
+-- Card payments (Paymob card flow). Tracks a payment from /payment/start
+-- through /payment/confirm until the webhook records the final outcome in
+-- payment_logs. Stores NO card data — only Paymob ids and server-determined
+-- amounts (PCI-DSS: card data is tokenized on-device and never reaches us).
+CREATE TABLE IF NOT EXISTS card_payments (
+    id SERIAL PRIMARY KEY,
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    -- Set at /payment/confirm; unique — one Paymob payment per record.
+    paymob_payment_id VARCHAR(255) UNIQUE,
+    package VARCHAR(20) NOT NULL
+        CHECK (package IN ('standard', 'premium')),
+    amount_egp NUMERIC(10, 2) NOT NULL CHECK (amount_egp > 0),
+    status VARCHAR(20) NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'succeeded', 'failed', 'canceled')),
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_card_payments_user_created
+    ON card_payments(user_id, created_at);
+
 -- Append-only audit trail of ALL payment events: admin actions
 -- (approve / reject / reveal_contact) and system security events (webhook
 -- signature failures, OTP failures, token expiry, amount mismatches).
@@ -191,7 +211,8 @@ CREATE TABLE IF NOT EXISTS payment_audit_log (
         CHECK (action IN ('approve', 'reject', 'reveal_contact',
             'webhook_received', 'webhook_signature_failed',
             'webhook_duplicate', 'validation_rejected', 'otp_failed',
-            'token_expired', 'amount_mismatch')),
+            'token_expired', 'amount_mismatch', 'card_payment_created',
+            'staging_rejected')),
     detail TEXT,
     actor_id VARCHAR(36) REFERENCES admins(id) ON DELETE SET NULL,
     -- Snapshot of the acting admin's username (survives admin deletion).

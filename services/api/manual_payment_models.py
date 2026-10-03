@@ -99,7 +99,8 @@ class PaymentAuditLog(Base):
             "action IN ('approve', 'reject', 'reveal_contact', "
             "'webhook_received', 'webhook_signature_failed', "
             "'webhook_duplicate', 'validation_rejected', 'otp_failed', "
-            "'token_expired', 'amount_mismatch')",
+            "'token_expired', 'amount_mismatch', 'card_payment_created', "
+            "'staging_rejected')",
         ),
     )
 

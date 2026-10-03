@@ -171,6 +171,8 @@ PAYMENT_EVENT_TYPES = frozenset(
         "otp_failed",
         "token_expired",
         "amount_mismatch",
+        "card_payment_created",
+        "staging_rejected",
     }
 )
 
