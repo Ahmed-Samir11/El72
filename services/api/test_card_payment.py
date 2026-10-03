@@ -293,6 +293,47 @@ class TestPaymentConfirm:
         )
         assert resp.status_code == 400
 
+    def test_cross_user_rejection_does_not_burn_owner_token(self, client):
+        """A cross-user hijack attempt must NOT consume the owner's token.
+
+        After user B is rejected for using A's staging token, user A must
+        still be able to confirm with that same token (the CRITICAL review
+        finding: the old code popped the token before checking ownership).
+        """
+        token_a = _user_token(client)
+        token_b = _other_user_token(client)
+
+        start = client.get("/payment/start", headers=_auth_headers(token_a))
+        assert start.status_code == 200
+        staging_token = start.json()["staging_token"]
+
+        # User B's hijack attempt is rejected.
+        resp = client.post(
+            "/payment/confirm",
+            json={
+                "staging_token": staging_token,
+                "method_type": "card",
+                "token": "tok_mock_12345",
+                "package": "standard",
+            },
+            headers=_auth_headers(token_b),
+        )
+        assert resp.status_code == 400
+
+        # User A can STILL confirm with the same token — it was not consumed.
+        owner = client.post(
+            "/payment/confirm",
+            json={
+                "staging_token": staging_token,
+                "method_type": "card",
+                "token": "tok_mock_12345",
+                "package": "standard",
+            },
+            headers=_auth_headers(token_a),
+        )
+        assert owner.status_code == 200
+        assert owner.json()["status"] == "pending"
+
     def test_confirm_rate_limit_fourth_request_429(self, client):
         """Plan 1.9: rate limit /payment/confirm to 3/hour per user."""
         token = _user_token(client)
@@ -325,6 +366,85 @@ class TestPaymentConfirm:
             headers=_auth_headers(token),
         )
         assert resp.status_code == 429
+
+
+class TestRedisFailure:
+    def test_start_redis_down_503(self, client, monkeypatch):
+        """A Redis outage on /payment/start returns a controlled 503, not 500."""
+        import redis as _redis
+
+        from services.api.staging_store import get_staging_store
+
+        store = get_staging_store()
+
+        def _raise_incr(*a, **k):
+            raise _redis.ConnectionError("down")
+
+        monkeypatch.setattr(store, "incr", _raise_incr)
+        token = _user_token(client)
+        resp = client.get("/payment/start", headers=_auth_headers(token))
+        assert resp.status_code == 503
+
+    def test_confirm_redis_down_503(self, client, monkeypatch):
+        """A Redis outage on /payment/confirm returns a controlled 503, not 500."""
+        import redis as _redis
+
+        from services.api.staging_store import get_staging_store
+
+        store = get_staging_store()
+
+        def _raise_get(*a, **k):
+            raise _redis.ConnectionError("down")
+
+        monkeypatch.setattr(store, "get", _raise_get)
+        token = _user_token(client)
+        start = client.get("/payment/start", headers=_auth_headers(token))
+        staging_token = start.json()["staging_token"]
+        resp = client.post(
+            "/payment/confirm",
+            json={
+                "staging_token": staging_token,
+                "method_type": "card",
+                "token": "tok_mock_12345",
+                "package": "standard",
+            },
+            headers=_auth_headers(token),
+        )
+        assert resp.status_code == 503
+
+
+class TestPremiumAmount:
+    def test_premium_confirm_uses_server_amount(self, client):
+        """Premium confirm stores the server-determined 90.0 EGP amount."""
+        token = _user_token(client)
+        start = client.get("/payment/start", headers=_auth_headers(token))
+        staging_token = start.json()["staging_token"]
+        resp = client.post(
+            "/payment/confirm",
+            json={
+                "staging_token": staging_token,
+                "method_type": "card",
+                "token": "tok_mock_12345",
+                "package": "premium",
+            },
+            headers=_auth_headers(token),
+        )
+        assert resp.status_code == 200
+
+        from services.api.dependencies import get_db
+        from services.api.main import app
+
+        gen = app.dependency_overrides[get_db]()
+        db = next(gen)
+        try:
+            payment = (
+                db.query(CardPayment).filter_by(paymob_payment_id=resp.json()["payment_id"]).first()
+            )
+            assert payment is not None
+            assert float(payment.amount_egp) == 90.0
+            assert payment.package == "premium"
+        finally:
+            db.close()
 
 
 # ---------------------------------------------------------------------------

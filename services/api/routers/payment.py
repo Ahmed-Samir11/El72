@@ -24,6 +24,7 @@ import secrets
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
+import redis as _redis
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials
 from jose import JWTError, jwt
@@ -417,7 +418,14 @@ def start_card_payment(
     # user who fires 5 starts and then has Paymob fail on all of them has
     # consumed their hourly budget, which is acceptable because the cost
     # of provider abuse (5 Paymob API calls/hour per user) is bounded.
-    count = store.incr(f"paymob:card_starts:{user.id}", CARD_START_WINDOW_SECONDS)
+    try:
+        count = store.incr(f"paymob:card_starts:{user.id}", CARD_START_WINDOW_SECONDS)
+    except _redis.RedisError:
+        # Redis unavailable — fail closed with a controlled 503 rather than
+        # an unhandled 500 (finding: Redis failures must not leak 500s).
+        raise HTTPException(
+            status_code=503, detail="Payment service temporarily unavailable"
+        ) from None
     if count > MAX_CARD_STARTS_PER_HOUR:
         raise HTTPException(
             status_code=429,
@@ -439,7 +447,14 @@ def start_card_payment(
         raise HTTPException(
             status_code=502, detail="Payment provider did not return a staging token"
         )
-    store.set(staging_token, str(user.id))
+    try:
+        store.set(staging_token, str(user.id))
+    except _redis.RedisError:
+        # The Paymob customer was created but we could not bind the staging
+        # token; fail closed so no unbound token is ever returned to the client.
+        raise HTTPException(
+            status_code=503, detail="Payment service temporarily unavailable"
+        ) from None
 
     logger.info("Card payment started for user %s", user.id)
     return PaymentStartResponse(
@@ -497,24 +512,49 @@ def confirm_card_payment(
             detail="Rate limit: maximum 3 card payment confirmations per hour",
         )
 
-    bound_user = store.pop(body.staging_token)
-    if bound_user is None or bound_user != str(user.id):
-        # Unknown/expired token, or a token belonging to another user
-        # (hijacking attempt) — audited before the 400.
-        reason = (
-            "unknown_or_expired_token"
-            if bound_user is None
-            else "token_bound_to_other_user"
-        )
+    try:
+        # Validate ownership BEFORE consuming (non-destructive get) so a
+        # cross-user hijack attempt does not burn the legitimate owner's token.
+        bound_user = store.get(body.staging_token)
+    except _redis.RedisError:
+        raise HTTPException(
+            status_code=503, detail="Payment service temporarily unavailable"
+        ) from None
+    if bound_user is None:
+        # Unknown or expired token — audited before the 400. Nothing to consume.
         record_payment_event(
             db,
             event_type="staging_rejected",
             user_id=str(user.id),
             payment_ref="",
-            detail=sanitize_for_log(f"reason={reason}"),
+            detail=sanitize_for_log("reason=unknown_or_expired_token"),
             ip_address=_client_ip(request),
         )
         db.commit()
+        raise HTTPException(status_code=400, detail="Invalid or expired staging token")
+    if bound_user != str(user.id):
+        # Token belongs to another user (hijacking attempt) — audited before the
+        # 400. Deliberately NOT consumed: the owner can still use it.
+        record_payment_event(
+            db,
+            event_type="staging_rejected",
+            user_id=str(user.id),
+            payment_ref="",
+            detail=sanitize_for_log("reason=token_bound_to_other_user"),
+            ip_address=_client_ip(request),
+        )
+        db.commit()
+        raise HTTPException(status_code=400, detail="Invalid or expired staging token")
+
+    # Ownership verified — now atomically consume the single-use token.
+    try:
+        consumed = store.pop(body.staging_token)
+    except _redis.RedisError:
+        raise HTTPException(
+            status_code=503, detail="Payment service temporarily unavailable"
+        ) from None
+    if consumed is None:
+        # Lost a race to a concurrent confirm (the token was just used).
         raise HTTPException(status_code=400, detail="Invalid or expired staging token")
 
     # Server-determined amount (piastres) — the client never sets it.
@@ -592,8 +632,14 @@ def get_card_payment_status(
     if payment is None:
         raise HTTPException(status_code=404, detail="Payment not found")
 
+    # Take the LATEST payment log for this order (a re-delivery or a
+    # succeeded-after-failed sequence must not shadow the authoritative
+    # terminal state with an older row).
     final = (
-        db.query(PaymentLog).filter(PaymentLog.paymob_order_id == payment_id).first()
+        db.query(PaymentLog)
+        .filter(PaymentLog.paymob_order_id == payment_id)
+        .order_by(PaymentLog.created_at.desc())
+        .first()
     )
     status_value = final.status if final is not None else "pending"
 

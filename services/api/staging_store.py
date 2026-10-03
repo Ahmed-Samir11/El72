@@ -15,8 +15,6 @@ via :func:`set_store`.
 import os
 from typing import Optional, Protocol
 
-import redis
-
 STAGING_TTL_SECONDS = 900  # 15 minutes (plan 1.2)
 
 _KEY_PREFIX = "paymob:staging:"
@@ -25,7 +23,9 @@ _KEY_PREFIX = "paymob:staging:"
 class StagingStore(Protocol):
     """Interface for staging-token storage and rate-limit counters."""
 
-    def set(self, token: str, user_id: str, ttl_seconds: int = STAGING_TTL_SECONDS) -> None:
+    def set(
+        self, token: str, user_id: str, ttl_seconds: int = STAGING_TTL_SECONDS
+    ) -> None:
         """Bind a staging token to a user with a TTL."""
         ...
 
@@ -33,6 +33,14 @@ class StagingStore(Protocol):
         """Atomically fetch AND delete the token; returns the bound user id.
 
         Returns ``None`` if the token is unknown or already consumed.
+        """
+        ...
+
+    def get(self, token: str) -> Optional[str]:
+        """Non-destructive lookup of the bound user id (no delete).
+
+        Used to validate ownership BEFORE consuming, so a cross-user
+        rejection does not burn the legitimate owner's token.
         """
         ...
 
@@ -45,14 +53,25 @@ class RedisStagingStore:
     """Redis-backed staging store (production)."""
 
     def __init__(self, url: str):
+        # Lazy import so the redis package is only required when the
+        # production store is actually constructed (not at module load time,
+        # which would break test collection when redis is not installed).
+        import redis
+
         self._redis = redis.from_url(url, decode_responses=True)
 
-    def set(self, token: str, user_id: str, ttl_seconds: int = STAGING_TTL_SECONDS) -> None:
+    def set(
+        self, token: str, user_id: str, ttl_seconds: int = STAGING_TTL_SECONDS
+    ) -> None:
         self._redis.set(_KEY_PREFIX + token, user_id, ex=ttl_seconds)
 
     def pop(self, token: str) -> Optional[str]:
         # GETDEL is atomic: exactly one concurrent caller can win the token.
         return self._redis.getdel(_KEY_PREFIX + token)
+
+    def get(self, token: str) -> Optional[str]:
+        # Non-destructive: a cross-user check must not delete the owner's token.
+        return self._redis.get(_KEY_PREFIX + token)
 
     def incr(self, key: str, ttl_seconds: int) -> int:
         count = self._redis.incr(key)
@@ -68,11 +87,16 @@ class InMemoryStagingStore:
         self._tokens: dict[str, str] = {}
         self._counters: dict[str, int] = {}
 
-    def set(self, token: str, user_id: str, ttl_seconds: int = STAGING_TTL_SECONDS) -> None:
+    def set(
+        self, token: str, user_id: str, ttl_seconds: int = STAGING_TTL_SECONDS
+    ) -> None:
         self._tokens[token] = user_id
 
     def pop(self, token: str) -> Optional[str]:
         return self._tokens.pop(token, None)
+
+    def get(self, token: str) -> Optional[str]:
+        return self._tokens.get(token)
 
     def incr(self, key: str, ttl_seconds: int) -> int:
         self._counters[key] = self._counters.get(key, 0) + 1
