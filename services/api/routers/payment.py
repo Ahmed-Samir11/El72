@@ -24,6 +24,7 @@ import secrets
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
+import redis as _redis
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials
 from jose import JWTError, jwt
@@ -35,6 +36,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from services.api.admin_models import Admin
+from services.api.card_payment_models import CardPayment
 from services.api.credits import get_balance, grant
 from services.api.dependencies import (
     ALGORITHM,
@@ -47,8 +49,16 @@ from services.api.dependencies import (
 )
 from services.api.manual_payment_models import ManualPayment
 from services.api.models import User
-from services.api.payment_security import record_payment_event
+from services.api.payment_security import record_payment_event, sanitize_for_log
 from services.api.routers.auth import Token
+from services.api.staging_store import STAGING_TTL_SECONDS, get_staging_store
+from services.billing.models import PaymentLog
+from services.common.paymob_client import (
+    PaymobApiError,
+    create_customer,
+    create_payment,
+    create_payment_method,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +88,18 @@ CREDITS_BY_PACKAGE = {
     "premium": 30,
 }
 
+# Exact piastre (minor-unit) prices — the Paymob call uses integers, never
+# float multiplication.
+PACKAGE_PRICES_PAISA = {"standard": 3000, "premium": 9000}
+
 MAX_PENDING_PER_DAY = 3
+
+# Per-user card-flow rate limits (plan 1.9). The start limit is enforced
+# with an atomic Redis counter; the confirm limit counts confirmed rows in
+# the database under the user-row lock.
+MAX_CARD_STARTS_PER_HOUR = 5
+MAX_CARD_CONFIRMS_PER_HOUR = 3
+CARD_START_WINDOW_SECONDS = 3600
 
 
 def _utcnow() -> datetime:
@@ -333,6 +354,303 @@ def get_manual_payment(
         reject_reason=payment.reject_reason,
         created_at=payment.created_at.isoformat(),
         resolved_at=payment.resolved_at.isoformat() if payment.resolved_at else None,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Card payment endpoints (Paymob card flow, Feature 1)
+# ---------------------------------------------------------------------------
+
+
+class PaymentStartResponse(BaseModel):
+    staging_token: str
+    expires_in: int
+
+
+class CardConfirmBody(BaseModel):
+    staging_token: str
+    method_type: str = "card"
+    token: str  # ToC SDK output — a reference only, never card data
+    package: str  # "standard" | "premium"
+
+
+class CardConfirmResponse(BaseModel):
+    payment_id: str
+    authentication_token: Optional[str] = None  # for the ToS SDK (3DS)
+    status: str
+
+
+class CardStatusResponse(BaseModel):
+    payment_id: str
+    package: str
+    amount_egp: float
+    status: str
+    created_at: str
+
+
+def _paymob_error_response(exc: PaymobApiError) -> None:
+    """Map a Paymob API failure to a safe HTTP error.
+
+    The detail never echoes the provider response body (it may contain
+    sensitive context); only the status class is surfaced.
+    """
+    if exc.status_code == 503:
+        raise HTTPException(
+            status_code=503, detail="Payment provider is not configured"
+        )
+    raise HTTPException(status_code=502, detail="Payment provider request failed")
+
+
+@router.get("/payment/start", response_model=PaymentStartResponse)
+def start_card_payment(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Start a card payment: create a Paymob customer and return a staging token.
+
+    The staging token is bound to THIS user in Redis with a 15-minute TTL and
+    is single-use (plan 1.2/1.4). Rate-limited to 5 starts/hour per user via
+    an atomic counter (plan 1.9).
+    """
+    store = get_staging_store()
+    # NOTE (finding #8): the per-user start counter is incremented BEFORE
+    # the Paymob call succeeds. This is a deliberate anti-abuse choice: a
+    # user who fires 5 starts and then has Paymob fail on all of them has
+    # consumed their hourly budget, which is acceptable because the cost
+    # of provider abuse (5 Paymob API calls/hour per user) is bounded.
+    try:
+        count = store.incr(f"paymob:card_starts:{user.id}", CARD_START_WINDOW_SECONDS)
+    except _redis.RedisError:
+        # Redis unavailable — fail closed with a controlled 503 rather than
+        # an unhandled 500 (finding: Redis failures must not leak 500s).
+        raise HTTPException(
+            status_code=503, detail="Payment service temporarily unavailable"
+        ) from None
+    if count > MAX_CARD_STARTS_PER_HOUR:
+        raise HTTPException(
+            status_code=429,
+            detail="Rate limit: maximum 5 card payment starts per hour",
+        )
+
+    # Synthetic, PII-free customer identity (users have no email on file).
+    # The uuid suffix ensures repeated /payment/start calls for the same
+    # user produce distinct Paymob customers (finding #1).
+    import uuid as _uuid
+
+    try:
+        customer = create_customer(f"u{user.id}-{_uuid.uuid4().hex[:8]}@elhaq.local")
+    except PaymobApiError as exc:
+        _paymob_error_response(exc)
+
+    staging_token = customer.get("staging_token")
+    if not isinstance(staging_token, str) or not staging_token:
+        raise HTTPException(
+            status_code=502, detail="Payment provider did not return a staging token"
+        )
+    try:
+        store.set(staging_token, str(user.id))
+    except _redis.RedisError:
+        # The Paymob customer was created but we could not bind the staging
+        # token; fail closed so no unbound token is ever returned to the client.
+        raise HTTPException(
+            status_code=503, detail="Payment service temporarily unavailable"
+        ) from None
+
+    logger.info("Card payment started for user %s", user.id)
+    return PaymentStartResponse(
+        staging_token=staging_token, expires_in=STAGING_TTL_SECONDS
+    )
+
+
+@router.post("/payment/confirm", response_model=CardConfirmResponse)
+def confirm_card_payment(
+    body: CardConfirmBody,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Confirm a card payment with the on-device tokenization token.
+
+    Security (plan Feature 1):
+    - The staging token is atomically consumed (single-use) and must be
+      bound to the authenticated user (1.2/1.4).
+    - The amount is server-determined from the package (1.3) — the client
+      never sends an amount.
+    - Only Paymob tokens cross the wire; card data never reaches us (1.1).
+    - Rate-limited to 3 confirms/hour per user (1.9).
+    """
+    if body.package not in PACKAGE_PRICING:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid package. Available: standard, premium",
+        )
+    if body.method_type != "card":
+        raise HTTPException(status_code=400, detail="Unsupported method type")
+    if not body.token:
+        raise HTTPException(status_code=400, detail="Missing tokenization token")
+
+    # Serialize this user's confirmations (rate-limit + staging consumption).
+    db.execute(select(User).where(User.id == user.id).with_for_update())
+
+    store = get_staging_store()
+
+    # Rate limit BEFORE consuming the staging token so a rejected request
+    # does not burn a valid token (finding #4).
+    hour_ago = _utcnow() - timedelta(hours=1)
+    confirm_count = (
+        db.query(CardPayment)
+        .filter(
+            CardPayment.user_id == user.id,
+            CardPayment.paymob_payment_id.isnot(None),
+            CardPayment.created_at >= hour_ago,
+        )
+        .count()
+    )
+    if confirm_count >= MAX_CARD_CONFIRMS_PER_HOUR:
+        raise HTTPException(
+            status_code=429,
+            detail="Rate limit: maximum 3 card payment confirmations per hour",
+        )
+
+    try:
+        # Validate ownership BEFORE consuming (non-destructive get) so a
+        # cross-user hijack attempt does not burn the legitimate owner's token.
+        bound_user = store.get(body.staging_token)
+    except _redis.RedisError:
+        raise HTTPException(
+            status_code=503, detail="Payment service temporarily unavailable"
+        ) from None
+    if bound_user is None:
+        # Unknown or expired token — audited before the 400. Nothing to consume.
+        record_payment_event(
+            db,
+            event_type="staging_rejected",
+            user_id=str(user.id),
+            payment_ref="",
+            detail=sanitize_for_log("reason=unknown_or_expired_token"),
+            ip_address=_client_ip(request),
+        )
+        db.commit()
+        raise HTTPException(status_code=400, detail="Invalid or expired staging token")
+    if bound_user != str(user.id):
+        # Token belongs to another user (hijacking attempt) — audited before the
+        # 400. Deliberately NOT consumed: the owner can still use it.
+        record_payment_event(
+            db,
+            event_type="staging_rejected",
+            user_id=str(user.id),
+            payment_ref="",
+            detail=sanitize_for_log("reason=token_bound_to_other_user"),
+            ip_address=_client_ip(request),
+        )
+        db.commit()
+        raise HTTPException(status_code=400, detail="Invalid or expired staging token")
+
+    # Ownership verified — now atomically consume the single-use token.
+    try:
+        consumed = store.pop(body.staging_token)
+    except _redis.RedisError:
+        raise HTTPException(
+            status_code=503, detail="Payment service temporarily unavailable"
+        ) from None
+    if consumed is None:
+        # Lost a race to a concurrent confirm (the token was just used).
+        raise HTTPException(status_code=400, detail="Invalid or expired staging token")
+
+    # Server-determined amount (piastres) — the client never sets it.
+    reference_id = f"elhaq-{user.id}-{body.package}"
+    try:
+        method = create_payment_method(body.token, "card")
+        payment_resp = create_payment(
+            method["id"],
+            PACKAGE_PRICES_PAISA[body.package],
+            "EGP",
+            reference_id,
+        )
+    except PaymobApiError as exc:
+        _paymob_error_response(exc)
+
+    payment_id = payment_resp.get("id")
+    if isinstance(payment_id, (int, str)) and payment_id:
+        payment_id = str(payment_id)
+    else:
+        raise HTTPException(
+            status_code=502, detail="Payment provider did not return a payment id"
+        )
+
+    payment = CardPayment(
+        user_id=user.id,
+        paymob_payment_id=payment_id,
+        package=body.package,
+        amount_egp=PACKAGE_PRICING[body.package],
+        status="pending",
+    )
+    db.add(payment)
+    record_payment_event(
+        db,
+        event_type="card_payment_created",
+        user_id=str(user.id),
+        payment_ref=payment_id,
+        detail=sanitize_for_log(f"package={body.package}"),
+        ip_address=_client_ip(request),
+    )
+    db.commit()
+
+    logger.info(
+        "Card payment %s confirmed for user %s (%s)",
+        payment_id,
+        user.id,
+        body.package,
+    )
+    return CardConfirmResponse(
+        payment_id=payment_id,
+        authentication_token=payment_resp.get("authentication_token"),
+        status="pending",
+    )
+
+
+@router.get("/payment/status/{payment_id}", response_model=CardStatusResponse)
+def get_card_payment_status(
+    payment_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Get card payment status (owner only, plan 1.8).
+
+    The final state comes from the Paymob webhook (recorded in
+    ``payment_logs``); until then the payment is ``pending``. A 404 (not
+    403) avoids leaking that a payment exists for someone else.
+    """
+    payment = (
+        db.query(CardPayment)
+        .filter(
+            CardPayment.paymob_payment_id == payment_id,
+            CardPayment.user_id == user.id,
+        )
+        .first()
+    )
+    if payment is None:
+        raise HTTPException(status_code=404, detail="Payment not found")
+
+    # Take the LATEST payment log for this order (a re-delivery or a
+    # succeeded-after-failed sequence must not shadow the authoritative
+    # terminal state with an older row). The id tiebreaker makes the pick
+    # deterministic when two rows share the same created_at (e.g. webhook
+    # re-delivery processed in the same second).
+    final = (
+        db.query(PaymentLog)
+        .filter(PaymentLog.paymob_order_id == payment_id)
+        .order_by(PaymentLog.created_at.desc(), PaymentLog.id.desc())
+        .first()
+    )
+    status_value = final.status if final is not None else "pending"
+
+    return CardStatusResponse(
+        payment_id=payment_id,
+        package=payment.package,
+        amount_egp=float(payment.amount_egp),
+        status=status_value,
+        created_at=payment.created_at.isoformat(),
     )
 
 
