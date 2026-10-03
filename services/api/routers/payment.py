@@ -634,11 +634,13 @@ def get_card_payment_status(
 
     # Take the LATEST payment log for this order (a re-delivery or a
     # succeeded-after-failed sequence must not shadow the authoritative
-    # terminal state with an older row).
+    # terminal state with an older row). The id tiebreaker makes the pick
+    # deterministic when two rows share the same created_at (e.g. webhook
+    # re-delivery processed in the same second).
     final = (
         db.query(PaymentLog)
         .filter(PaymentLog.paymob_order_id == payment_id)
-        .order_by(PaymentLog.created_at.desc())
+        .order_by(PaymentLog.created_at.desc(), PaymentLog.id.desc())
         .first()
     )
     status_value = final.status if final is not None else "pending"
