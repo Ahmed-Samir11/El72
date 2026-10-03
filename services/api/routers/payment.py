@@ -412,6 +412,11 @@ def start_card_payment(
     an atomic counter (plan 1.9).
     """
     store = get_staging_store()
+    # NOTE (finding #8): the per-user start counter is incremented BEFORE
+    # the Paymob call succeeds. This is a deliberate anti-abuse choice: a
+    # user who fires 5 starts and then has Paymob fail on all of them has
+    # consumed their hourly budget, which is acceptable because the cost
+    # of provider abuse (5 Paymob API calls/hour per user) is bounded.
     count = store.incr(f"paymob:card_starts:{user.id}", CARD_START_WINDOW_SECONDS)
     if count > MAX_CARD_STARTS_PER_HOUR:
         raise HTTPException(
@@ -420,8 +425,12 @@ def start_card_payment(
         )
 
     # Synthetic, PII-free customer identity (users have no email on file).
+    # The uuid suffix ensures repeated /payment/start calls for the same
+    # user produce distinct Paymob customers (finding #1).
+    import uuid as _uuid
+
     try:
-        customer = create_customer(f"u{user.id}@elhaq.local")
+        customer = create_customer(f"u{user.id}-{_uuid.uuid4().hex[:8]}@elhaq.local")
     except PaymobApiError as exc:
         _paymob_error_response(exc)
 
@@ -469,6 +478,25 @@ def confirm_card_payment(
     db.execute(select(User).where(User.id == user.id).with_for_update())
 
     store = get_staging_store()
+
+    # Rate limit BEFORE consuming the staging token so a rejected request
+    # does not burn a valid token (finding #4).
+    hour_ago = _utcnow() - timedelta(hours=1)
+    confirm_count = (
+        db.query(CardPayment)
+        .filter(
+            CardPayment.user_id == user.id,
+            CardPayment.paymob_payment_id.isnot(None),
+            CardPayment.created_at >= hour_ago,
+        )
+        .count()
+    )
+    if confirm_count >= MAX_CARD_CONFIRMS_PER_HOUR:
+        raise HTTPException(
+            status_code=429,
+            detail="Rate limit: maximum 3 card payment confirmations per hour",
+        )
+
     bound_user = store.pop(body.staging_token)
     if bound_user is None or bound_user != str(user.id):
         # Unknown/expired token, or a token belonging to another user
@@ -489,22 +517,6 @@ def confirm_card_payment(
         db.commit()
         raise HTTPException(status_code=400, detail="Invalid or expired staging token")
 
-    hour_ago = _utcnow() - timedelta(hours=1)
-    confirm_count = (
-        db.query(CardPayment)
-        .filter(
-            CardPayment.user_id == user.id,
-            CardPayment.paymob_payment_id.isnot(None),
-            CardPayment.created_at >= hour_ago,
-        )
-        .count()
-    )
-    if confirm_count >= MAX_CARD_CONFIRMS_PER_HOUR:
-        raise HTTPException(
-            status_code=429,
-            detail="Rate limit: maximum 3 card payment confirmations per hour",
-        )
-
     # Server-determined amount (piastres) — the client never sets it.
     reference_id = f"elhaq-{user.id}-{body.package}"
     try:
@@ -519,7 +531,9 @@ def confirm_card_payment(
         _paymob_error_response(exc)
 
     payment_id = payment_resp.get("id")
-    if not isinstance(payment_id, str) or not payment_id:
+    if isinstance(payment_id, (int, str)) and payment_id:
+        payment_id = str(payment_id)
+    else:
         raise HTTPException(
             status_code=502, detail="Payment provider did not return a payment id"
         )

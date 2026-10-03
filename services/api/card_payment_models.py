@@ -49,5 +49,15 @@ class CardPayment(Base):
             "status IN ('pending', 'succeeded', 'failed', 'canceled')",
             name="card_payments_status_check",
         ),
+        # Mirror the SQL DDL CHECK constraints so ORM-created schemas
+        # (e.g. tests via Base.metadata.create_all) match production.
+        CheckConstraint(
+            "package IN ('standard', 'premium')",
+            name="card_payments_package_check",
+        ),
+        CheckConstraint(
+            "amount_egp > 0",
+            name="card_payments_amount_check",
+        ),
         Index("ix_card_payments_user_created", "user_id", "created_at"),
     )

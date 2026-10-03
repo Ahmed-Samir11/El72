@@ -371,7 +371,38 @@ async def paymob_webhook(request: Request, db: Session = Depends(get_db)):
             "tier": package,
         },
     )
+
+    # Finding #3: transition the CardPayment status from 'pending' to the
+    # webhook-confirmed terminal state so /payment/status reflects reality.
+    _update_card_payment_status(db, order_id, status_value)
+
     return {"status": "processed"}
+
+
+def _update_card_payment_status(db: Session, order_id: str, status_value: str) -> None:
+    """Transition the CardPayment row to its terminal state after webhook.
+
+    The CardPayment table lives in the API schema; the billing service
+    shares the same DATABASE_URL in production. We use a raw UPDATE so we
+    do not need to import the ORM model across services.
+    """
+    from sqlalchemy import text as _text
+
+    try:
+        db.execute(
+            _text(
+                "UPDATE card_payments SET status = :status "
+                "WHERE paymob_payment_id = :order_id AND status = 'pending'"
+            ),
+            {"status": status_value, "order_id": order_id},
+        )
+    except Exception:
+        # Non-fatal: the CardPayment row may not exist (e.g. manual payment
+        # flow) or the table may be absent in a billing-only deployment.
+        db.rollback()
+        logger.warning(
+            "Could not update card_payments status for %s", order_id
+        )
 
 
 @app.get("/pricing")

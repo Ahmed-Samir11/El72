@@ -507,3 +507,165 @@ class TestCardDataSecurity:
         data = resp.json()
         # Only these fields should be present.
         assert set(data.keys()) == {"payment_id", "authentication_token", "status"}
+
+
+# ---------------------------------------------------------------------------
+# Finding #5: staging token expiry, audit events, provider error mapping
+# ---------------------------------------------------------------------------
+
+
+class TestStagingTokenExpiry:
+    def test_expired_token_rejected_400(self, client):
+        """A staging token that has expired (TTL elapsed) is rejected."""
+        token = _user_token(client)
+        start = client.get("/payment/start", headers=_auth_headers(token))
+        assert start.status_code == 200
+        staging_token = start.json()["staging_token"]
+
+        # Simulate expiry by deleting the token from the store.
+        from services.api.staging_store import get_staging_store
+
+        store = get_staging_store()
+        store._tokens.pop(staging_token, None)
+
+        resp = client.post(
+            "/payment/confirm",
+            json={
+                "staging_token": staging_token,
+                "method_type": "card",
+                "token": "tok_mock_12345",
+                "package": "standard",
+            },
+            headers=_auth_headers(token),
+        )
+        assert resp.status_code == 400
+
+
+class TestAuditEvents:
+    def test_staging_rejected_audited(self, client):
+        """An unknown/expired staging token produces a staging_rejected audit row."""
+        token = _user_token(client)
+        resp = client.post(
+            "/payment/confirm",
+            json={
+                "staging_token": "never_issued_token",
+                "method_type": "card",
+                "token": "tok_mock_12345",
+                "package": "standard",
+            },
+            headers=_auth_headers(token),
+        )
+        assert resp.status_code == 400
+
+        from services.api.dependencies import get_db
+        from services.api.main import app
+
+        gen = app.dependency_overrides[get_db]()
+        db = next(gen)
+        try:
+            # The audit log is a separate table; check via raw query.
+            from sqlalchemy import text
+
+            rows = db.execute(
+                text(
+                    "SELECT action, detail FROM payment_audit_log "
+                    "WHERE action = 'staging_rejected'"
+                )
+            ).fetchall()
+            assert len(rows) >= 1
+            assert "reason=unknown_or_expired_token" in rows[0][1]
+        finally:
+            db.close()
+
+    def test_card_payment_created_audited(self, client):
+        """A successful confirm produces a card_payment_created audit row."""
+        token = _user_token(client)
+        start = client.get("/payment/start", headers=_auth_headers(token))
+        staging_token = start.json()["staging_token"]
+        confirm = client.post(
+            "/payment/confirm",
+            json={
+                "staging_token": staging_token,
+                "method_type": "card",
+                "token": "tok_mock_12345",
+                "package": "standard",
+            },
+            headers=_auth_headers(token),
+        )
+        assert confirm.status_code == 200
+        payment_id = confirm.json()["payment_id"]
+
+        from services.api.dependencies import get_db
+        from services.api.main import app
+
+        gen = app.dependency_overrides[get_db]()
+        db = next(gen)
+        try:
+            from sqlalchemy import text
+
+            rows = db.execute(
+                text(
+                    "SELECT action, order_ref, detail FROM payment_audit_log "
+                    "WHERE action = 'card_payment_created'"
+                )
+            ).fetchall()
+            assert len(rows) >= 1
+            assert rows[0][1] == payment_id
+            assert "package=standard" in rows[0][2]
+        finally:
+            db.close()
+
+
+class TestProviderErrorMapping:
+    def test_paymob_503_maps_to_503(self, client, monkeypatch):
+        """PaymobApiError with 503 status → HTTP 503."""
+        from services.common.paymob_client import PaymobApiError
+
+        def _raise_503(email):
+            raise PaymobApiError(503, "service unavailable")
+
+        monkeypatch.setattr(
+            "services.api.routers.payment.create_customer", _raise_503
+        )
+        token = _user_token(client)
+        resp = client.get("/payment/start", headers=_auth_headers(token))
+        assert resp.status_code == 503
+
+    def test_paymob_non_503_maps_to_502(self, client, monkeypatch):
+        """PaymobApiError with non-503 status → HTTP 502."""
+        from services.common.paymob_client import PaymobApiError
+
+        def _raise_400(email):
+            raise PaymobApiError(400, "bad request")
+
+        monkeypatch.setattr(
+            "services.api.routers.payment.create_customer", _raise_400
+        )
+        token = _user_token(client)
+        resp = client.get("/payment/start", headers=_auth_headers(token))
+        assert resp.status_code == 502
+
+
+# ---------------------------------------------------------------------------
+# Finding #7: unauthenticated confirm/status → 401
+# ---------------------------------------------------------------------------
+
+
+class TestUnauthenticatedAccess:
+    def test_confirm_unauthenticated_401(self, client):
+        """POST /payment/confirm without auth → 401."""
+        resp = client.post(
+            "/payment/confirm",
+            json={
+                "staging_token": "some_token",
+                "method_type": "card",
+                "token": "tok_mock_12345",
+                "package": "standard",
+            },
+        )
+        assert resp.status_code == 401
+
+    def test_status_unauthenticated_401(self, client):
+        """GET /payment/status/{id} without auth → 401."""
+        resp = client.get("/payment/status/some-id")
+        assert resp.status_code == 401
