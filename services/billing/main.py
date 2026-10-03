@@ -400,9 +400,7 @@ def _update_card_payment_status(db: Session, order_id: str, status_value: str) -
         # Non-fatal: the CardPayment row may not exist (e.g. manual payment
         # flow) or the table may be absent in a billing-only deployment.
         db.rollback()
-        logger.warning(
-            "Could not update card_payments status for %s", order_id
-        )
+        logger.warning("Could not update card_payments status for %s", order_id)
 
 
 @app.get("/pricing")

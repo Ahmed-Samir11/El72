@@ -66,6 +66,7 @@ def client(monkeypatch):
     Base.metadata.create_all(engine)
     # PaymentLog lives on the billing service's Base — create it here too.
     from services.billing.models import Base as BillingBase
+
     BillingBase.metadata.create_all(engine)
     TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
@@ -438,7 +439,9 @@ class TestPremiumAmount:
         db = next(gen)
         try:
             payment = (
-                db.query(CardPayment).filter_by(paymob_payment_id=resp.json()["payment_id"]).first()
+                db.query(CardPayment)
+                .filter_by(paymob_payment_id=resp.json()["payment_id"])
+                .first()
             )
             assert payment is not None
             assert float(payment.amount_egp) == 90.0
@@ -471,9 +474,7 @@ class TestPaymentStatus:
         assert confirm.status_code == 200
         payment_id = confirm.json()["payment_id"]
 
-        resp = client.get(
-            f"/payment/status/{payment_id}", headers=_auth_headers(token)
-        )
+        resp = client.get(f"/payment/status/{payment_id}", headers=_auth_headers(token))
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "pending"
@@ -539,9 +540,7 @@ class TestPaymentStatus:
         db = next(gen)
         try:
             payment = (
-                db.query(CardPayment)
-                .filter_by(paymob_payment_id=payment_id)
-                .first()
+                db.query(CardPayment).filter_by(paymob_payment_id=payment_id).first()
             )
             assert payment is not None
             db.add(
@@ -558,9 +557,7 @@ class TestPaymentStatus:
         finally:
             db.close()
 
-        resp = client.get(
-            f"/payment/status/{payment_id}", headers=_auth_headers(token)
-        )
+        resp = client.get(f"/payment/status/{payment_id}", headers=_auth_headers(token))
         assert resp.status_code == 200
         assert resp.json()["status"] == "succeeded"
 
@@ -744,9 +741,7 @@ class TestProviderErrorMapping:
         def _raise_503(email):
             raise PaymobApiError(503, "service unavailable")
 
-        monkeypatch.setattr(
-            "services.api.routers.payment.create_customer", _raise_503
-        )
+        monkeypatch.setattr("services.api.routers.payment.create_customer", _raise_503)
         token = _user_token(client)
         resp = client.get("/payment/start", headers=_auth_headers(token))
         assert resp.status_code == 503
@@ -758,9 +753,7 @@ class TestProviderErrorMapping:
         def _raise_400(email):
             raise PaymobApiError(400, "bad request")
 
-        monkeypatch.setattr(
-            "services.api.routers.payment.create_customer", _raise_400
-        )
+        monkeypatch.setattr("services.api.routers.payment.create_customer", _raise_400)
         token = _user_token(client)
         resp = client.get("/payment/start", headers=_auth_headers(token))
         assert resp.status_code == 502
