@@ -105,6 +105,7 @@ services:
       - timescaledb
     environment:
       DATABASE_URL: "${DATABASE_URL_DOCKER:-postgresql://elhaq:elhaq_pass@postgres:5432/elhaq}"
+      TIMESCALE_URL: "${TIMESCALE_URL_DOCKER:-postgresql://elhaq:elhaq_pass@timescaledb:5432/elhaq_ts}"
       REDIS_URL: "redis://redis:6379"
       SCRAPE_INTERVAL: "30"
       MAX_CONCURRENT_SCRAPES: "10"
