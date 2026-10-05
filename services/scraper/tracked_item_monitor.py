@@ -36,6 +36,7 @@ class TrackedItemMonitor:
     def __init__(
         self,
         db_pool: asyncpg.Pool,
+        timescale_pool: asyncpg.Pool,
         redis_client: RedisStreamClient,
         browser_pool: BrowserPool,
         scrape_interval: int = 30,
@@ -44,20 +45,22 @@ class TrackedItemMonitor:
         """Initialize the monitor.
 
         Args:
-            db_pool: Database connection pool
+            db_pool: Operational PostgreSQL connection pool
+            timescale_pool: TimescaleDB connection pool for price history
             redis_client: Redis client for alert events
             browser_pool: Browser pool for Playwright scraping
             scrape_interval: Seconds between scrape cycles (default 30)
             max_concurrent_scrapes: Max concurrent scraping tasks
         """
         self.db_pool = db_pool
+        self.timescale_pool = timescale_pool
         self.redis_client = redis_client
         self.browser_pool = browser_pool
         self.scrape_interval = scrape_interval
         self.max_concurrent_scrapes = max_concurrent_scrapes
 
         # Initialize processors
-        self.price_processor = PriceProcessor(db_pool)
+        self.price_processor = PriceProcessor(db_pool, timescale_pool)
         self.alert_emitter = AlertEmitter(redis_client)
 
         # Tracking state
@@ -313,6 +316,9 @@ async def main():
     DATABASE_URL = os.getenv(
         "DATABASE_URL", "postgresql://elhaq:elhaq_pass@localhost:5432/elhaq"
     )
+    TIMESCALE_URL = os.getenv(
+        "TIMESCALE_URL", "postgresql://elhaq:elhaq_pass@localhost:5433/elhaq_ts"
+    )
     REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
     SCRAPE_INTERVAL = int(os.getenv("SCRAPE_INTERVAL", "30"))
     MAX_CONCURRENT_SCRAPES = int(os.getenv("MAX_CONCURRENT_SCRAPES", "10"))
@@ -322,6 +328,9 @@ async def main():
     logger.info(f"Connecting to database: {DATABASE_URL}")
     db_pool = await asyncpg.create_pool(
         DATABASE_URL, min_size=2, max_size=10, command_timeout=60
+    )
+    timescale_pool = await asyncpg.create_pool(
+        TIMESCALE_URL, min_size=2, max_size=10, command_timeout=60
     )
 
     # Initialize Redis client
@@ -337,6 +346,7 @@ async def main():
         # Create monitor instance
         monitor = TrackedItemMonitor(
             db_pool=db_pool,
+            timescale_pool=timescale_pool,
             redis_client=redis_client,
             browser_pool=browser_pool,
             scrape_interval=SCRAPE_INTERVAL,
@@ -363,6 +373,7 @@ async def main():
             await browser_pool.close()
             await redis_client.close()
             await db_pool.close()
+            await timescale_pool.close()
             logger.info("Shutdown complete")
 
 

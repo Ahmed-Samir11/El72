@@ -91,11 +91,13 @@ async def run_single_cycle_demo():
 
     # Configuration
     DATABASE_URL = "postgresql://elhaq:elhaq_pass@localhost:5432/elhaq"
+    TIMESCALE_URL = "postgresql://elhaq:elhaq_pass@localhost:5433/elhaq_ts"
     REDIS_URL = "redis://localhost:6379"
 
     # Initialize connections
     print("📡 Connecting to database and Redis...")
     db_pool = await asyncpg.create_pool(DATABASE_URL, min_size=2, max_size=5)
+    timescale_pool = await asyncpg.create_pool(TIMESCALE_URL, min_size=2, max_size=5)
     redis_client = await RedisStreamClient.create(REDIS_URL)
 
     try:
@@ -112,6 +114,7 @@ async def run_single_cycle_demo():
             # Create monitor
             monitor = TrackedItemMonitor(
                 db_pool=db_pool,
+                timescale_pool=timescale_pool,
                 redis_client=redis_client,
                 browser_pool=browser_pool,
                 scrape_interval=30,
@@ -217,6 +220,7 @@ async def run_single_cycle_demo():
     finally:
         await redis_client.close()
         await db_pool.close()
+        await timescale_pool.close()
 
 
 async def query_tracked_items_demo():
