@@ -114,8 +114,8 @@ void main() {
     await tester.tap(find.text('Upgrade plan'));
     await tester.pumpAndSettle();
 
-    // The plans screen is on top: its title is visible.
-    expect(find.text('Subscription Plans'), findsOneWidget);
+    // The packages screen is on top: its title is visible.
+    expect(find.text('Credit Packages'), findsOneWidget);
   });
 
   testWidgets('"Not now" dismisses the dialog without navigating', (

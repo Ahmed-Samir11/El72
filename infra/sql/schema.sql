@@ -183,6 +183,51 @@ CREATE INDEX IF NOT EXISTS idx_manual_payments_user_id ON manual_payments(user_i
 CREATE INDEX IF NOT EXISTS idx_manual_payments_status_created
     ON manual_payments(status, created_at);
 
+-- Card payments (Paymob card flow). Tracks a payment from /payment/start
+-- through /payment/confirm until the webhook records the final outcome in
+-- payment_logs. Stores NO card data — only Paymob ids and server-determined
+-- amounts (PCI-DSS: card data is tokenized on-device and never reaches us).
+CREATE TABLE IF NOT EXISTS card_payments (
+    id SERIAL PRIMARY KEY,
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    -- Set at /payment/confirm; unique — one Paymob payment per record.
+    paymob_payment_id VARCHAR(255) UNIQUE,
+    package VARCHAR(20) NOT NULL
+        CHECK (package IN ('standard', 'premium')),
+    amount_egp NUMERIC(10, 2) NOT NULL CHECK (amount_egp > 0),
+    status VARCHAR(20) NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'succeeded', 'failed', 'canceled')),
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_card_payments_user_created
+    ON card_payments(user_id, created_at);
+
+-- Wallet payments (Paymob wallet flow): Vodafone Cash / Orange Money /
+-- Etisalat Cash / Fawry. The wallet NUMBER is deliberately NOT stored —
+-- only the wallet TYPE is kept for audit/ledger purposes (plan 2.8).
+CREATE TABLE IF NOT EXISTS wallet_payments (
+    id SERIAL PRIMARY KEY,
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    -- Set at /payment/confirm; unique — one Paymob payment per record.
+    paymob_payment_id VARCHAR(255) UNIQUE,
+    wallet_type VARCHAR(30) NOT NULL,
+    package VARCHAR(20) NOT NULL
+        CHECK (package IN ('standard', 'premium')),
+    amount_egp NUMERIC(10, 2) NOT NULL CHECK (amount_egp > 0),
+    status VARCHAR(20) NOT NULL DEFAULT 'pending_otp'
+        CHECK (status IN ('pending_otp', 'processing', 'succeeded',
+            'failed', 'canceled')),
+    -- OTP brute-force guard (plan 2.1): max 3 attempts, then canceled.
+    otp_attempts INTEGER NOT NULL DEFAULT 0 CHECK (otp_attempts >= 0),
+    -- OTP challenge expiry (60 s from payment creation, plan 2.1).
+    otp_expires_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_wallet_payments_user_created
+    ON wallet_payments(user_id, created_at);
+
 -- Append-only audit trail of ALL payment events: admin actions
 -- (approve / reject / reveal_contact) and system security events (webhook
 -- signature failures, OTP failures, token expiry, amount mismatches).
@@ -192,8 +237,10 @@ CREATE TABLE IF NOT EXISTS payment_audit_log (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     action VARCHAR(50) NOT NULL
         CHECK (action IN ('approve', 'reject', 'reveal_contact',
-            'webhook_received', 'webhook_signature_failed', 'otp_failed',
-            'token_expired', 'amount_mismatch')),
+            'webhook_received', 'webhook_signature_failed',
+            'webhook_duplicate', 'validation_rejected', 'otp_failed',
+            'token_expired', 'amount_mismatch', 'card_payment_created',
+            'staging_rejected', 'wallet_payment_created')),
     detail TEXT,
     actor_id VARCHAR(36) REFERENCES admins(id) ON DELETE SET NULL,
     -- Snapshot of the acting admin's username (survives admin deletion).
