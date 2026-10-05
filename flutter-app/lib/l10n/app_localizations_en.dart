@@ -197,6 +197,117 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get creditPackages => 'Credit Packages';
+
+  @override
+  String get standardPackage => 'Standard';
+
+  @override
+  String get premiumPackage => 'Premium';
+
+  @override
+  String get standardPackageDesc => '10 credits for price trackers';
+
+  @override
+  String get premiumPackageDesc => '30 credits for price trackers';
+
+  @override
+  String creditsLabel(int count) {
+    return '$count credits';
+  }
+
+  @override
+  String egpOnce(String amount) {
+    return 'EGP $amount (one-time)';
+  }
+
+  @override
+  String get buyNow => 'Buy now';
+
+  @override
+  String get freeCreditsDesc => '3 free credits included';
+
+  @override
+  String get selectWallet => 'Choose your wallet';
+
+  @override
+  String get walletVodafoneCash => 'Vodafone Cash';
+
+  @override
+  String get walletOrangeMoney => 'Orange Money';
+
+  @override
+  String get walletEtisalatCash => 'Etisalat Cash';
+
+  @override
+  String get walletFawry => 'Fawry';
+
+  @override
+  String get walletNumberLabel => 'Wallet phone number';
+
+  @override
+  String get walletNumberHint => '01X XXXXXXXX';
+
+  @override
+  String get invalidWalletNumber =>
+      'Enter a valid Egyptian mobile number (010/011/012/015 + 8 digits)';
+
+  @override
+  String get confirmPaymentButton => 'Confirm payment';
+
+  @override
+  String get walletConfirmTitle => 'Confirm your wallet';
+
+  @override
+  String walletConfirmMessage(String number) {
+    return 'You\'re paying to wallet $number. Confirm?';
+  }
+
+  @override
+  String get enterOtpTitle => 'Enter OTP';
+
+  @override
+  String get enterOtpDesc => 'Enter the code sent to your wallet';
+
+  @override
+  String get otpInvalid => 'Enter the digits from the code';
+
+  @override
+  String otpAttemptsLeft(int count) {
+    return '$count attempts remaining';
+  }
+
+  @override
+  String get verifyOtpButton => 'Verify code';
+
+  @override
+  String get paymentProcessing => 'Processing your payment…';
+
+  @override
+  String get paymentPending => 'Waiting for payment confirmation…';
+
+  @override
+  String get paymentSucceededTitle => 'Payment successful!';
+
+  @override
+  String get paymentSucceededDesc => 'Your credits have been added.';
+
+  @override
+  String get paymentFailedTitle => 'Payment failed';
+
+  @override
+  String get paymentFailedDesc => 'No credits were granted. You can try again.';
+
+  @override
+  String get paymentCanceledTitle => 'Payment canceled';
+
+  @override
+  String get paymentError => 'Something went wrong. Please try again.';
+
+  @override
+  String get retryPayment => 'Try again';
+
+  @override
   String get statCurrent => 'Current';
 
   @override

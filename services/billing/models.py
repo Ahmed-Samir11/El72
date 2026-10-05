@@ -8,7 +8,12 @@ from sqlalchemy.types import TypeDecorator
 
 
 class GUID(TypeDecorator):
-    """Use PostgreSQL UUIDs and a portable string representation in SQLite."""
+    """Use PostgreSQL UUIDs and a portable string representation in SQLite.
+
+    On SQLite the value is stored as a plain string (user ids are integers
+    there, so no UUID coercion is applied); on PostgreSQL it is coerced to a
+    native UUID for binding.
+    """
 
     impl = CHAR
     cache_ok = True
@@ -21,13 +26,19 @@ class GUID(TypeDecorator):
     def process_bind_param(self, value, dialect):
         if value is None:
             return None
-        value = value if isinstance(value, uuid.UUID) else uuid.UUID(str(value))
-        return value if dialect.name == "postgresql" else str(value)
+        if dialect.name == "postgresql":
+            return value if isinstance(value, uuid.UUID) else uuid.UUID(str(value))
+        return str(value)
 
     def process_result_value(self, value, dialect):
         if value is None or isinstance(value, uuid.UUID):
             return value
-        return uuid.UUID(str(value))
+        # Postgres values are expected to be UUIDs; SQLite values are the
+        # plain string representations (user ids are integers there) and are
+        # returned as-is.
+        if dialect.name == "postgresql":
+            return uuid.UUID(str(value))
+        return value
 
 
 Base = declarative_base()

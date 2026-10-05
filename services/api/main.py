@@ -19,6 +19,7 @@ from slowapi.util import get_remote_address
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from services.api.card_payment_models import CardPayment  # noqa: F401
 from services.api.dependencies import get_current_user, get_db
 from services.api.manual_payment_models import ManualPayment  # noqa: F401
 from services.api.models import Alert, Base, User

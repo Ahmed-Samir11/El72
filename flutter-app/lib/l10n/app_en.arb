@@ -104,6 +104,65 @@
     }
   },
 
+  "creditPackages": "Credit Packages",
+  "currentPlan": "Current plan",
+  "standardPackage": "Standard",
+  "premiumPackage": "Premium",
+  "standardPackageDesc": "10 credits for price trackers",
+  "premiumPackageDesc": "30 credits for price trackers",
+  "creditsLabel": "{count} credits",
+  "@creditsLabel": {
+    "placeholders": {
+      "count": { "type": "int" }
+    }
+  },
+  "egpOnce": "EGP {amount} (one-time)",
+  "@egpOnce": {
+    "placeholders": {
+      "amount": { "type": "String" }
+    }
+  },
+  "buyNow": "Buy now",
+  "freeCreditsDesc": "3 free credits included",
+
+  "selectWallet": "Choose your wallet",
+  "walletVodafoneCash": "Vodafone Cash",
+  "walletOrangeMoney": "Orange Money",
+  "walletEtisalatCash": "Etisalat Cash",
+  "walletFawry": "Fawry",
+  "walletNumberLabel": "Wallet phone number",
+  "walletNumberHint": "01X XXXXXXXX",
+  "invalidWalletNumber": "Enter a valid Egyptian mobile number (010/011/012/015 + 8 digits)",
+  "confirmPaymentButton": "Confirm payment",
+  "walletConfirmTitle": "Confirm your wallet",
+  "walletConfirmMessage": "You're paying to wallet {number}. Confirm?",
+  "@walletConfirmMessage": {
+    "placeholders": {
+      "number": { "type": "String" }
+    }
+  },
+
+  "enterOtpTitle": "Enter OTP",
+  "enterOtpDesc": "Enter the code sent to your wallet",
+  "otpInvalid": "Enter the digits from the code",
+  "otpAttemptsLeft": "{count} attempts remaining",
+  "@otpAttemptsLeft": {
+    "placeholders": {
+      "count": { "type": "int" }
+    }
+  },
+  "verifyOtpButton": "Verify code",
+
+  "paymentProcessing": "Processing your payment…",
+  "paymentPending": "Waiting for payment confirmation…",
+  "paymentSucceededTitle": "Payment successful!",
+  "paymentSucceededDesc": "Your credits have been added.",
+  "paymentFailedTitle": "Payment failed",
+  "paymentFailedDesc": "No credits were granted. You can try again.",
+  "paymentCanceledTitle": "Payment canceled",
+  "paymentError": "Something went wrong. Please try again.",
+  "retryPayment": "Try again",
+
   "statCurrent": "Current",
   "statLow90d": "90d Low",
   "statHigh90d": "90d High",
