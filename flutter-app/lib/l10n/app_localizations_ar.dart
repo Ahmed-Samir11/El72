@@ -197,6 +197,117 @@ class AppLocalizationsAr extends AppLocalizations {
   }
 
   @override
+  String get creditPackages => 'حزم الرصيد';
+
+  @override
+  String get standardPackage => 'قياسي';
+
+  @override
+  String get premiumPackage => 'بريميوم';
+
+  @override
+  String get standardPackageDesc => '10 أرصدة لتتبع الأسعار';
+
+  @override
+  String get premiumPackageDesc => '30 رصيدًا لتتبع الأسعار';
+
+  @override
+  String creditsLabel(int count) {
+    return '$count رصيد';
+  }
+
+  @override
+  String egpOnce(String amount) {
+    return '$amount ج.م (دفعة واحدة)';
+  }
+
+  @override
+  String get buyNow => 'اشترِ الآن';
+
+  @override
+  String get freeCreditsDesc => '3 أرصدة مجانية مضمّنة';
+
+  @override
+  String get selectWallet => 'اختر محفظتك';
+
+  @override
+  String get walletVodafoneCash => 'فودافون كاش';
+
+  @override
+  String get walletOrangeMoney => 'أورانج موني';
+
+  @override
+  String get walletEtisalatCash => 'إتصالات كاش';
+
+  @override
+  String get walletFawry => 'فوري';
+
+  @override
+  String get walletNumberLabel => 'رقم هاتف المحفظة';
+
+  @override
+  String get walletNumberHint => 'مثال: 01012345678';
+
+  @override
+  String get invalidWalletNumber =>
+      'أدخل رقمًا مصريًا صحيحًا (010/011/012/015 + 8 أرقام)';
+
+  @override
+  String get confirmPaymentButton => 'تأكيد الدفع';
+
+  @override
+  String get walletConfirmTitle => 'تأكيد المحفظة';
+
+  @override
+  String walletConfirmMessage(String number) {
+    return 'سندفع إلى المحفظة $number. هل أنت متأكد؟';
+  }
+
+  @override
+  String get enterOtpTitle => 'أدخل رمز التحقق';
+
+  @override
+  String get enterOtpDesc => 'أدخل الرمز المرسل إلى محفظتك';
+
+  @override
+  String get otpInvalid => 'أدخل أرقام الرمز';
+
+  @override
+  String otpAttemptsLeft(int count) {
+    return 'متبقٍ $count محاولات';
+  }
+
+  @override
+  String get verifyOtpButton => 'تحقق من الرمز';
+
+  @override
+  String get paymentProcessing => 'جارٍ معالجة الدفعة…';
+
+  @override
+  String get paymentPending => 'في انتظار تأكيد الدفع…';
+
+  @override
+  String get paymentSucceededTitle => 'تم الدفع بنجاح!';
+
+  @override
+  String get paymentSucceededDesc => 'تمت إضافة رصيدك.';
+
+  @override
+  String get paymentFailedTitle => 'فشل الدفع';
+
+  @override
+  String get paymentFailedDesc => 'لم يُمَنح رصيد. يمكنك المحاولة مرة أخرى.';
+
+  @override
+  String get paymentCanceledTitle => 'أُلغي الدفع';
+
+  @override
+  String get paymentError => 'حدث خطأ. يرجى المحاولة مرة أخرى.';
+
+  @override
+  String get retryPayment => 'إعادة المحاولة';
+
+  @override
   String get statCurrent => 'الحالي';
 
   @override

@@ -15,8 +15,11 @@ def _reset_rate_limiter():
     # Import inside the fixture (not at module level): importing
     # services.api.dependencies at collection time would create its
     # engine before test modules finalize DATABASE_URL.
+    from services.api.payment_security import security_monitor
     from services.api.routers.payment import limiter
 
     limiter.reset()
+    security_monitor.reset()
     yield
     limiter.reset()
+    security_monitor.reset()

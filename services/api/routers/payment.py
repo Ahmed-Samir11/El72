@@ -8,6 +8,10 @@ Implements the manual payment flow from plans/paymob-integration.md:
 - GET /admin/payments/{order_ref}/contact — audited full-contact reveal
 - POST /admin/payments/{order_ref}/approve — idempotent, concurrency-safe
 - POST /admin/payments/{order_ref}/reject — with reason, audited
+- GET /payment/start — card/wallet staging token (Paymob customer)
+- POST /payment/confirm — card (ToC token) or wallet (type + number)
+- POST /payment/confirm-otp — wallet OTP confirmation (3-attempt budget)
+- GET /payment/status/{payment_id} — owner-only status (card or wallet)
 
 Security properties:
 - Package pricing is server-determined from an allowlist (no client amounts).
@@ -20,6 +24,7 @@ Security properties:
 
 import logging
 import os
+import re
 import secrets
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
@@ -49,15 +54,26 @@ from services.api.dependencies import (
 )
 from services.api.manual_payment_models import ManualPayment
 from services.api.models import User
-from services.api.payment_security import record_payment_event, sanitize_for_log
+from services.api.payment_security import (
+    record_payment_event,
+    sanitize_for_log,
+    security_monitor,
+)
 from services.api.routers.auth import Token
-from services.api.staging_store import STAGING_TTL_SECONDS, get_staging_store
+from services.api.staging_store import (
+    STAGING_TTL_SECONDS,
+    StagingStore,
+    get_staging_store,
+)
+from services.api.wallet_payment_models import WalletPayment
 from services.billing.models import PaymentLog
 from services.common.paymob_client import (
     PaymobApiError,
+    confirm_wallet_otp,
     create_customer,
     create_payment,
     create_payment_method,
+    create_wallet_payment_method,
 )
 
 logger = logging.getLogger(__name__)
@@ -100,6 +116,24 @@ MAX_PENDING_PER_DAY = 3
 MAX_CARD_STARTS_PER_HOUR = 5
 MAX_CARD_CONFIRMS_PER_HOUR = 3
 CARD_START_WINDOW_SECONDS = 3600
+
+# Wallet flow (Feature 2).
+# Server-side allowlist of wallet types (plan 2.7): the plan's API tokens
+# matched case-insensitively, stored/compared in canonical upper-case.
+WALLET_TYPES = frozenset({"VODAFONE_CASH", "ORANGE_MONEY", "ETISALAT_CASH", "FAWRY"})
+# Egyptian wallet number: 01[0125] + 8 digits (plan Feature 2).
+WALLET_PHONE_RE = re.compile(r"^01[0125]\d{8}$")
+# Rate limit: max 5 wallet confirms per user per hour (plan 2.2).
+MAX_WALLET_CONFIRMS_PER_HOUR = 5
+# OTP rules (plan 2.1): max 3 attempts per payment, 60 s expiry, 4-8 digits.
+MAX_OTP_ATTEMPTS = 3
+OTP_TTL_SECONDS = 60
+OTP_RE = re.compile(r"^\d{4,8}$")
+# Flood guard on /payment/confirm-otp: 5 requests per payment per 10 minutes
+# (Feature 5 rate-limit table). Enforced with an atomic counter keyed by
+# payment id — slowapi keys are request-derived and cannot see the body.
+OTP_FLOOD_LIMIT = 5
+OTP_FLOOD_WINDOW_SECONDS = 600
 
 
 def _utcnow() -> datetime:
@@ -367,20 +401,35 @@ class PaymentStartResponse(BaseModel):
     expires_in: int
 
 
-class CardConfirmBody(BaseModel):
+class PaymentConfirmBody(BaseModel):
     staging_token: str
-    method_type: str = "card"
-    token: str  # ToC SDK output — a reference only, never card data
+    method_type: str = "card"  # "card" | "wallet"
     package: str  # "standard" | "premium"
+    # card: ToC SDK output — a reference only, never card data.
+    token: Optional[str] = None
+    # wallet: type (plan 2.7 allowlist) + Egyptian wallet number.
+    wallet_type: Optional[str] = None
+    wallet_number: Optional[str] = None
 
 
-class CardConfirmResponse(BaseModel):
+class PaymentConfirmResponse(BaseModel):
     payment_id: str
-    authentication_token: Optional[str] = None  # for the ToS SDK (3DS)
     status: str
+    # card only: for the ToS SDK (3DS).
+    authentication_token: Optional[str] = None
 
 
-class CardStatusResponse(BaseModel):
+class OtpConfirmBody(BaseModel):
+    payment_id: str
+    otp: str
+
+
+class OtpConfirmResponse(BaseModel):
+    status: str  # "processing" | "succeeded" | "failed"
+    attempts_remaining: Optional[int] = None  # set when status == "failed"
+
+
+class PaymentStatusResponse(BaseModel):
     payment_id: str
     package: str
     amount_egp: float
@@ -462,30 +511,113 @@ def start_card_payment(
     )
 
 
-@router.post("/payment/confirm", response_model=CardConfirmResponse)
-def confirm_card_payment(
-    body: CardConfirmBody,
+def _consume_staging_token(
+    store: StagingStore,
+    token: str,
+    user: User,
+    request: Request,
+    db: Session,
+) -> None:
+    """Validate ownership and atomically consume a single-use staging token.
+
+    Ownership is verified BEFORE consuming (non-destructive get) so a
+    cross-user hijack attempt does not burn the legitimate owner's token
+    (plan 1.2/2.5). Raises HTTPException on any failure; on success the
+    token has been deleted from the store (1.4/2.5). Both rejection paths
+    are audited as ``staging_rejected`` before the 400 is raised.
+    """
+    try:
+        bound_user = store.get(token)
+    except _redis.RedisError:
+        raise HTTPException(
+            status_code=503, detail="Payment service temporarily unavailable"
+        ) from None
+    if bound_user is None:
+        # Unknown or expired token — audited before the 400. Nothing to consume.
+        record_payment_event(
+            db,
+            event_type="staging_rejected",
+            user_id=str(user.id),
+            payment_ref="",
+            detail=sanitize_for_log("reason=unknown_or_expired_token"),
+            ip_address=_client_ip(request),
+        )
+        db.commit()
+        raise HTTPException(status_code=400, detail="Invalid or expired staging token")
+    if bound_user != str(user.id):
+        # Token belongs to another user (hijacking attempt) — audited before
+        # the 400. Deliberately NOT consumed: the owner can still use it.
+        record_payment_event(
+            db,
+            event_type="staging_rejected",
+            user_id=str(user.id),
+            payment_ref="",
+            detail=sanitize_for_log("reason=token_bound_to_other_user"),
+            ip_address=_client_ip(request),
+        )
+        db.commit()
+        raise HTTPException(status_code=400, detail="Invalid or expired staging token")
+
+    # Ownership verified — now atomically consume the single-use token.
+    try:
+        consumed = store.pop(token)
+    except _redis.RedisError:
+        raise HTTPException(
+            status_code=503, detail="Payment service temporarily unavailable"
+        ) from None
+    if consumed is None:
+        # Lost a race to a concurrent confirm (the token was just used).
+        raise HTTPException(status_code=400, detail="Invalid or expired staging token")
+
+
+def _paymob_payment_id(payment_resp: dict) -> str:
+    """Extract the Paymob payment id from a create-payment response."""
+    payment_id = payment_resp.get("id")
+    if isinstance(payment_id, (int, str)) and payment_id:
+        return str(payment_id)
+    raise HTTPException(
+        status_code=502, detail="Payment provider did not return a payment id"
+    )
+
+
+@router.post("/payment/confirm", response_model=PaymentConfirmResponse)
+def confirm_payment(
+    body: PaymentConfirmBody,
     request: Request,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """Confirm a card payment with the on-device tokenization token.
+    """Confirm a payment with the requested method (card or wallet).
 
-    Security (plan Feature 1):
+    Shared security (all methods):
     - The staging token is atomically consumed (single-use) and must be
-      bound to the authenticated user (1.2/1.4).
-    - The amount is server-determined from the package (1.3) — the client
-      never sends an amount.
-    - Only Paymob tokens cross the wire; card data never reaches us (1.1).
-    - Rate-limited to 3 confirms/hour per user (1.9).
+      bound to the authenticated user (plan 1.2/1.4/2.5).
+    - The amount is server-determined from the package (1.3/2.4) — the
+      client never sends an amount.
     """
     if body.package not in PACKAGE_PRICING:
         raise HTTPException(
             status_code=400,
             detail="Invalid package. Available: standard, premium",
         )
-    if body.method_type != "card":
-        raise HTTPException(status_code=400, detail="Unsupported method type")
+    if body.method_type == "card":
+        return _confirm_card_payment(body, request, db, user)
+    if body.method_type == "wallet":
+        return _confirm_wallet_payment(body, request, db, user)
+    raise HTTPException(status_code=400, detail="Unsupported method type")
+
+
+def _confirm_card_payment(
+    body: PaymentConfirmBody,
+    request: Request,
+    db: Session,
+    user: User,
+) -> PaymentConfirmResponse:
+    """Confirm a card payment with the on-device tokenization token (Feature 1).
+
+    Only Paymob tokens cross the wire; card data never reaches us (1.1).
+    Rate-limited to 3 confirms/hour per user (1.9).
+    """
     if not body.token:
         raise HTTPException(status_code=400, detail="Missing tokenization token")
 
@@ -512,50 +644,7 @@ def confirm_card_payment(
             detail="Rate limit: maximum 3 card payment confirmations per hour",
         )
 
-    try:
-        # Validate ownership BEFORE consuming (non-destructive get) so a
-        # cross-user hijack attempt does not burn the legitimate owner's token.
-        bound_user = store.get(body.staging_token)
-    except _redis.RedisError:
-        raise HTTPException(
-            status_code=503, detail="Payment service temporarily unavailable"
-        ) from None
-    if bound_user is None:
-        # Unknown or expired token — audited before the 400. Nothing to consume.
-        record_payment_event(
-            db,
-            event_type="staging_rejected",
-            user_id=str(user.id),
-            payment_ref="",
-            detail=sanitize_for_log("reason=unknown_or_expired_token"),
-            ip_address=_client_ip(request),
-        )
-        db.commit()
-        raise HTTPException(status_code=400, detail="Invalid or expired staging token")
-    if bound_user != str(user.id):
-        # Token belongs to another user (hijacking attempt) — audited before the
-        # 400. Deliberately NOT consumed: the owner can still use it.
-        record_payment_event(
-            db,
-            event_type="staging_rejected",
-            user_id=str(user.id),
-            payment_ref="",
-            detail=sanitize_for_log("reason=token_bound_to_other_user"),
-            ip_address=_client_ip(request),
-        )
-        db.commit()
-        raise HTTPException(status_code=400, detail="Invalid or expired staging token")
-
-    # Ownership verified — now atomically consume the single-use token.
-    try:
-        consumed = store.pop(body.staging_token)
-    except _redis.RedisError:
-        raise HTTPException(
-            status_code=503, detail="Payment service temporarily unavailable"
-        ) from None
-    if consumed is None:
-        # Lost a race to a concurrent confirm (the token was just used).
-        raise HTTPException(status_code=400, detail="Invalid or expired staging token")
+    _consume_staging_token(store, body.staging_token, user, request, db)
 
     # Server-determined amount (piastres) — the client never sets it.
     reference_id = f"elhaq-{user.id}-{body.package}"
@@ -570,13 +659,7 @@ def confirm_card_payment(
     except PaymobApiError as exc:
         _paymob_error_response(exc)
 
-    payment_id = payment_resp.get("id")
-    if isinstance(payment_id, (int, str)) and payment_id:
-        payment_id = str(payment_id)
-    else:
-        raise HTTPException(
-            status_code=502, detail="Payment provider did not return a payment id"
-        )
+    payment_id = _paymob_payment_id(payment_resp)
 
     payment = CardPayment(
         user_id=user.id,
@@ -602,26 +685,292 @@ def confirm_card_payment(
         user.id,
         body.package,
     )
-    return CardConfirmResponse(
+    return PaymentConfirmResponse(
         payment_id=payment_id,
         authentication_token=payment_resp.get("authentication_token"),
         status="pending",
     )
 
 
-@router.get("/payment/status/{payment_id}", response_model=CardStatusResponse)
-def get_card_payment_status(
+def _confirm_wallet_payment(
+    body: PaymentConfirmBody,
+    request: Request,
+    db: Session,
+    user: User,
+) -> PaymentConfirmResponse:
+    """Confirm a wallet payment (Feature 2).
+
+    Security (plan 2.x):
+    - ``wallet_type`` is validated against the server-side allowlist (2.7).
+    - ``wallet_number`` is format-validated BEFORE any Paymob call (2.2);
+      it is sent to Paymob in the request payload only — never stored or
+      logged.
+    - Rate-limited to 5 confirms/hour per user (2.2), enforced BEFORE
+      consuming the staging token.
+    - Amount is server-determined from the package (2.4).
+    - Every wallet payment is audited with the wallet TYPE, not the number
+      (2.8).
+    """
+    if not body.wallet_type:
+        raise HTTPException(status_code=400, detail="Missing wallet_type")
+    if not body.wallet_number:
+        raise HTTPException(status_code=400, detail="Missing wallet_number")
+    wallet_type = body.wallet_type.strip().upper()
+    # 2.7: server-side allowlist (case-insensitive match, canonical storage).
+    if wallet_type not in WALLET_TYPES:
+        raise HTTPException(status_code=400, detail="Invalid wallet type")
+    # 2.2: fast Egyptian-number format validation before hitting Paymob.
+    if not WALLET_PHONE_RE.match(body.wallet_number):
+        raise HTTPException(status_code=400, detail="Invalid wallet number")
+
+    # Serialize this user's confirmations (rate-limit + staging consumption).
+    db.execute(select(User).where(User.id == user.id).with_for_update())
+
+    store = get_staging_store()
+
+    # 2.2: rate limit BEFORE consuming the staging token so a rejected
+    # request does not burn a valid token.
+    hour_ago = _utcnow() - timedelta(hours=1)
+    wallet_count = (
+        db.query(WalletPayment)
+        .filter(
+            WalletPayment.user_id == user.id,
+            WalletPayment.paymob_payment_id.isnot(None),
+            WalletPayment.created_at >= hour_ago,
+        )
+        .count()
+    )
+    if wallet_count >= MAX_WALLET_CONFIRMS_PER_HOUR:
+        raise HTTPException(
+            status_code=429,
+            detail="Rate limit: maximum 5 wallet payment confirmations per hour",
+        )
+
+    _consume_staging_token(store, body.staging_token, user, request, db)
+
+    # Server-determined amount (piastres) — the client never sets it.
+    reference_id = f"elhaq-{user.id}-{body.package}"
+    try:
+        method = create_wallet_payment_method(
+            body.staging_token, wallet_type, body.wallet_number
+        )
+        payment_resp = create_payment(
+            method["id"],
+            PACKAGE_PRICES_PAISA[body.package],
+            "EGP",
+            reference_id,
+        )
+    except PaymobApiError as exc:
+        _paymob_error_response(exc)
+
+    payment_id = _paymob_payment_id(payment_resp)
+
+    # Trust Paymob's initial status when known; the plan contract defaults
+    # to "pending_otp". The OTP expiry clock only runs for pending_otp.
+    provider_status = payment_resp.get("status")
+    if provider_status in ("processing", "succeeded"):
+        initial_status = provider_status
+        otp_expires_at = None
+    else:
+        initial_status = "pending_otp"
+        otp_expires_at = _utcnow() + timedelta(seconds=OTP_TTL_SECONDS)
+
+    payment = WalletPayment(
+        user_id=user.id,
+        paymob_payment_id=payment_id,
+        wallet_type=wallet_type,
+        package=body.package,
+        amount_egp=PACKAGE_PRICING[body.package],
+        status=initial_status,
+        otp_expires_at=otp_expires_at,
+    )
+    db.add(payment)
+    # 2.8: audit the wallet TYPE and amount — never the wallet number.
+    record_payment_event(
+        db,
+        event_type="wallet_payment_created",
+        user_id=str(user.id),
+        payment_ref=payment_id,
+        detail=sanitize_for_log(
+            f"package={body.package} wallet_type={wallet_type}"
+            f" amount_egp={PACKAGE_PRICING[body.package]}"
+        ),
+        ip_address=_client_ip(request),
+    )
+    db.commit()
+
+    logger.info(
+        "Wallet payment %s confirmed for user %s (%s/%s)",
+        payment_id,
+        user.id,
+        wallet_type,
+        body.package,
+    )
+    return PaymentConfirmResponse(payment_id=payment_id, status=initial_status)
+
+
+@router.post("/payment/confirm-otp", response_model=OtpConfirmResponse)
+def submit_wallet_otp(
+    body: OtpConfirmBody,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Confirm a wallet payment with the OTP the user received (Feature 2).
+
+    Security (plan 2.1/2.6):
+    - Max 3 OTP attempts per payment; the 3rd failure cancels it.
+    - The OTP expires 60 s after the payment was created; an expired
+      challenge cancels the payment (the user must restart).
+    - The OTP value is NEVER logged or audited — only outcomes.
+    - Flood guard: 5 requests per payment per 10 minutes (Feature 5
+      rate-limit table), enforced with an atomic counter keyed by payment
+      id (slowapi keys are request-derived and cannot see the body).
+    - Provider outages (502/503) do NOT consume an attempt: the outcome
+      is unknown, so the user's attempt budget is preserved.
+    """
+    payment = (
+        db.query(WalletPayment)
+        .filter(
+            WalletPayment.paymob_payment_id == body.payment_id,
+            WalletPayment.user_id == user.id,
+        )
+        .first()
+    )
+    if payment is None:
+        # 404 (not 403): no existence leak across users.
+        raise HTTPException(status_code=404, detail="Payment not found")
+
+    # Flood guard (5 per payment per 10 minutes).
+    store = get_staging_store()
+    try:
+        flood_count = store.incr(
+            f"paymob:otp_flood:{payment.id}", OTP_FLOOD_WINDOW_SECONDS
+        )
+    except _redis.RedisError:
+        raise HTTPException(
+            status_code=503, detail="Payment service temporarily unavailable"
+        ) from None
+    if flood_count > OTP_FLOOD_LIMIT:
+        raise HTTPException(
+            status_code=429, detail="Rate limit: too many OTP submissions"
+        )
+
+    # Serialize concurrent OTP submissions for this payment, then re-read
+    # the authoritative row state under the lock.
+    db.execute(
+        select(WalletPayment).where(WalletPayment.id == payment.id).with_for_update()
+    )
+    db.refresh(payment)
+
+    if payment.status != "pending_otp":
+        if payment.status == "succeeded":
+            detail = "Payment already succeeded"
+        elif payment.status == "processing":
+            detail = "Payment is already processing"
+        elif payment.status == "canceled":
+            detail = "Payment canceled (expired or too many failed OTP attempts)"
+        else:  # failed (webhook-confirmed)
+            detail = "Payment already failed"
+        raise HTTPException(status_code=400, detail=detail)
+
+    # 2.1: OTP expiry — 60 s from payment creation. Naive datetimes (as
+    # returned by SQLite) are treated as UTC; Postgres TIMESTAMPTZ values
+    # arrive timezone-aware.
+    expires_at = payment.otp_expires_at
+    if expires_at is not None and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at is None or _utcnow() > expires_at:
+        payment.status = "canceled"
+        record_payment_event(
+            db,
+            event_type="token_expired",
+            user_id=str(user.id),
+            payment_ref=payment.paymob_payment_id or "",
+            detail=sanitize_for_log("otp_expired"),
+            ip_address=_client_ip(request),
+        )
+        db.commit()
+        raise HTTPException(
+            status_code=400, detail="OTP expired, please restart the payment"
+        )
+
+    # Malformed OTP: reject fast WITHOUT consuming an attempt (a malformed
+    # value would not reach Paymob anyway).
+    if not OTP_RE.match(body.otp):
+        raise HTTPException(status_code=400, detail="Invalid OTP format")
+
+    # 2.1: attempt budget (defensive — the row is canceled at 3).
+    if payment.otp_attempts >= MAX_OTP_ATTEMPTS:
+        payment.status = "canceled"
+        db.commit()
+        raise HTTPException(
+            status_code=400,
+            detail="Payment canceled (too many failed OTP attempts)",
+        )
+
+    try:
+        resp = confirm_wallet_otp(payment.paymob_payment_id, body.otp)
+    except PaymobApiError as exc:
+        # Provider outage: outcome UNKNOWN — do not consume an attempt.
+        db.rollback()
+        _paymob_error_response(exc)
+
+    provider_status = resp.get("status") if isinstance(resp, dict) else None
+    if provider_status in ("processing", "succeeded"):
+        # OTP verified. Credits still wait for the webhook (Feature 4 is the
+        # single source of truth for "payment succeeded").
+        payment.status = provider_status
+        db.commit()
+        logger.info(
+            "Wallet OTP verified for payment %s (status=%s)",
+            payment.paymob_payment_id,
+            provider_status,
+        )
+        return OtpConfirmResponse(status=provider_status)
+
+    # Verification failed (or unknown provider status): consume one attempt.
+    payment.otp_attempts += 1
+    if payment.otp_attempts >= MAX_OTP_ATTEMPTS:
+        payment.status = "canceled"
+    # 2.6: the audit detail carries the attempt count ONLY — never the OTP.
+    record_payment_event(
+        db,
+        event_type="otp_failed",
+        user_id=str(user.id),
+        payment_ref=payment.paymob_payment_id or "",
+        detail=sanitize_for_log(f"attempts={payment.otp_attempts}"),
+        ip_address=_client_ip(request),
+    )
+    # Feature 5 wiring (deferred to Feature 2): alert on 10+ OTP failures
+    # within 1 hour.
+    if security_monitor.record_failure("otp_failed"):
+        logger.warning("Security alert: 10+ OTP failures within 1 hour")
+    db.commit()
+    logger.info(
+        "Wallet OTP failed for payment %s (attempt %d)",
+        payment.paymob_payment_id,
+        payment.otp_attempts,
+    )
+    return OtpConfirmResponse(
+        status="failed",
+        attempts_remaining=max(0, MAX_OTP_ATTEMPTS - payment.otp_attempts),
+    )
+
+
+@router.get("/payment/status/{payment_id}", response_model=PaymentStatusResponse)
+def get_payment_status(
     payment_id: str,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """Get card payment status (owner only, plan 1.8).
-
-    The final state comes from the Paymob webhook (recorded in
-    ``payment_logs``); until then the payment is ``pending``. A 404 (not
-    403) avoids leaking that a payment exists for someone else.
+    """Get payment status (owner only, plan 1.8). Card and wallet payments
+    resolve here; the final state comes from the Paymob webhook (recorded in
+    ``payment_logs``). Until then the row's own status is returned (``pending``
+    for cards, ``pending_otp``/``processing`` for wallets). A 404 (not 403)
+    avoids leaking that a payment exists for someone else.
     """
-    payment = (
+    card = (
         db.query(CardPayment)
         .filter(
             CardPayment.paymob_payment_id == payment_id,
@@ -629,8 +978,22 @@ def get_card_payment_status(
         )
         .first()
     )
-    if payment is None:
-        raise HTTPException(status_code=404, detail="Payment not found")
+    if card is not None:
+        fallback_status = "pending"
+        package, amount, created = card.package, card.amount_egp, card.created_at
+    else:
+        wallet = (
+            db.query(WalletPayment)
+            .filter(
+                WalletPayment.paymob_payment_id == payment_id,
+                WalletPayment.user_id == user.id,
+            )
+            .first()
+        )
+        if wallet is None:
+            raise HTTPException(status_code=404, detail="Payment not found")
+        fallback_status = wallet.status
+        package, amount, created = wallet.package, wallet.amount_egp, wallet.created_at
 
     # Take the LATEST payment log for this order (a re-delivery or a
     # succeeded-after-failed sequence must not shadow the authoritative
@@ -643,14 +1006,14 @@ def get_card_payment_status(
         .order_by(PaymentLog.created_at.desc(), PaymentLog.id.desc())
         .first()
     )
-    status_value = final.status if final is not None else "pending"
+    status_value = final.status if final is not None else fallback_status
 
-    return CardStatusResponse(
+    return PaymentStatusResponse(
         payment_id=payment_id,
-        package=payment.package,
-        amount_egp=float(payment.amount_egp),
+        package=package,
+        amount_egp=float(amount),
         status=status_value,
-        created_at=payment.created_at.isoformat(),
+        created_at=created.isoformat(),
     )
 
 

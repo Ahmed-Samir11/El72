@@ -103,3 +103,45 @@ def create_payment(
             "reference_id": reference_id,
         },
     )
+
+
+# Mapping from the canonical (upper-case) wallet types accepted by our API
+# to the wallet_type enum values the Paymob payment_method endpoint expects.
+PAYMOB_WALLET_TYPES: Dict[str, str] = {
+    "VODAFONE_CASH": "Vodafone_Cash",
+    "ORANGE_MONEY": "Orange_money",
+    "ETISALAT_CASH": "Etisalat_Cash",
+    "FAWRY": "Fawry",
+}
+
+
+def create_wallet_payment_method(
+    staging_token: str, wallet_type: str, wallet_number: str
+) -> Dict[str, Any]:
+    """Create a Paymob wallet payment method. Returns ``{"id": ...}``.
+
+    ``wallet_type`` must be one of :data:`PAYMOB_WALLET_TYPES` (the router
+    validates it against the same allowlist before calling). ``wallet_number``
+    is the user's wallet phone (validated in the router); it is sent to
+    Paymob in the request payload only and is never logged or stored.
+    """
+    paymob_type = PAYMOB_WALLET_TYPES.get(wallet_type)
+    if paymob_type is None:
+        raise PaymobApiError(400, "unsupported wallet type")
+    return _post(
+        "payment_method",
+        {
+            "staging_token": staging_token,
+            "wallet_type": paymob_type,
+            "wallet_number": wallet_number,
+        },
+    )
+
+
+def confirm_wallet_otp(payment_id: str, otp: str) -> Dict[str, Any]:
+    """Confirm a wallet payment with the OTP the user received.
+
+    Returns the payment object (including ``status``). The OTP is sent in the
+    request payload only — ``_post`` never logs request bodies (plan 2.6).
+    """
+    return _post(f"payment/{payment_id}/otp_confirmation", {"otp": otp})

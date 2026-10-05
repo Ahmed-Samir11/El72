@@ -173,6 +173,7 @@ PAYMENT_EVENT_TYPES = frozenset(
         "amount_mismatch",
         "card_payment_created",
         "staging_rejected",
+        "wallet_payment_created",
     }
 )
 
