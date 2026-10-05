@@ -64,6 +64,27 @@ services:
     ports:
       - "8000:8000"
 
+  prometheus:
+    image: prom/prometheus:latest
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+
+  grafana:
+    image: grafana/grafana:latest
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+
   notifier:
     build:
       context: ./services/notification
@@ -132,3 +153,5 @@ volumes:
   redis-data:
   pg-data:
   timescale-data:
+  prometheus-data:
+  grafana-data:
