@@ -104,6 +104,65 @@
     }
   },
 
+  "creditPackages": "حزم الرصيد",
+  "currentPlan": "الخطة الحالية",
+  "standardPackage": "قياسي",
+  "premiumPackage": "بريميوم",
+  "standardPackageDesc": "10 أرصدة لتتبع الأسعار",
+  "premiumPackageDesc": "30 رصيدًا لتتبع الأسعار",
+  "creditsLabel": "{count} رصيد",
+  "@creditsLabel": {
+    "placeholders": {
+      "count": { "type": "int" }
+    }
+  },
+  "egpOnce": "{amount} ج.م (دفعة واحدة)",
+  "@egpOnce": {
+    "placeholders": {
+      "amount": { "type": "String" }
+    }
+  },
+  "buyNow": "اشترِ الآن",
+  "freeCreditsDesc": "3 أرصدة مجانية مضمّنة",
+
+  "selectWallet": "اختر محفظتك",
+  "walletVodafoneCash": "فودافون كاش",
+  "walletOrangeMoney": "أورانج موني",
+  "walletEtisalatCash": "إتصالات كاش",
+  "walletFawry": "فوري",
+  "walletNumberLabel": "رقم هاتف المحفظة",
+  "walletNumberHint": "مثال: 01012345678",
+  "invalidWalletNumber": "أدخل رقمًا مصريًا صحيحًا (010/011/012/015 + 8 أرقام)",
+  "confirmPaymentButton": "تأكيد الدفع",
+  "walletConfirmTitle": "تأكيد المحفظة",
+  "walletConfirmMessage": "سندفع إلى المحفظة {number}. هل أنت متأكد؟",
+  "@walletConfirmMessage": {
+    "placeholders": {
+      "number": { "type": "String" }
+    }
+  },
+
+  "enterOtpTitle": "أدخل رمز التحقق",
+  "enterOtpDesc": "أدخل الرمز المرسل إلى محفظتك",
+  "otpInvalid": "أدخل أرقام الرمز",
+  "otpAttemptsLeft": "متبقٍ {count} محاولات",
+  "@otpAttemptsLeft": {
+    "placeholders": {
+      "count": { "type": "int" }
+    }
+  },
+  "verifyOtpButton": "تحقق من الرمز",
+
+  "paymentProcessing": "جارٍ معالجة الدفعة…",
+  "paymentPending": "في انتظار تأكيد الدفع…",
+  "paymentSucceededTitle": "تم الدفع بنجاح!",
+  "paymentSucceededDesc": "تمت إضافة رصيدك.",
+  "paymentFailedTitle": "فشل الدفع",
+  "paymentFailedDesc": "لم يُمَنح رصيد. يمكنك المحاولة مرة أخرى.",
+  "paymentCanceledTitle": "أُلغي الدفع",
+  "paymentError": "حدث خطأ. يرجى المحاولة مرة أخرى.",
+  "retryPayment": "إعادة المحاولة",
+
   "statCurrent": "الحالي",
   "statLow90d": "أدنى 90 يوم",
   "statHigh90d": "أعلى 90 يوم",

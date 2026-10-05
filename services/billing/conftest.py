@@ -15,8 +15,11 @@ def _reset_rate_limiter():
     # to be set at that moment. Importing inside the fixture body defers that
     # to test-execution time; the engine is never used because get_db is
     # overridden with an in-memory SQLite session in each test.
+    from services.api.payment_security import security_monitor
     from services.billing.main import limiter
 
     limiter.reset()
+    security_monitor.reset()
     yield
     limiter.reset()
+    security_monitor.reset()

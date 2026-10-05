@@ -23,8 +23,12 @@ from sqlalchemy.pool import StaticPool
 
 import services.billing.main as billing_main
 from services.api.admin_models import Admin  # noqa: F401  (registers admins table)
+from services.api.card_payment_models import CardPayment
 from services.api.manual_payment_models import PaymentAuditLog
 from services.api.models import Base, CreditTransaction, User, UserCredit
+from services.api.wallet_payment_models import (
+    WalletPayment,  # noqa: F401  (registers wallet_payments table)
+)
 from services.billing.models import Base as BillingBase
 from services.billing.models import PaymentLog
 
@@ -368,3 +372,224 @@ class TestWebhookRateLimit:
         ]
         assert all(r.status_code == 401 for r in responses[:100])
         assert responses[100].status_code == 429
+
+
+class TestWalletPaymentStatusUpdate:
+    """Feature 2: the webhook terminal state transitions the wallet_payments
+    row (only rows still in the OTP/in-flight states)."""
+
+    def _seed_wallet_row(self, client, order_id: str, status: str = "pending_otp"):
+        db = next(client.app.dependency_overrides[billing_main.get_db]())
+        try:
+            row = WalletPayment(
+                user_id=client._test_user_id,
+                paymob_payment_id=order_id,
+                wallet_type="VODAFONE_CASH",
+                package="standard",
+                amount_egp=30.0,
+                status=status,
+            )
+            db.add(row)
+            db.commit()
+        finally:
+            db.close()
+
+    def test_succeeded_webhook_updates_pending_otp_row(self, client):
+        self._seed_wallet_row(client, "txn_abc123", "pending_otp")
+        resp = _webhook(
+            client,
+            {
+                "id": "txn_abc123",
+                "status": "succeeded",
+                "amount": 3000,
+                "currency": "EGP",
+                "reference_id": f"elhaq-{client._test_user_id}-standard",
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        db = next(client.app.dependency_overrides[billing_main.get_db]())
+        try:
+            row = (
+                db.query(WalletPayment).filter_by(paymob_payment_id="txn_abc123").one()
+            )
+            assert row.status == "succeeded"
+        finally:
+            db.close()
+
+    def test_processing_row_updated_to_failed(self, client):
+        self._seed_wallet_row(client, "txn_abc123", "processing")
+        resp = _webhook(
+            client,
+            {
+                "id": "txn_abc123",
+                "status": "failed",
+                "amount": 3000,
+                "currency": "EGP",
+                "reference_id": f"elhaq-{client._test_user_id}-standard",
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        db = next(client.app.dependency_overrides[billing_main.get_db]())
+        try:
+            row = (
+                db.query(WalletPayment).filter_by(paymob_payment_id="txn_abc123").one()
+            )
+            assert row.status == "failed"
+        finally:
+            db.close()
+
+    def test_canceled_row_transitions_on_late_webhook(self, client):
+        """A row canceled locally (3-attempt budget / OTP expiry) is
+        superseded by the webhook — the webhook is the source of truth for
+        the payment's fate. If Paymob says the order succeeded, the user was
+        in fact charged and credited, so the row must show it too."""
+        self._seed_wallet_row(client, "txn_abc123", "canceled")
+        resp = _webhook(
+            client,
+            {
+                "id": "txn_abc123",
+                "status": "succeeded",
+                "amount": 3000,
+                "currency": "EGP",
+                "reference_id": f"elhaq-{client._test_user_id}-standard",
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        db = next(client.app.dependency_overrides[billing_main.get_db]())
+        try:
+            row = (
+                db.query(WalletPayment).filter_by(paymob_payment_id="txn_abc123").one()
+            )
+            assert row.status == "succeeded"
+        finally:
+            db.close()
+
+    def test_failed_webhook_updates_processing_row(self, client):
+        """Plan Feature 1: 'Failed payment -> user sees error' — a failed
+        terminal webhook must be visible on the payment row (and therefore
+        on /payment/status)."""
+        self._seed_wallet_row(client, "txn_abc123", "processing")
+        resp = _webhook(
+            client,
+            {
+                "id": "txn_abc123",
+                "status": "canceled",
+                "amount": 3000,
+                "currency": "EGP",
+                "reference_id": f"elhaq-{client._test_user_id}-standard",
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json() == {"status": "ignored"}
+        db = next(client.app.dependency_overrides[billing_main.get_db]())
+        try:
+            row = (
+                db.query(WalletPayment).filter_by(paymob_payment_id="txn_abc123").one()
+            )
+            assert row.status == "canceled"
+            # And no PaymentLog row (a later succeeded delivery stays
+            # processable).
+            assert db.query(PaymentLog).count() == 0
+        finally:
+            db.close()
+
+
+class TestCardPaymentStatusUpdate:
+    """Regression: the card_payments row transition must actually persist —
+    the webhook session is closed (not committed) by the get_db teardown, so
+    the raw UPDATE needs an explicit commit (Feature 1 finding)."""
+
+    def _seed_card_row(self, client, order_id: str, status: str = "pending"):
+        db = next(client.app.dependency_overrides[billing_main.get_db]())
+        try:
+            row = CardPayment(
+                user_id=client._test_user_id,
+                paymob_payment_id=order_id,
+                package="standard",
+                amount_egp=30.0,
+                status=status,
+            )
+            db.add(row)
+            db.commit()
+        finally:
+            db.close()
+
+    def test_succeeded_webhook_updates_card_row_persisted(self, client):
+        self._seed_card_row(client, "txn_abc123", "pending")
+        resp = _webhook(
+            client,
+            {
+                "id": "txn_abc123",
+                "status": "succeeded",
+                "amount": 3000,
+                "currency": "EGP",
+                "reference_id": f"elhaq-{client._test_user_id}-standard",
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        # A FRESH session sees the transition (it would not if the UPDATE
+        # were rolled back on session close).
+        db = next(client.app.dependency_overrides[billing_main.get_db]())
+        try:
+            row = db.query(CardPayment).filter_by(paymob_payment_id="txn_abc123").one()
+            assert row.status == "succeeded"
+        finally:
+            db.close()
+
+    def test_failed_webhook_updates_card_row(self, client):
+        self._seed_card_row(client, "txn_abc123", "pending")
+        resp = _webhook(
+            client,
+            {
+                "id": "txn_abc123",
+                "status": "failed",
+                "amount": 3000,
+                "currency": "EGP",
+                "reference_id": f"elhaq-{client._test_user_id}-standard",
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        db = next(client.app.dependency_overrides[billing_main.get_db]())
+        try:
+            row = db.query(CardPayment).filter_by(paymob_payment_id="txn_abc123").one()
+            assert row.status == "failed"
+        finally:
+            db.close()
+
+
+class TestSignatureFailureAlert:
+    """Feature 5 wiring (deferred to Feature 2): 5+ failed webhook signatures
+    within 1 minute raise a security alert (logged)."""
+
+    def test_fifth_failed_signature_alerts(self, client, caplog):
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="services.billing.main"):
+            for i in range(4):
+                resp = _webhook(
+                    client,
+                    {
+                        "id": f"txn_bad_{i}",
+                        "status": "succeeded",
+                        "amount": 3000,
+                        "currency": "EGP",
+                        "reference_id": f"elhaq-{client._test_user_id}-standard",
+                    },
+                    sign=False,
+                )
+                assert resp.status_code == 401
+            assert not any("Security alert" in r.message for r in caplog.records)
+            # The 5th failure within the window crosses the threshold.
+            resp = _webhook(
+                client,
+                {
+                    "id": "txn_bad_5",
+                    "status": "succeeded",
+                    "amount": 3000,
+                    "currency": "EGP",
+                    "reference_id": f"elhaq-{client._test_user_id}-standard",
+                },
+                sign=False,
+            )
+            assert resp.status_code == 401
+        assert any("Security alert" in r.message for r in caplog.records)

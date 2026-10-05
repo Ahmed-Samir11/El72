@@ -13,7 +13,11 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from services.api.credits import grant
 from services.api.models import User
-from services.api.payment_security import record_payment_event, sanitize_for_log
+from services.api.payment_security import (
+    record_payment_event,
+    sanitize_for_log,
+    security_monitor,
+)
 from services.billing.models import PaymentLog
 from services.common.paymob import verify_paymob_hmac
 
@@ -191,6 +195,12 @@ async def paymob_webhook(request: Request, db: Session = Depends(get_db)):
             ip_address=ip,
         )
         db.commit()
+        # Feature 5 wiring (deferred to Feature 2): alert on 5+ failed
+        # signatures within 1 minute (possible webhook forgery attempt).
+        if security_monitor.record_failure("webhook_signature_failed"):
+            logger.warning(
+                "Security alert: 5+ failed webhook signatures within 1 minute"
+            )
         raise HTTPException(status_code=401, detail="Invalid signature")
 
     try:
@@ -322,6 +332,11 @@ async def paymob_webhook(request: Request, db: Session = Depends(get_db)):
             status_value,
             extra={"order_id": order_id},
         )
+        # Reflect the terminal state on the payment rows so /payment/status
+        # reports the failure to the user (plan Feature 1: "Failed payment
+        # -> user sees error, no credits granted").
+        _update_card_payment_status(db, order_id, status_value)
+        _update_wallet_payment_status(db, order_id, status_value)
         return {"status": "ignored"}
 
     # 4.5: atomic credit grant — payment log + credits + audit in ONE
@@ -372,19 +387,31 @@ async def paymob_webhook(request: Request, db: Session = Depends(get_db)):
         },
     )
 
-    # Finding #3: transition the CardPayment status from 'pending' to the
+    # Finding #3: transition the CardPayment status to the
     # webhook-confirmed terminal state so /payment/status reflects reality.
     _update_card_payment_status(db, order_id, status_value)
+    # Same for wallet payments (Feature 2): the webhook is the source of
+    # truth for the payment's fate.
+    _update_wallet_payment_status(db, order_id, status_value)
 
     return {"status": "processed"}
 
 
 def _update_card_payment_status(db: Session, order_id: str, status_value: str) -> None:
-    """Transition the CardPayment row to its terminal state after webhook.
+    """Transition the CardPayment row to the webhook-confirmed terminal state.
 
     The CardPayment table lives in the API schema; the billing service
     shares the same DATABASE_URL in production. We use a raw UPDATE so we
     do not need to import the ORM model across services.
+
+    Prior terminal states (``failed``/``canceled``) are transitioned too:
+    the webhook is the source of truth for the payment's fate, so a later
+    ``succeeded`` delivery of the same order must be visible on the row (and
+    on /payment/status), not shadowed by an earlier failure.
+
+    The UPDATE is committed explicitly: the session is closed (not
+    committed) by the get_db teardown, so without this the transition
+    would be silently rolled back.
     """
     from sqlalchemy import text as _text
 
@@ -392,15 +419,47 @@ def _update_card_payment_status(db: Session, order_id: str, status_value: str) -
         db.execute(
             _text(
                 "UPDATE card_payments SET status = :status "
-                "WHERE paymob_payment_id = :order_id AND status = 'pending'"
+                "WHERE paymob_payment_id = :order_id "
+                "AND status IN ('pending', 'failed', 'canceled')"
             ),
             {"status": status_value, "order_id": order_id},
         )
+        db.commit()
     except Exception:
         # Non-fatal: the CardPayment row may not exist (e.g. manual payment
         # flow) or the table may be absent in a billing-only deployment.
         db.rollback()
         logger.warning("Could not update card_payments status for %s", order_id)
+
+
+def _update_wallet_payment_status(
+    db: Session, order_id: str, status_value: str
+) -> None:
+    """Transition the WalletPayment row to the webhook-confirmed terminal
+    state (Feature 2).
+
+    Same semantics as :func:`_update_card_payment_status`: the webhook is
+    the source of truth, prior terminal states are transitioned, and the
+    UPDATE is committed explicitly (the get_db teardown closes without
+    committing, so an uncommitted transition would roll back).
+    """
+    from sqlalchemy import text as _text
+
+    try:
+        db.execute(
+            _text(
+                "UPDATE wallet_payments SET status = :status "
+                "WHERE paymob_payment_id = :order_id "
+                "AND status IN ('pending_otp', 'processing', 'failed', 'canceled')"
+            ),
+            {"status": status_value, "order_id": order_id},
+        )
+        db.commit()
+    except Exception:
+        # Non-fatal: the WalletPayment row may not exist (card or manual
+        # payment) or the table may be absent in a billing-only deployment.
+        db.rollback()
+        logger.warning("Could not update wallet_payments status for %s", order_id)
 
 
 @app.get("/pricing")
