@@ -24,34 +24,52 @@ class PaymentRepository {
 
   final ApiClient _apiClient;
 
+  /// Single error-handling path for all endpoints (review finding #2):
+  /// runs [live]; on [DioException] falls back to [demo] in demo mode
+  /// (logged, per the other repositories' convention) or rethrows in live
+  /// mode. A malformed 200 payload is converted to a [DioException] by the
+  /// callers so both failure shapes flow through this one path.
+  Future<T> _call<T>({
+    required String path,
+    required Future<T> Function() live,
+    required T Function() demo,
+  }) async {
+    try {
+      return await live();
+    } on DioException catch (e) {
+      if (!AppConfig.demoMode) rethrow;
+      debugPrint('PaymentRepository: demo fallback for $path after $e');
+      return demo();
+    }
+  }
+
+  /// Validate a 200 JSON-object response, converting a malformed body to a
+  /// [DioException] so it flows through [_call]'s single failure path.
+  Map<String, dynamic> _jsonMap(Response<dynamic> response, String path) {
+    if (response.statusCode != 200 || response.data is! Map) {
+      throw DioException(
+        requestOptions: RequestOptions(path: path),
+        response: response,
+        message: 'Malformed response from $path',
+      );
+    }
+    return (response.data as Map).cast<String, dynamic>();
+  }
+
   /// Start a payment: create the Paymob customer and return a staging token
   /// (bound to the user server-side, 15-minute TTL, single-use).
-  Future<Map<String, String>> startPayment() async {
-    try {
-      final response = await _apiClient.dio.get('/payment/start');
-      if (response.statusCode == 200 && response.data is Map) {
-        final data = (response.data as Map).cast<String, dynamic>();
-        final stagingToken = data['staging_token']?.toString() ?? '';
-        if (stagingToken.isNotEmpty) {
-          return {
-            'staging_token': stagingToken,
-            'expires_in': data['expires_in']?.toString() ?? '900',
-          };
-        }
-      }
-    } on DioException catch (e) {
-      if (AppConfig.demoMode) {
-        debugPrint('PaymentRepository: demo fallback after $e');
-      } else {
-        rethrow;
-      }
-    }
-    if (AppConfig.demoMode) {
-      return {'staging_token': 'demo_staging', 'expires_in': '900'};
-    }
-    throw DioException(
-      requestOptions: RequestOptions(path: '/payment/start'),
-      message: 'Failed to start payment',
+  Future<Map<String, String>> startPayment() {
+    const path = '/payment/start';
+    return _call(
+      path: path,
+      live: () async {
+        final data = _jsonMap(await _apiClient.dio.get(path), path);
+        return {
+          'staging_token': data['staging_token']?.toString() ?? '',
+          'expires_in': data['expires_in']?.toString() ?? '900',
+        };
+      },
+      demo: () => {'staging_token': 'demo_staging', 'expires_in': '900'},
     );
   }
 
@@ -62,39 +80,30 @@ class PaymentRepository {
     required WalletType walletType,
     required String walletNumber,
     required String packageId,
-  }) async {
-    try {
-      final response = await _apiClient.dio.post(
-        '/payment/confirm',
-        data: {
-          'staging_token': stagingToken,
-          'method_type': 'wallet',
-          'wallet_type': walletType.apiValue,
-          'wallet_number': walletNumber,
-          'package': packageId,
-        },
-      );
-      if (response.statusCode == 200 && response.data is Map) {
-        return WalletPaymentResult.fromJson(
-          (response.data as Map).cast<String, dynamic>(),
+  }) {
+    const path = '/payment/confirm';
+    return _call(
+      path: path,
+      live: () async {
+        final data = _jsonMap(
+          await _apiClient.dio.post(
+            path,
+            data: {
+              'staging_token': stagingToken,
+              'method_type': 'wallet',
+              'wallet_type': walletType.apiValue,
+              'wallet_number': walletNumber,
+              'package': packageId,
+            },
+          ),
+          path,
         );
-      }
-    } on DioException catch (e) {
-      if (AppConfig.demoMode) {
-        debugPrint('PaymentRepository: demo fallback after $e');
-      } else {
-        rethrow;
-      }
-    }
-    if (AppConfig.demoMode) {
-      return WalletPaymentResult(
+        return WalletPaymentResult.fromJson(data);
+      },
+      demo: () => WalletPaymentResult(
         paymentId: 'demo_payment_${walletNumber.hashCode}',
         status: 'pending_otp',
-      );
-    }
-    throw DioException(
-      requestOptions: RequestOptions(path: '/payment/confirm'),
-      message: 'Failed to confirm payment',
+      ),
     );
   }
 
@@ -103,65 +112,44 @@ class PaymentRepository {
   Future<OtpResult> confirmWalletOtp({
     required String paymentId,
     required String otp,
-  }) async {
-    try {
-      final response = await _apiClient.dio.post(
-        '/payment/confirm-otp',
-        data: {'payment_id': paymentId, 'otp': otp},
-      );
-      if (response.statusCode == 200 && response.data is Map) {
-        return OtpResult.fromJson(
-          (response.data as Map).cast<String, dynamic>(),
+  }) {
+    const path = '/payment/confirm-otp';
+    return _call(
+      path: path,
+      live: () async {
+        final data = _jsonMap(
+          await _apiClient.dio.post(
+            path,
+            data: {'payment_id': paymentId, 'otp': otp},
+          ),
+          path,
         );
-      }
-    } on DioException catch (e) {
-      if (AppConfig.demoMode) {
-        debugPrint('PaymentRepository: demo fallback after $e');
-      } else {
-        rethrow;
-      }
-    }
-    if (AppConfig.demoMode) {
-      return OtpResult(
+        return OtpResult.fromJson(data);
+      },
+      demo: () => OtpResult(
         status: otpRegExp.hasMatch(otp) ? 'succeeded' : 'failed',
         attemptsRemaining: otpRegExp.hasMatch(otp) ? null : 2,
-      );
-    }
-    throw DioException(
-      requestOptions: RequestOptions(path: '/payment/confirm-otp'),
-      message: 'Failed to verify OTP',
+      ),
     );
   }
 
   /// Owner-only payment status. The final state is set by the Paymob
   /// webhook; poll while the status is non-terminal.
-  Future<PaymentStatusInfo> getPaymentStatus(String paymentId) async {
-    try {
-      final response = await _apiClient.dio.get('/payment/status/$paymentId');
-      if (response.statusCode == 200 && response.data is Map) {
-        return PaymentStatusInfo.fromJson(
-          (response.data as Map).cast<String, dynamic>(),
-        );
-      }
-    } on DioException catch (e) {
-      if (AppConfig.demoMode) {
-        debugPrint('PaymentRepository: demo fallback after $e');
-      } else {
-        rethrow;
-      }
-    }
-    if (AppConfig.demoMode) {
-      return PaymentStatusInfo(
+  Future<PaymentStatusInfo> getPaymentStatus(String paymentId) {
+    final path = '/payment/status/$paymentId';
+    return _call(
+      path: path,
+      live: () async {
+        final data = _jsonMap(await _apiClient.dio.get(path), path);
+        return PaymentStatusInfo.fromJson(data);
+      },
+      demo: () => PaymentStatusInfo(
         paymentId: paymentId,
         package: 'standard',
         amountEgp: 30,
         status: 'succeeded',
         createdAt: '',
-      );
-    }
-    throw DioException(
-      requestOptions: RequestOptions(path: '/payment/status/$paymentId'),
-      message: 'Failed to load payment status',
+      ),
     );
   }
 }

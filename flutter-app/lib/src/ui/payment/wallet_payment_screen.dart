@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 
@@ -41,10 +43,14 @@ class _WalletPaymentScreenState extends State<WalletPaymentScreen> {
 
   PaymentStatus? _resultStatus;
   int _pollsDone = 0;
+  bool _pollFailed = false;
+  Timer? _pollTimer;
   static const int _maxPolls = 6;
   static const Duration _pollInterval = Duration(seconds: 5);
 
-  PaymentRepository get _repo => widget.repository ?? PaymentRepository();
+  // Cached in state so the repository is not re-created on every build
+  // (review finding #6).
+  late final PaymentRepository _repo = widget.repository ?? PaymentRepository();
 
   @override
   void initState() {
@@ -57,6 +63,7 @@ class _WalletPaymentScreenState extends State<WalletPaymentScreen> {
 
   @override
   void dispose() {
+    _pollTimer?.cancel();
     _walletController.dispose();
     _otpController.dispose();
     super.dispose();
@@ -189,12 +196,14 @@ class _WalletPaymentScreenState extends State<WalletPaymentScreen> {
   }
 
   void _startPollingIfNeeded() {
+    _pollTimer?.cancel();
     final status = _resultStatus;
-    if (status == null || status.isTerminal) return;
-    Future<void>.delayed(_pollInterval, _pollStatus);
+    if (status == null || status.isTerminal || _pollsDone >= _maxPolls) return;
+    _pollTimer = Timer(_pollInterval, _pollStatus);
   }
 
   Future<void> _pollStatus() async {
+    _pollTimer = null;
     final paymentId = _paymentId;
     if (!mounted || paymentId == null || _pollsDone >= _maxPolls) return;
     _pollsDone += 1;
@@ -202,14 +211,24 @@ class _WalletPaymentScreenState extends State<WalletPaymentScreen> {
       final info = await _repo.getPaymentStatus(paymentId);
       if (!mounted) return;
       final status = PaymentStatus.parse(info.status);
-      setState(() => _resultStatus = status);
-      if (!status.isTerminal) _startPollingIfNeeded();
+      setState(() {
+        _pollFailed = false;
+        _resultStatus = status;
+      });
+      _startPollingIfNeeded();
     } on DioException {
-      // Polling is best-effort; the user can re-open the status later.
+      // Review finding #3: surface the polling failure instead of silently
+      // swallowing it — the state stays pending until proven otherwise and
+      // polling keeps retrying while the budget allows.
+      if (!mounted) return;
+      setState(() => _pollFailed = true);
+      _startPollingIfNeeded();
     }
   }
 
   void _retry() {
+    _pollTimer?.cancel();
+    _pollTimer = null;
     setState(() {
       _step = _PaymentStep.wallet;
       _paymentId = null;
@@ -218,6 +237,7 @@ class _WalletPaymentScreenState extends State<WalletPaymentScreen> {
       _otpError = null;
       _fieldError = null;
       _pollsDone = 0;
+      _pollFailed = false;
     });
   }
 
@@ -488,6 +508,14 @@ class _WalletPaymentScreenState extends State<WalletPaymentScreen> {
               textAlign: TextAlign.center,
               style: TextStyle(color: scheme.outline),
             ),
+            if (!terminal && _pollFailed) ...[
+              const SizedBox(height: 12),
+              Text(
+                l10n.paymentError,
+                textAlign: TextAlign.center,
+                style: TextStyle(color: scheme.error),
+              ),
+            ],
             if (terminal) ...[
               const SizedBox(height: 24),
               if (status == PaymentStatus.succeeded)

@@ -160,6 +160,13 @@ void main() {
       expect(result.attemptsRemaining, 2);
     });
 
+    test('malformed payload defaults to non-terminal processing', () {
+      // A 200 body without a status must not surface a premature 'failed'
+      // (which could nudge a duplicate payment) — it keeps the UI polling.
+      expect(OtpResult.fromJson({}).status, 'processing');
+      expect(OtpResult.fromJson({}).attemptsRemaining, isNull);
+    });
+
     test('demo mode succeeds for a well-formed otp', () async {
       AppConfig.demoMode = true;
       final repo = repoWith(503, 'oops');

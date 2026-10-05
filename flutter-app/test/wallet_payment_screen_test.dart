@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -18,6 +19,7 @@ class _FakePaymentRepository implements PaymentRepository {
   int confirmCalls = 0;
   int otpCalls = 0;
   int statusCalls = 0;
+  bool statusThrows = false;
 
   @override
   Future<Map<String, String>> startPayment() async => {
@@ -55,6 +57,11 @@ class _FakePaymentRepository implements PaymentRepository {
   @override
   Future<PaymentStatusInfo> getPaymentStatus(String paymentId) {
     statusCalls += 1;
+    if (statusThrows) {
+      throw DioException(
+        requestOptions: RequestOptions(path: '/payment/status/$paymentId'),
+      );
+    }
     final s = statusResults.isEmpty ? 'succeeded' : statusResults.removeAt(0);
     return Future.value(
       PaymentStatusInfo(
@@ -242,5 +249,42 @@ void main() {
     await tester.tap(find.text('Try again'));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('wallet-number')), findsOneWidget);
+  });
+  testWidgets('poll failure is surfaced while status stays pending', (
+    tester,
+  ) async {
+    final repo = _FakePaymentRepository();
+    repo.confirmResults.add(
+      const WalletPaymentResult(paymentId: 'pay_p', status: 'processing'),
+    );
+    repo.statusThrows = true;
+    await _openWalletStep(tester, repo);
+    await tester.tap(find.byKey(const ValueKey('wallet-type-FAWRY')));
+    await tester.pump();
+    await tester.enterText(
+      find.byKey(const ValueKey('wallet-number')),
+      '01012345678',
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('confirm-wallet-payment')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Confirm payment').last);
+    // Bounded pumps: the processing result shows an indeterminate spinner,
+    // so pumpAndSettle would never settle.
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    // Pending view is shown (processing).
+    expect(find.text('Waiting for payment confirmation…'), findsOneWidget);
+
+    // Advance the 5 s poll timer; the status call throws -> the failure
+    // must be surfaced while the status stays pending.
+    await tester.pump(const Duration(seconds: 5));
+    await tester.pump();
+    expect(
+      find.text('Something went wrong. Please try again.'),
+      findsOneWidget,
+    );
+    expect(find.text('Waiting for payment confirmation…'), findsOneWidget);
   });
 }

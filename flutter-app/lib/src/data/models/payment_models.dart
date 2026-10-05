@@ -118,7 +118,11 @@ class OtpResult {
   factory OtpResult.fromJson(Map<String, dynamic> json) {
     final remaining = json['attempts_remaining'];
     return OtpResult(
-      status: json['status']?.toString() ?? 'failed',
+      // A 200 response missing the status field is a malformed payload:
+      // default to the NON-terminal 'processing' so the UI keeps polling
+      // for the authoritative outcome instead of surfacing a premature
+      // 'failed' (which could nudge the user into a duplicate payment).
+      status: json['status']?.toString() ?? 'processing',
       attemptsRemaining: remaining is int ? remaining : null,
     );
   }
