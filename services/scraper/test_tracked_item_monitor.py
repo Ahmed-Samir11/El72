@@ -11,10 +11,16 @@ from services.scraper.tracked_item_monitor import TrackedItemMonitor
 @pytest.fixture
 def monitor():
     db_pool = MagicMock()
+    timescale_pool = MagicMock()
     redis = AsyncMock()
     browser_pool = AsyncMock()
     return TrackedItemMonitor(
-        db_pool, redis, browser_pool, scrape_interval=0, max_concurrent_scrapes=2
+        db_pool,
+        timescale_pool,
+        redis,
+        browser_pool,
+        scrape_interval=0,
+        max_concurrent_scrapes=2,
     )
 
 
