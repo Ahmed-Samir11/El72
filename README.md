@@ -177,7 +177,7 @@ elhaq/
 - `services/common/redis_client.py` - Async Redis Streams wrapper
 - `services/analyzer/ml_detector.py` - Isolation Forest anomaly detection
 - `services/analyzer/intent_upsert.py` - Analytics aggregation
-- `infra/sql/ddl.sql` - TimescaleDB hypertables
+- `infra/sql/schema/timescaledb.sql` - TimescaleDB schema and hypertables
 - `infra/sql/alerts.sql` - PostgreSQL schemas
 
 ### Development Workflow
