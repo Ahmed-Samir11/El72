@@ -141,7 +141,7 @@ app.include_router(payment_router.router)
 
 # Demo mode: seed realistic demo data on startup (idempotent).
 # Toggle with DEMO_MODE=True (default) for the investor demo.
-DEMO_MODE = os.getenv("DEMO_MODE", "True").lower() in ("1", "true", "yes", "on")
+DEMO_MODE = os.getenv("DEMO_MODE", "False").lower() in ("1", "true", "yes", "on")
 
 
 @app.on_event("startup")
@@ -154,8 +154,9 @@ def _seed_demo_data_on_startup() -> None:
 
         summary = run_seed(engine=engine)
         logger.info("Demo data seeded on startup", extra={"summary": summary})
-    except Exception as e:  # fail-soft: demo data is non-critical
-        logger.exception("Demo seed failed; continuing", extra={"error": str(e)})
+    except Exception:
+        logger.exception("Demo seed failed; API startup is stopping")
+        raise
 
 
 # Background task function to push new alert targets to scraper stream

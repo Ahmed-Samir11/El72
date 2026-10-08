@@ -6,7 +6,7 @@ plans/paymob-integration.md:
 - ManualPayment: a user's "I've paid" submission, pending admin verification
 - PaymentAuditLog: append-only audit trail of admin actions (no UPDATE/DELETE)
 
-CHECK constraints are declared both here (ORM) and in infra/sql/schema.sql
+CHECK constraints are declared both here (ORM) and in infra/sql/schema/postgres.sql
 (canonical DDL) so SQLite test databases enforce the same invariants as
 Postgres.
 """
@@ -26,7 +26,7 @@ from sqlalchemy import (
     Text,
 )
 
-from services.api.models import Base
+from services.api.models import Base, OperationalIdType
 
 
 def _utcnow() -> datetime:
@@ -55,7 +55,7 @@ class ManualPayment(Base):
     # SET NULL (not CASCADE): payment history is a financial record and must
     # survive user deletion for auditing.
     user_id = Column(
-        String(36),
+        OperationalIdType(),
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
@@ -85,7 +85,7 @@ class PaymentAuditLog(Base):
     amount mismatches). No UPDATE or DELETE endpoints exist for this table;
     entries are insert-only by design. Postgres additionally enforces
     append-only via a BEFORE UPDATE OR DELETE trigger (see
-    infra/sql/schema.sql).
+    infra/sql/schema/postgres.sql).
 
     ``detail`` must be sanitized via
     :func:`services.api.payment_security.sanitize_for_log` — never raw card
@@ -121,7 +121,7 @@ class PaymentAuditLog(Base):
     # SET NULL (not CASCADE): audit rows are forensic records and must survive
     # user deletion.
     target_user_id = Column(
-        String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+        OperationalIdType(), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     # Snapshot of the target user's phone at action time.
     target_user_phone = Column(String(20), nullable=True)

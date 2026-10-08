@@ -192,7 +192,7 @@ BROWSER_POOL_SIZE=5                   # Number of browser instances
 
 ```bash
 # Apply schema
-psql -U elhaq -d elhaq -f infra/sql/ddl.sql
+psql -U elhaq -d elhaq -f infra/sql/schema/postgres.sql
 
 # Or using Docker Compose
 docker-compose up -d postgres timescaledb
