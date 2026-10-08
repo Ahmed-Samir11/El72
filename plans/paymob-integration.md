@@ -542,6 +542,51 @@ async def paymob_webhook(request: Request, db: Session = Depends(get_db)):
     return {"status": "processed"}
 ```
 
+### Implementation Notes (as built)
+- Endpoint lives in the **billing service** (`services/billing/main.py`), upgraded from the
+  stub. The legacy flat-payload contract and `test_billing_main.py` were replaced by the real
+  Paymob payload format; full coverage is in `services/billing/test_webhook.py`.
+- **reference_id parsing**: user ids may contain dashes (UUIDs), so the package is the LAST
+  `-`-separated segment and the user token is everything between `elhaq-` and the package.
+  There is no strict UUID parse — the DB existence check (4.6) is the authoritative gate
+  (in production Postgres every existing user id is a UUID, so tampered tokens are
+  rejected there).
+- **Amounts are in piastres** (Paymob minor units): `amount == PACKAGE_PRICES[package] * 100`.
+- **Credit granting reuses `services.api.credits.grant`** — lazy provisioning +
+  `credit_transactions` ledger row in the same session/transaction as the `PaymentLog`
+  insert and the audit write (one `db.commit()` = one transaction, per 4.5).
+- **Every processing outcome is audited** through the single entry point
+  `record_payment_event()`: `webhook_received` (success/failed/canceled),
+  `webhook_signature_failed`, `amount_mismatch`. Signature failures are committed BEFORE
+  the 401 is raised so the audit row survives.
+- **Rate limit**: 100/hour via slowapi (`@limiter.limit` innermost decorator +
+  `RateLimitExceeded` exception handler). The key is the SOCKET PEER IP (not
+  X-Forwarded-For): the caller is Paymob's egress infrastructure, not an end user
+  behind a proxy, and a spoofed XFF must not be able to shard/exhaust the quota.
+  Failed signatures count too. Audit logging uses XFF-first `_client_ip` (trusted
+  reverse-proxy convention, same as the API service).
+- **Non-succeeded webhooks are audited only** — no `PaymentLog` row — so a
+  terminal-failure record does not occupy the unique `paymob_order_id` and a later
+  succeeded delivery of the same order remains processable.
+- **User lookup maps Postgres UUID type errors to 400** (`DataError` → "Unknown
+  user"): a token that is not a valid UUID cannot reference an existing user.
+- **Idempotency check runs FIRST** (right after payload validation, before
+  reference_id/user/amount checks) so duplicate deliveries short-circuit with no
+  user lookup and are audited as `webhook_duplicate`.
+- **Every rejected outcome is audited**: `validation_rejected` (with the reason in
+  `detail`) for malformed payloads / reference_id / package / unknown user, plus
+  the dedicated `amount_mismatch` event. Audit rows are committed BEFORE the 4xx
+  is raised so they survive.
+- **Strict payload validation**: `id`/`status`/`reference_id` must be non-empty
+  strings and `amount` an int (bools excluded) — no `None` ever stringified to
+  `'None'`.
+- **IntegrityError handling is narrow**: only a unique violation on
+  `paymob_order_id` is treated as a duplicate race; any other integrity failure
+  propagates.
+- **Amounts use `Decimal`** (piastres ÷ 100) — no float monetary math.
+- The billing `GUID` type decorator is dialect-aware (plain string on SQLite, native
+  UUID on Postgres) because SQLite user ids are integers.
+
 ### Acceptance Criteria
 - [ ] Valid webhook → credits granted, payment logged
 - [ ] Invalid signature → 401, no side effects

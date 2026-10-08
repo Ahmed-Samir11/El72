@@ -440,6 +440,210 @@ abstract class AppLocalizations {
   /// **'EGP {amount}/month'**
   String egpPerMonth(String amount);
 
+  /// No description provided for @creditPackages.
+  ///
+  /// In en, this message translates to:
+  /// **'Credit Packages'**
+  String get creditPackages;
+
+  /// No description provided for @standardPackage.
+  ///
+  /// In en, this message translates to:
+  /// **'Standard'**
+  String get standardPackage;
+
+  /// No description provided for @premiumPackage.
+  ///
+  /// In en, this message translates to:
+  /// **'Premium'**
+  String get premiumPackage;
+
+  /// No description provided for @standardPackageDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'10 credits for price trackers'**
+  String get standardPackageDesc;
+
+  /// No description provided for @premiumPackageDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'30 credits for price trackers'**
+  String get premiumPackageDesc;
+
+  /// No description provided for @creditsLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} credits'**
+  String creditsLabel(int count);
+
+  /// No description provided for @egpOnce.
+  ///
+  /// In en, this message translates to:
+  /// **'EGP {amount} (one-time)'**
+  String egpOnce(String amount);
+
+  /// No description provided for @buyNow.
+  ///
+  /// In en, this message translates to:
+  /// **'Buy now'**
+  String get buyNow;
+
+  /// No description provided for @freeCreditsDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'3 free credits included'**
+  String get freeCreditsDesc;
+
+  /// No description provided for @selectWallet.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose your wallet'**
+  String get selectWallet;
+
+  /// No description provided for @walletVodafoneCash.
+  ///
+  /// In en, this message translates to:
+  /// **'Vodafone Cash'**
+  String get walletVodafoneCash;
+
+  /// No description provided for @walletOrangeMoney.
+  ///
+  /// In en, this message translates to:
+  /// **'Orange Money'**
+  String get walletOrangeMoney;
+
+  /// No description provided for @walletEtisalatCash.
+  ///
+  /// In en, this message translates to:
+  /// **'Etisalat Cash'**
+  String get walletEtisalatCash;
+
+  /// No description provided for @walletFawry.
+  ///
+  /// In en, this message translates to:
+  /// **'Fawry'**
+  String get walletFawry;
+
+  /// No description provided for @walletNumberLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Wallet phone number'**
+  String get walletNumberLabel;
+
+  /// No description provided for @walletNumberHint.
+  ///
+  /// In en, this message translates to:
+  /// **'01X XXXXXXXX'**
+  String get walletNumberHint;
+
+  /// No description provided for @invalidWalletNumber.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter a valid Egyptian mobile number (010/011/012/015 + 8 digits)'**
+  String get invalidWalletNumber;
+
+  /// No description provided for @confirmPaymentButton.
+  ///
+  /// In en, this message translates to:
+  /// **'Confirm payment'**
+  String get confirmPaymentButton;
+
+  /// No description provided for @walletConfirmTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Confirm your wallet'**
+  String get walletConfirmTitle;
+
+  /// No description provided for @walletConfirmMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'You\'re paying to wallet {number}. Confirm?'**
+  String walletConfirmMessage(String number);
+
+  /// No description provided for @enterOtpTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter OTP'**
+  String get enterOtpTitle;
+
+  /// No description provided for @enterOtpDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter the code sent to your wallet'**
+  String get enterOtpDesc;
+
+  /// No description provided for @otpInvalid.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter the digits from the code'**
+  String get otpInvalid;
+
+  /// No description provided for @otpAttemptsLeft.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} attempts remaining'**
+  String otpAttemptsLeft(int count);
+
+  /// No description provided for @verifyOtpButton.
+  ///
+  /// In en, this message translates to:
+  /// **'Verify code'**
+  String get verifyOtpButton;
+
+  /// No description provided for @paymentProcessing.
+  ///
+  /// In en, this message translates to:
+  /// **'Processing your payment…'**
+  String get paymentProcessing;
+
+  /// No description provided for @paymentPending.
+  ///
+  /// In en, this message translates to:
+  /// **'Waiting for payment confirmation…'**
+  String get paymentPending;
+
+  /// No description provided for @paymentSucceededTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Payment successful!'**
+  String get paymentSucceededTitle;
+
+  /// No description provided for @paymentSucceededDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Your credits have been added.'**
+  String get paymentSucceededDesc;
+
+  /// No description provided for @paymentFailedTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Payment failed'**
+  String get paymentFailedTitle;
+
+  /// No description provided for @paymentFailedDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'No credits were granted. You can try again.'**
+  String get paymentFailedDesc;
+
+  /// No description provided for @paymentCanceledTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Payment canceled'**
+  String get paymentCanceledTitle;
+
+  /// No description provided for @paymentError.
+  ///
+  /// In en, this message translates to:
+  /// **'Something went wrong. Please try again.'**
+  String get paymentError;
+
+  /// No description provided for @retryPayment.
+  ///
+  /// In en, this message translates to:
+  /// **'Try again'**
+  String get retryPayment;
+
   /// No description provided for @statCurrent.
   ///
   /// In en, this message translates to:
