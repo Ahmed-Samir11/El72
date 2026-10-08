@@ -23,7 +23,8 @@ destroying persistent data, or changing authentication semantics.
 
 ## Files Expected To Change
 
-- `infra/sql/schema.sql`
+- `infra/sql/schema/postgres.sql`
+- `infra/sql/schema/timescaledb.sql`
 - `services/analyzer/app.py`
 - `services/scraper/price_processor.py`
 - `services/api/routers/auth.py`
