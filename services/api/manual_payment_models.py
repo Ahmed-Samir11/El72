@@ -6,7 +6,7 @@ plans/paymob-integration.md:
 - ManualPayment: a user's "I've paid" submission, pending admin verification
 - PaymentAuditLog: append-only audit trail of admin actions (no UPDATE/DELETE)
 
-CHECK constraints are declared both here (ORM) and in infra/sql/schema.sql
+CHECK constraints are declared both here (ORM) and in infra/sql/schema/postgres.sql
 (canonical DDL) so SQLite test databases enforce the same invariants as
 Postgres.
 """
@@ -85,7 +85,7 @@ class PaymentAuditLog(Base):
     amount mismatches). No UPDATE or DELETE endpoints exist for this table;
     entries are insert-only by design. Postgres additionally enforces
     append-only via a BEFORE UPDATE OR DELETE trigger (see
-    infra/sql/schema.sql).
+    infra/sql/schema/postgres.sql).
 
     ``detail`` must be sanitized via
     :func:`services.api.payment_security.sanitize_for_log` — never raw card

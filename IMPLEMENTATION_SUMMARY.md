@@ -15,7 +15,7 @@
 ### 1. Database Schema & Models ✅
 
 **Files**:
-- [`infra/sql/ddl.sql`](d:\El72\El72\infra\sql\ddl.sql) - Updated with new tables
+- [`infra/sql/schema/postgres.sql`](d:\El72\El72\infra\sql\ddl.sql) - Updated with new tables
 - [`services/api/tracked_items_models.py`](d:\El72\El72\services\api\tracked_items_models.py) - SQLAlchemy models
 
 **Tables Created**:
@@ -237,7 +237,7 @@ docker-compose up -d scraper-monitor
 
 ```bash
 # Apply schema
-psql -U elhaq -d elhaq -f infra/sql/ddl.sql
+psql -U elhaq -d elhaq -f infra/sql/schema/postgres.sql
 
 # Or via Docker
 docker-compose up -d postgres timescaledb
@@ -365,7 +365,7 @@ Suggested in documentation:
 11. `services/scraper/demo_tracked_items.py` - Demo
 
 ### Modified Files (2)
-1. `infra/sql/ddl.sql` - Added 4 new tables
+1. `infra/sql/schema/postgres.sql` - Added 4 new tables
 2. `docker-compose.yml` - Added monitor service
 
 ---

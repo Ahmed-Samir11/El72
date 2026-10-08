@@ -110,7 +110,7 @@ await redis_client.xack(stream, group, message_id)
 ### 2. Database Operations
 - Use SQLAlchemy ORM for `services/api` models
 - Use raw async queries (asyncpg) for TimescaleDB time-series
-- All schema changes go in `infra/sql/schema.sql` — this is the canonical schema
+- All schema changes go in the appropriate canonical schema: `infra/sql/schema/postgres.sql` for PostgreSQL or `infra/sql/schema/timescaledb.sql` for TimescaleDB
 - Use `UUID` primary keys (via `pgcrypto` extension)
 - All tables with `updated_at` must use the `update_updated_at_column()` trigger
 
@@ -206,6 +206,6 @@ api (port 8000) → analyzer (port 8001) → scraper-monitor → scraper → not
 - ❌ Commit `.env` files or hardcode secrets
 - ❌ Skip `XACK` after processing stream messages
 - ❌ Retrain ML models at request time
-- ❌ Create new database tables without updating `infra/sql/schema.sql`
+- ❌ Create new database tables without updating the appropriate canonical schema under `infra/sql/schema/`
 - ❌ Use synchronous I/O in async services
 - ❌ Run `pip install` without user confirmation

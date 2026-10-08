@@ -65,7 +65,7 @@ Implemented in:
 - `services/api/affiliate.py`
 - `services/api/routers/affiliate.py`
 - `services/api/models.py`
-- `infra/sql/schema.sql`
+- `infra/sql/schema/postgres.sql and infra/sql/schema/timescaledb.sql`
 
 Features:
 
@@ -109,7 +109,7 @@ The warnings are SQLAlchemy/Pydantic deprecation warnings and do not currently f
 
 ### 1. Database Migration
 
-Apply `infra/sql/schema.sql` to the target PostgreSQL and TimescaleDB databases. Existing databases must be migrated carefully because SQLAlchemy `create_all()` does not convert legacy integer tables to UUID-based tables.
+Apply `infra/sql/schema/postgres.sql and infra/sql/schema/timescaledb.sql` to the target PostgreSQL and TimescaleDB databases. Existing databases must be migrated carefully because SQLAlchemy `create_all()` does not convert legacy integer tables to UUID-based tables.
 
 Before applying in production:
 
