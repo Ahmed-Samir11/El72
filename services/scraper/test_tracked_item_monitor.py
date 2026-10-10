@@ -6,7 +6,7 @@ import pytest
 
 from services.scraper.store_scrapers import ScrapeResult
 from services.scraper.tracked_item_monitor import TrackedItemMonitor
-
+from services.scraper import tracked_item_monitor as monitor_module
 
 @pytest.fixture
 def monitor():
@@ -183,3 +183,75 @@ async def test_scrape_cycle_and_run_shutdown(monitor):
     await monitor.shutdown()
     await run_task
     assert monitor.running is False
+
+@pytest.mark.asyncio
+async def test_empty_cycle_updates_metrics(monitor, monkeypatch):
+    cycles = MagicMock()
+    errors = MagicMock()
+    duration = MagicMock()
+    active_items = MagicMock()
+
+    monkeypatch.setattr(monitor_module, "MONITOR_CYCLES", cycles)
+    monkeypatch.setattr(monitor_module, "MONITOR_CYCLE_ERRORS", errors)
+    monkeypatch.setattr(monitor_module, "MONITOR_CYCLE_DURATION", duration)
+    monkeypatch.setattr(monitor_module, "MONITOR_ACTIVE_ITEMS", active_items)
+
+    monitor.fetch_tracked_items = AsyncMock(return_value=[])
+
+    await monitor.scrape_cycle()
+
+    cycles.inc.assert_called_once_with()
+    errors.inc.assert_not_called()
+    duration.observe.assert_called_once()
+    assert duration.observe.call_args.args[0] >= 0
+    active_items.set.assert_called_once_with(0)
+
+
+@pytest.mark.asyncio
+async def test_cycle_fetch_failure_updates_error_metrics(monitor, monkeypatch):
+    cycles = MagicMock()
+    errors = MagicMock()
+    duration = MagicMock()
+
+    monkeypatch.setattr(monitor_module, "MONITOR_CYCLES", cycles)
+    monkeypatch.setattr(monitor_module, "MONITOR_CYCLE_ERRORS", errors)
+    monkeypatch.setattr(monitor_module, "MONITOR_CYCLE_DURATION", duration)
+
+    monitor.fetch_tracked_items = AsyncMock(
+        side_effect=RuntimeError("database unavailable")
+    )
+
+    await monitor.scrape_cycle()
+
+    cycles.inc.assert_called_once_with()
+    errors.inc.assert_called_once_with()
+    duration.observe.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_item_task_exception_updates_item_error_metric(
+    monitor, monkeypatch
+):
+    item_errors = MagicMock()
+    monkeypatch.setattr(
+        monitor_module, "MONITOR_ITEM_ERRORS", item_errors
+    )
+
+    monitor.fetch_tracked_items = AsyncMock(
+        return_value=[
+            {
+                "tracked_item_id": 42,
+                "user_id": 2,
+                "canonical_product_id": "p",
+                "target_price": None,
+                "stores": [],
+            }
+        ]
+    )
+    monitor.browser_pool.acquire.side_effect = RuntimeError(
+        "browser unavailable"
+    )
+
+    await monitor.scrape_cycle()
+
+    item_errors.inc.assert_called_once_with()

@@ -13,3 +13,5 @@ pydantic>=2.0
 
 # OpenAI client for LM Studio local inference
 openai>=1.0.0
+
+prometheus-client>=0.20.0,<1.0.0

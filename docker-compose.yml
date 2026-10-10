@@ -93,6 +93,7 @@ services:
     environment:
       REDIS_URL: "redis://redis:6379"
       MOCK_WHATSAPP: "true"
+      METRICS_PORT: "8000"
     command: ["npm", "run", "start"]
 
   scraper-monitor:
@@ -112,6 +113,7 @@ services:
       BROWSER_POOL_SIZE: "5"
       SCRAPER_TARGETS_SOURCE: "redis_stream"
       SCRAPER_TARGETS_STREAM: "stream:targets"
+      METRICS_PORT: "8000"
   
   scraper:
     build:
@@ -128,6 +130,7 @@ services:
       STREAM_CONFIRMED_DEALS: "stream:confirmed_deals"
       BROWSER_POOL_SIZE: "2"
       SCRAPER_NAV_TIMEOUT_MS: "60000"
+      METRICS_PORT: "8000"
     command: ["python", "-m", "services.scraper.scraper"]
   
   whatsapp:
@@ -149,6 +152,32 @@ services:
       WHATSAPP_TEMPLATE_LANG: "${WHATSAPP_TEMPLATE_LANG:-en}"
       MOCK_WHATSAPP: "${MOCK_WHATSAPP:-true}"
     restart: unless-stopped
+  
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.17.1
+    environment:
+      DATA_SOURCE_URI: "postgres:5432/elhaq?sslmode=disable"
+      DATA_SOURCE_USER: "el72_monitor"
+      DATA_SOURCE_PASS: "${DB_MONITOR_PASSWORD:?Set DB_MONITOR_PASSWORD in .env}"
+    networks:
+      - default
+
+  timescaledb-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.17.1
+    environment:
+      DATA_SOURCE_URI: "timescaledb:5432/elhaq_ts?sslmode=disable"
+      DATA_SOURCE_USER: "el72_monitor"
+      DATA_SOURCE_PASS: "${DB_MONITOR_PASSWORD:?Set DB_MONITOR_PASSWORD in .env}"
+    networks:
+      - default
+
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.75.0
+    environment:
+      REDIS_ADDR: "redis://redis:6379"
+    networks:
+      - default
+
 
 volumes:
   redis-data:
