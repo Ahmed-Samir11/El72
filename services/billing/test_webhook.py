@@ -343,7 +343,7 @@ class TestWebhookProcessing:
         try:
             audit = db.query(PaymentAuditLog).one()
             assert audit.action == "webhook_received"
-            assert audit.target_user_id == client._test_user_id
+            assert audit.target_user_id == int(client._test_user_id)
             assert audit.order_ref == "txn_abc123"
         finally:
             db.close()

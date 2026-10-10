@@ -4,3 +4,6 @@ sqlalchemy==2.0.23
 psycopg2-binary==2.9.9
 pydantic==2.5.0
 redis==4.6.0
+prometheus-client>=0.20.0,<1.0.0
+slowapi>=0.1.9,<1.0.0
+loguru==0.7.3

@@ -3,6 +3,7 @@ global:
 
 scrape_configs:
   - job_name: "prometheus"
+    metrics_path: /metrics
     static_configs:
       - targets: ["prometheus:9090"]
 
@@ -10,3 +11,45 @@ scrape_configs:
     metrics_path: /metrics
     static_configs:
       - targets: ["api:8000"]
+
+  - job_name: "el72-analyzer"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["analyzer:8000"]
+
+  - job_name: "el72-scraper"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["scraper:8000"]
+
+  - job_name: "el72-whatsapp"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["whatsapp:8000"]
+
+  - job_name: "el72-notifier"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["notifier:8000"]
+
+  - job_name: "el72-billing"
+    metrics_path: /metrics/
+    static_configs:
+      - targets: ["billing:8000"]
+
+  - job_name: "el72-scraper-monitor"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["scraper-monitor:8000"]
+
+  - job_name: "el72-postgres"
+    static_configs:
+      - targets: ["postgres-exporter:9187"]
+
+  - job_name: "el72-timescaledb"
+    static_configs:
+      - targets: ["timescaledb-exporter:9187"]
+
+  - job_name: "el72-redis"
+    static_configs:
+      - targets: ["redis-exporter:9121"]

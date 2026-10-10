@@ -9,6 +9,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 import asyncpg
+from prometheus_client import Counter, Gauge, Histogram, start_http_server
 from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import async_playwright
 
@@ -37,6 +38,44 @@ TARGETS_LIST = os.getenv("SCRAPER_TARGETS_LIST", "queue:targets")
 # Proxy pool file (JSON array of proxies like host:port or dicts)
 PROXIES_FILE = os.getenv("PROXIES_FILE", "proxies.json")
 
+METRICS_PORT = int(os.getenv("METRICS_PORT", "8000"))
+
+scraper_targets_received_total = Counter(
+    "el72_scraper_targets_received_total",
+    "Total Redis target messages received by the scraper.",
+)
+
+scraper_targets_processed_total = Counter(
+    "el72_scraper_targets_processed_total",
+    "Total targets processed successfully.",
+)
+
+scraper_targets_failed_total = Counter(
+    "el72_scraper_targets_failed_total",
+    "Total targets that failed after all scrape retries.",
+)
+
+scraper_scrape_duration_seconds = Histogram(
+    "el72_scraper_scrape_duration_seconds",
+    "Time spent processing one scrape target, including retries.",
+    buckets=[0.5, 1, 2, 5, 10, 30, 60, 120, 300],
+)
+
+scraper_processing_duration_seconds = Histogram(
+    "el72_scraper_processing_duration_seconds",
+    "Time spent processing one Redis target message.",
+    buckets=[0.5, 1, 2, 5, 10, 30, 60, 120, 300],
+)
+
+scraper_redis_read_errors_total = Counter(
+    "el72_scraper_redis_read_errors_total",
+    "Total Redis XREADGROUP errors.",
+)
+
+scraper_last_success_timestamp = Gauge(
+    "el72_scraper_last_success_timestamp",
+    "Unix timestamp of the most recent successful scrape.",
+)
 
 # Price extraction patterns - ordered by specificity
 # Supports both English (EGP) and Arabic (جنيه) currency
@@ -328,6 +367,7 @@ async def fetch_target(  # noqa: C901
     Returns
     - `True` on success, `False` if all retries failed.
     """
+    scrape_start = time.monotonic()
     url = target.get("url")
     sku = target.get("sku")
     store = target.get("store")
@@ -453,6 +493,13 @@ async def fetch_target(  # noqa: C901
 
             # release browser back to pool and return success
             await browser_pool.release(browser)
+
+            scraper_scrape_duration_seconds.observe(
+                time.monotonic() - scrape_start
+            )
+            scraper_targets_processed_total.inc()
+            scraper_last_success_timestamp.set(time.time())
+
             return True
         except PlaywrightError as e:
             msg = str(e)
@@ -501,6 +548,12 @@ async def fetch_target(  # noqa: C901
     logger.error(
         "Failed to fetch %s after %d attempts; pushed to %s", url, attempt, FAILED_QUEUE
     )
+
+    scraper_scrape_duration_seconds.observe(
+        time.monotonic() - scrape_start
+    )
+    scraper_targets_failed_total.inc()
+
     return False
 
 
@@ -561,9 +614,18 @@ async def run_from_redis_stream(
         browser_pool = BrowserPool(playwright, max_browsers=pool_size)
         await browser_pool.start()
         while True:
-            res = await redis_client.xreadgroup(
-                "cg_scraper", consumer_name, {TARGETS_STREAM: ">"}, count=1, block=5000
-            )
+            try:
+                res = await redis_client.xreadgroup(
+                    "cg_scraper",
+                    consumer_name,
+                    {TARGETS_STREAM: ">"},
+                    count=1,
+                    block=5000,
+                )
+            except Exception:
+                scraper_redis_read_errors_total.inc()
+                logger.exception("Failed reading targets from Redis stream")
+                raise
             if not res:
                 await asyncio.sleep(0.1)
                 continue
@@ -578,17 +640,33 @@ async def run_from_redis_stream(
                         )
                     except Exception:
                         target = payload_b
+                    scraper_targets_received_total.inc()
+                    processing_start = time.monotonic()
+
                     try:
-                        await fetch_target(
+                        success = await fetch_target(
                             target, redis_client, browser_pool, proxy_pool
                         )
-                        await redis_client.xack(TARGETS_STREAM, "cg_scraper", msg_id)
+
+                        await redis_client.xack(
+                            TARGETS_STREAM, "cg_scraper", msg_id
+                        )
+
+                        if not success:
+                            logger.warning(
+                                "Target %s was received but scraping failed after retries",
+                                msg_id,
+                            )
+
                     except Exception:
-                        # on failure, leave message pending for retry
+                        # Preserve existing behavior: leave the message pending.
                         logger.exception(
                             "Failed processing target from stream: %s", msg_id
                         )
-
+                    finally:
+                        scraper_processing_duration_seconds.observe(
+                            time.monotonic() - processing_start
+                        )
         await browser_pool.close()
 
 
@@ -627,8 +705,14 @@ def load_targets(path: str) -> List[Dict[str, Any]]:
         return json.load(f)
 
 
+def start_metrics_server():
+    start_http_server(METRICS_PORT, addr="0.0.0.0")
+    logger.info("Prometheus metrics server listening on :%d", METRICS_PORT)
+
 if __name__ == "__main__":
     import argparse
+
+    start_metrics_server()
 
     parser = argparse.ArgumentParser()
     parser.add_argument(
