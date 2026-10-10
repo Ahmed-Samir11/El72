@@ -35,26 +35,34 @@ class DialectIdType(TypeDecorator):
         return dialect.type_descriptor(postgres_UUID(as_uuid=True))
 
 
-# Backwards-compatible alias (User.id historically used this name).
-UserIdType = DialectIdType
+class OperationalIdType(TypeDecorator):
+    """Integer key type used by the preserved operational PostgreSQL schema."""
+
+    impl = Integer
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect):
+        return dialect.type_descriptor(Integer())
+
+
+UserIdType = OperationalIdType
+
+
+def _new_operational_id(context, table: str):
+    """Generate the next integer ID for legacy operational tables."""
+    return context.connection.exec_driver_sql(
+        f"SELECT COALESCE(MAX(id), 0) + 1 FROM {table}"
+    ).scalar_one()
 
 
 def _new_user_id(context):
-    """Keep the legacy SQLite schema compatible with PostgreSQL UUIDs."""
-    if context.dialect.name == "sqlite":
-        return context.connection.exec_driver_sql(
-            "SELECT COALESCE(MAX(id), 0) + 1 FROM users"
-        ).scalar_one()
-    return uuid.uuid4()
+    """Generate an ID compatible with the preserved users table."""
+    return _new_operational_id(context, "users")
 
 
 def _new_alert_id(context):
-    """SQLite-safe auto-increment id; native UUID on PostgreSQL."""
-    if context.dialect.name == "sqlite":
-        return context.connection.exec_driver_sql(
-            "SELECT COALESCE(MAX(id), 0) + 1 FROM alerts"
-        ).scalar_one()
-    return uuid.uuid4()
+    """Generate an ID compatible with the preserved alerts table."""
+    return _new_operational_id(context, "alerts")
 
 
 def _new_credit_tx_id(context):
@@ -86,6 +94,8 @@ class User(Base):
     salt = Column(String(32), nullable=False)
     tier = Column(String(20), nullable=False, default="free")
     valid_until = Column(DateTime, nullable=True)
+    status = Column(String(20), nullable=False, default="ACTIVE")
+    deleted_at = Column(DateTime, nullable=True)
 
     alerts = relationship("Alert", back_populates="user", cascade="all, delete-orphan")
     credits = relationship(
@@ -96,9 +106,9 @@ class User(Base):
 class Alert(Base):
     __tablename__ = "alerts"
 
-    id = Column(DialectIdType(), primary_key=True, default=_new_alert_id)
+    id = Column(OperationalIdType(), primary_key=True, default=_new_alert_id)
     user_id = Column(
-        DialectIdType(), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+        OperationalIdType(), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
 
     # Original ddl.sql columns
@@ -127,7 +137,7 @@ class UserCredit(Base):
     __tablename__ = "user_credits"
 
     user_id = Column(
-        DialectIdType(), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+        OperationalIdType(), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
     )
     balance = Column(Integer, nullable=False, default=0)
     updated_at = Column(
@@ -144,7 +154,7 @@ class CreditTransaction(Base):
 
     id = Column(DialectIdType(), primary_key=True, default=_new_credit_tx_id)
     user_id = Column(
-        DialectIdType(), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+        OperationalIdType(), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
     amount = Column(Integer, nullable=False)  # + grant, - deduction
     reason = Column(String(50), nullable=False)

@@ -1,8 +1,16 @@
 import json
 import logging
 import os
+import time
 
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
+from starlette.middleware.base import BaseHTTPMiddleware
+
+from services.api.monitoring.metrics import (
+    HTTP_REQUEST_DURATION_SECONDS,
+    HTTP_REQUESTS_TOTAL,
+)
+
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, validator
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -22,6 +30,7 @@ from services.api.routers import payment as payment_router
 from services.api.tracked_items_api import router as tracked_items_router
 from services.api.tracked_items_models import Base as TrackedBase
 from services.common.redis_client import RedisStreamClient
+from services.api.monitoring.metrics import metrics_response
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +108,35 @@ def bootstrap_admin() -> None:
     finally:
         session.close()
 
+# Prometheus Class
+class PrometheusMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        if request.url.path == "/metrics":
+            return await call_next(request)
+
+        start_time = time.perf_counter()
+
+        response = await call_next(request)
+
+        duration = time.perf_counter() - start_time
+
+        endpoint = request.url.path
+        method = request.method
+        status = str(response.status_code)
+
+        HTTP_REQUESTS_TOTAL.labels(
+            method=method,
+            endpoint=endpoint,
+            status=status,
+        ).inc()
+
+        HTTP_REQUEST_DURATION_SECONDS.labels(
+            method=method,
+            endpoint=endpoint,
+        ).observe(duration)
+
+        return response
+
 
 app = FastAPI(title="Elhaq API")
 limiter = Limiter(key_func=get_remote_address)
@@ -111,6 +149,10 @@ origins = [
     "http://127.0.0.1:8080",
     "*",  # Allows all for development
 ]
+
+app.add_middleware(
+    PrometheusMiddleware,
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -141,7 +183,7 @@ app.include_router(payment_router.router)
 
 # Demo mode: seed realistic demo data on startup (idempotent).
 # Toggle with DEMO_MODE=True (default) for the investor demo.
-DEMO_MODE = os.getenv("DEMO_MODE", "True").lower() in ("1", "true", "yes", "on")
+DEMO_MODE = os.getenv("DEMO_MODE", "False").lower() in ("1", "true", "yes", "on")
 
 
 @app.on_event("startup")
@@ -154,9 +196,23 @@ def _seed_demo_data_on_startup() -> None:
 
         summary = run_seed(engine=engine)
         logger.info("Demo data seeded on startup", extra={"summary": summary})
-    except Exception as e:  # fail-soft: demo data is non-critical
-        logger.exception("Demo seed failed; continuing", extra={"error": str(e)})
+    except Exception:
+        logger.exception("Demo seed failed; API startup is stopping")
+        raise
 
+@app.get("/metrics", include_in_schema=False)
+async def metrics():
+    content, media_type = metrics_response()
+
+    return Response(
+        content=content,
+        media_type=media_type,
+    )
+
+# Call for API health
+@app.get("/health", include_in_schema=False)
+async def health():
+    return {"status": "ok"}
 
 # Background task function to push new alert targets to scraper stream
 async def push_to_stream(target_url: str, alert_id: int):

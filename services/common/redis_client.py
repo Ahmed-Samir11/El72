@@ -45,7 +45,7 @@ class RedisStreamClient:
         - `RedisStreamClient` singleton instance. Raises if connection `PING` fails.
         """
         if cls._instance is None:
-            redis = aioredis.from_url(url, password=password, decode_responses=False)
+            redis = aioredis.from_url(url, password=password, decode_responses=False, socket_timeout=None, socket_connect_timeout=5)
             # Test connection
             await redis.ping()
             cls._instance = cls(redis)

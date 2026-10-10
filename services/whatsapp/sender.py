@@ -18,6 +18,7 @@ import httpx
 import psycopg2
 import redis.asyncio as aioredis
 from loguru import logger
+from prometheus_client import Counter, Gauge, Histogram, start_http_server
 from psycopg2.extras import RealDictCursor
 
 # Configuration from environment
@@ -45,6 +46,54 @@ MOCK_MODE = os.getenv("MOCK_WHATSAPP", "false").lower() == "true"
 # Redis client and DB connection
 redis_client: aioredis.Redis = None
 db_conn = None
+
+# Start the Prometheus metrics server
+METRICS_PORT = int(os.getenv("METRICS_PORT", "8000"))
+
+whatsapp_messages_received_total = Counter(
+    "el72_whatsapp_messages_received_total",
+    "Total Redis stream messages received by the WhatsApp consumer.",
+)
+
+whatsapp_messages_sent_total = Counter(
+    "el72_whatsapp_messages_sent_total",
+    "Total WhatsApp recipient messages sent successfully.",
+)
+
+whatsapp_messages_failed_total = Counter(
+    "el72_whatsapp_messages_failed_total",
+    "Total WhatsApp recipient message sends that failed.",
+)
+
+whatsapp_messages_skipped_total = Counter(
+    "el72_whatsapp_messages_skipped_total",
+    "Total WhatsApp recipient messages skipped because of deduplication.",
+)
+
+whatsapp_send_duration_seconds = Histogram(
+    "el72_whatsapp_send_duration_seconds",
+    "Time spent sending a WhatsApp message to a recipient.",
+)
+
+whatsapp_processing_duration_seconds = Histogram(
+    "el72_whatsapp_processing_duration_seconds",
+    "Time spent processing one Redis notification message.",
+)
+
+whatsapp_redis_read_errors_total = Counter(
+    "el72_whatsapp_redis_read_errors_total",
+    "Total Redis XREADGROUP errors.",
+)
+
+whatsapp_ack_errors_total = Counter(
+    "el72_whatsapp_ack_errors_total",
+    "Total Redis XACK errors.",
+)
+
+whatsapp_last_success_timestamp = Gauge(
+    "el72_whatsapp_last_success_timestamp",
+    "Unix timestamp of the most recent successful WhatsApp delivery.",
+)
 
 
 def get_db_connection():
@@ -181,7 +230,10 @@ async def send_whatsapp_message(phone: str, message_body: str) -> bool:
     Prefer send_whatsapp_price_alert for real delivery on the Cloud API test number.
     """
     if MOCK_MODE:
-        logger.info(f"[MOCK] WhatsApp to {mask_phone(phone)}: {message_body}")
+        with whatsapp_send_duration_seconds.time():
+            logger.info(
+                f"[MOCK] WhatsApp text to {mask_phone(phone)}: {message_body}"
+            )
         return True
 
     if not ACCESS_TOKEN or not PHONE_NUMBER_ID:
@@ -266,8 +318,13 @@ async def send_whatsapp_price_alert(
     }
 
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            response = await client.post(url, headers=headers, json=api_payload)
+        with whatsapp_send_duration_seconds.time():
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                response = await client.post(
+                    url,
+                    headers=headers,
+                    json=api_payload,
+                )
 
             if response.status_code == 200:
                 logger.info(
@@ -340,6 +397,9 @@ async def process_message(message_id: str, fields: Dict[bytes, bytes]):
 
     Queries database for all users with alerts for this SKU and sends to all of them.
     """
+    whatsapp_messages_received_total.inc()
+    processing_start = asyncio.get_running_loop().time()
+
     try:
         # Parse payload - handle both wrapped and unwrapped formats
         payload_bytes = fields.get(b"payload") or fields.get("payload")
@@ -366,8 +426,11 @@ async def process_message(message_id: str, fields: Dict[bytes, bytes]):
         sku = payload.get("sku")
         if not sku:
             logger.warning(f"Message {message_id} has no SKU")
-            await redis_client.xack(STREAM_NAME, CONSUMER_GROUP, message_id)
-            return
+            try:
+                await redis_client.xack(STREAM_NAME, CONSUMER_GROUP, message_id)
+            except Exception:
+                whatsapp_ack_errors_total.inc()
+                raise
             return
 
         # Check if user_phone is directly in payload (from scraper)
@@ -397,7 +460,11 @@ async def process_message(message_id: str, fields: Dict[bytes, bytes]):
 
         if not subscribers:
             logger.info(f"No subscribers found for SKU: {sku}")
-            await redis_client.xack(STREAM_NAME, CONSUMER_GROUP, message_id)
+            try:
+                await redis_client.xack(STREAM_NAME, CONSUMER_GROUP, message_id)
+            except Exception:
+                whatsapp_ack_errors_total.inc()
+                raise
             return
 
         # Prepare tasks for concurrent sending
@@ -411,6 +478,7 @@ async def process_message(message_id: str, fields: Dict[bytes, bytes]):
             dedup_key = f"alert_sent:{user_id}:{sku}"
 
             if await redis_client.exists(dedup_key):
+                whatsapp_messages_skipped_total.inc()
                 logger.info(f"Duplicate alert suppressed for user {user_id}:{sku}")
                 return None
 
@@ -425,8 +493,11 @@ async def process_message(message_id: str, fields: Dict[bytes, bytes]):
 
             if success:
                 await redis_client.setex(dedup_key, 86400, "1")
+                whatsapp_messages_sent_total.inc()
+                whatsapp_last_success_timestamp.set_to_current_time()
                 logger.info(f"Sent alert to user {user_id} ({mask_phone(phone_clean)})")
                 return True
+            whatsapp_messages_failed_total.inc()
             logger.error(
                 f"Failed to send alert to user {user_id} ({mask_phone(phone_clean)})"
             )
@@ -438,6 +509,7 @@ async def process_message(message_id: str, fields: Dict[bytes, bytes]):
 
         for subscriber, result in zip(subscribers, results, strict=True):
             if isinstance(result, Exception):
+                whatsapp_messages_failed_total.inc()
                 user_id = subscriber[0]
                 logger.opt(
                     exception=(type(result), result, result.__traceback__)
@@ -458,12 +530,19 @@ async def process_message(message_id: str, fields: Dict[bytes, bytes]):
         )
 
         # Always ACK the message after processing all subscribers
-        await redis_client.xack(STREAM_NAME, CONSUMER_GROUP, message_id)
+        try:
+            await redis_client.xack(STREAM_NAME, CONSUMER_GROUP, message_id)
+        except Exception:
+            whatsapp_ack_errors_total.inc()
+            raise
 
     except Exception as e:
         logger.error(f"Error processing message {message_id}: {e}", exc_info=True)
         # Do not ACK on error - allow retry
-
+    finally:
+        whatsapp_processing_duration_seconds.observe(
+            asyncio.get_running_loop().time() - processing_start
+        )
 
 async def consume_loop():
     """Main consumer loop - reads from Redis Stream and processes notifications."""
@@ -497,9 +576,9 @@ async def consume_loop():
             logger.info("Consumer loop cancelled, shutting down...")
             break
         except Exception as e:
+            whatsapp_redis_read_errors_total.inc()
             logger.error(f"Error in consumer loop: {e}", exc_info=True)
             await asyncio.sleep(5)  # Back off on error
-
 
 async def main():
     """Initialize Redis connection, test database, and start consumer loop."""
@@ -524,6 +603,9 @@ async def main():
     except Exception as e:
         logger.error(f"Failed to connect to Redis: {e}")
         sys.exit(1)
+
+    start_http_server(METRICS_PORT, addr="0.0.0.0")
+    logger.info(f"Prometheus metrics server listening on :{METRICS_PORT}")
 
     try:
         await consume_loop()

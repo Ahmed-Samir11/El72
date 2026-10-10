@@ -6,4 +6,5 @@ RUN pip install -r requirements.txt
 RUN python -m playwright install --with-deps
 COPY . /app
 ENV PYTHONUNBUFFERED=1
+EXPOSE 8000
 CMD ["python", "services/scraper/scraper.py"]

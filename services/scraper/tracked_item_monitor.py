@@ -12,8 +12,9 @@ import asyncio
 import logging
 import os
 import signal
-from datetime import datetime
+import time
 from typing import Dict, List
+from prometheus_client import Counter, Gauge, Histogram, start_http_server
 
 import asyncpg
 from playwright.async_api import Browser, async_playwright
@@ -30,12 +31,44 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+MONITOR_CYCLES = Counter(
+    "el72_tracked_monitor_cycles_total",
+    "Completed tracked-item monitor cycles",
+)
+
+MONITOR_CYCLE_ERRORS = Counter(
+    "el72_tracked_monitor_cycle_errors_total",
+    "Tracked-item monitor cycle errors",
+)
+
+MONITOR_CYCLE_DURATION = Histogram(
+    "el72_tracked_monitor_cycle_duration_seconds",
+    "Tracked-item monitor cycle duration in seconds",
+)
+
+MONITOR_ACTIVE_ITEMS = Gauge(
+    "el72_tracked_monitor_active_items",
+    "Active tracked items discovered in the latest cycle",
+)
+
+MONITOR_ITEM_ERRORS = Counter(
+    "el72_tracked_monitor_item_errors_total",
+    "Unexpected tracked-item processing errors",
+)
+
+MONITOR_STORE_SCRAPES = Counter(
+    "el72_tracked_monitor_store_scrapes_total",
+    "Store scraping outcomes",
+    ["outcome"],
+)
+
 class TrackedItemMonitor:
     """Main orchestrator for tracked item price monitoring."""
 
     def __init__(
         self,
         db_pool: asyncpg.Pool,
+        timescale_pool: asyncpg.Pool,
         redis_client: RedisStreamClient,
         browser_pool: BrowserPool,
         scrape_interval: int = 30,
@@ -44,20 +77,22 @@ class TrackedItemMonitor:
         """Initialize the monitor.
 
         Args:
-            db_pool: Database connection pool
+            db_pool: Operational PostgreSQL connection pool
+            timescale_pool: TimescaleDB connection pool for price history
             redis_client: Redis client for alert events
             browser_pool: Browser pool for Playwright scraping
             scrape_interval: Seconds between scrape cycles (default 30)
             max_concurrent_scrapes: Max concurrent scraping tasks
         """
         self.db_pool = db_pool
+        self.timescale_pool = timescale_pool
         self.redis_client = redis_client
         self.browser_pool = browser_pool
         self.scrape_interval = scrape_interval
         self.max_concurrent_scrapes = max_concurrent_scrapes
 
         # Initialize processors
-        self.price_processor = PriceProcessor(db_pool)
+        self.price_processor = PriceProcessor(db_pool, timescale_pool)
         self.alert_emitter = AlertEmitter(redis_client)
 
         # Tracking state
@@ -115,61 +150,61 @@ class TrackedItemMonitor:
     async def scrape_tracked_item(
         self, tracked_item: Dict, browser: Browser
     ) -> List[ScrapeResult]:
-        """Scrape all stores for a tracked item.
-
-        Args:
-            tracked_item: Tracked item dictionary with store mappings
-            browser: Browser instance from pool
-
-        Returns:
-            List of scrape results
-        """
+        """Scrape all stores for a tracked item and record outcomes."""
         results = []
         canonical_id = tracked_item["canonical_product_id"]
 
-        # Scrape each store
         for store_mapping in tracked_item["stores"]:
             store_id = store_mapping["store_id"]
             url = store_mapping["store_url"]
 
             try:
-                # Get store-specific scraper
                 scraper = ScraperFactory.get_scraper(store_id)
                 if not scraper:
-                    logger.warning(f"No scraper available for store: {store_id}")
+                    MONITOR_STORE_SCRAPES.labels(outcome="no_scraper").inc()
+                    logger.warning("No scraper available for store: %s", store_id)
                     continue
 
-                # Create browser context for this scrape
                 context = await browser.new_context()
-                page = await context.new_page()
-
                 try:
-                    # Execute scrape
-                    result = await scraper.scrape(page, url, canonical_id)
-                    if result:
-                        results.append(result)
-                        logger.info(
-                            f"Successfully scraped {store_id} for item {canonical_id}: "
-                            f"price={result.price} {result.currency}, "
-                            f"in_stock={result.in_stock}"
-                        )
-                    else:
-                        logger.warning(f"Scrape failed for {store_id} at {url}")
-                        # Emit failure event
-                        await self.alert_emitter.emit_scrape_failure(
-                            tracked_item["tracked_item_id"],
-                            tracked_item["user_id"],
-                            store_id,
-                            url,
-                            "Scrape returned no result",
-                        )
-
+                    page = await context.new_page()
+                    try:
+                        result = await scraper.scrape(page, url, canonical_id)
+                    finally:
+                        await page.close()
                 finally:
-                    await page.close()
                     await context.close()
 
+                if result:
+                    results.append(result)
+                    MONITOR_STORE_SCRAPES.labels(outcome="success").inc()
+                    logger.info(
+                        "Successfully scraped %s for item %s: price=%s %s, in_stock=%s",
+                        store_id,
+                        canonical_id,
+                        result.price,
+                        result.currency,
+                        result.in_stock,
+                    )
+                else:
+                    MONITOR_STORE_SCRAPES.labels(outcome="failure").inc()
+                    logger.warning("Scrape failed for %s at %s", store_id, url)
+                    await self.alert_emitter.emit_scrape_failure(
+                        tracked_item["tracked_item_id"],
+                        tracked_item["user_id"],
+                        store_id,
+                        url,
+                        "Scrape returned no result",
+                    )
+
             except Exception as e:
-                logger.exception(f"Error scraping {store_id} for {canonical_id}: {e}")
+                MONITOR_STORE_SCRAPES.labels(outcome="exception").inc()
+                logger.exception(
+                    "Error scraping %s for %s: %s",
+                    store_id,
+                    canonical_id,
+                    e,
+                )
                 await self.alert_emitter.emit_scrape_failure(
                     tracked_item["tracked_item_id"],
                     tracked_item["user_id"],
@@ -218,57 +253,72 @@ class TrackedItemMonitor:
                 )
 
             except Exception as e:
+                MONITOR_ITEM_ERRORS.inc()
                 logger.exception(
                     f"Error processing result for item {tracked_item_id} "
                     f"from {result.store}: {e}"
                 )
 
     async def scrape_cycle(self):
-        """Execute one complete scraping cycle for all tracked items."""
-        cycle_start = datetime.utcnow()
+        """Execute one scraping cycle and record its metrics."""
+        cycle_start = time.monotonic()
         logger.info("=== Starting scrape cycle ===")
 
         try:
-            # Fetch all active tracked items
             tracked_items = await self.fetch_tracked_items()
-            logger.info(f"Found {len(tracked_items)} active tracked items")
+            MONITOR_ACTIVE_ITEMS.set(len(tracked_items))
+            logger.info("Found %d active tracked items", len(tracked_items))
 
             if not tracked_items:
                 logger.info("No tracked items to process")
                 return
 
-            # Create semaphore for concurrency control
             semaphore = asyncio.Semaphore(self.max_concurrent_scrapes)
 
             async def process_item(item: Dict):
                 async with semaphore:
                     browser = await self.browser_pool.acquire()
                     try:
-                        # Scrape all stores for this item
                         results = await self.scrape_tracked_item(item, browser)
 
-                        # Process results and emit alerts
                         if results:
                             await self.process_scrape_results(item, results)
                         else:
                             logger.warning(
-                                f"No successful scrapes for "
-                                f"tracked_item_id={item['tracked_item_id']}"
+                                "No successful scrapes for tracked_item_id=%s",
+                                item["tracked_item_id"],
                             )
-
                     finally:
                         await self.browser_pool.release(browser)
 
-            # Process all items concurrently
             tasks = [process_item(item) for item in tracked_items]
-            await asyncio.gather(*tasks, return_exceptions=True)
+            task_results = await asyncio.gather(
+                *tasks, return_exceptions=True
+            )
 
-        except Exception as e:
-            logger.exception(f"Error in scrape cycle: {e}")
+            for item, result in zip(tracked_items, task_results):
+                if isinstance(result, Exception):
+                    MONITOR_ITEM_ERRORS.inc()
+                    logger.error(
+                        "Tracked-item task failed for item %s: %s",
+                        item["tracked_item_id"],
+                        result,
+                        exc_info=(
+                            type(result),
+                            result,
+                            result.__traceback__,
+                        ),
+                    )
+
+        except Exception:
+            MONITOR_CYCLE_ERRORS.inc()
+            logger.exception("Error in scrape cycle")
 
         finally:
-            cycle_duration = (datetime.utcnow() - cycle_start).total_seconds()
-            logger.info(f"=== Scrape cycle completed in {cycle_duration:.2f}s ===")
+            duration = time.monotonic() - cycle_start
+            MONITOR_CYCLES.inc()
+            MONITOR_CYCLE_DURATION.observe(duration)
+            logger.info("=== Scrape cycle completed in %.2fs ===", duration)
 
     async def run(self):
         """Main run loop - execute scraping cycles at regular intervals."""
@@ -313,6 +363,9 @@ async def main():
     DATABASE_URL = os.getenv(
         "DATABASE_URL", "postgresql://elhaq:elhaq_pass@localhost:5432/elhaq"
     )
+    TIMESCALE_URL = os.getenv(
+        "TIMESCALE_URL", "postgresql://elhaq:elhaq_pass@localhost:5433/elhaq_ts"
+    )
     REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
     SCRAPE_INTERVAL = int(os.getenv("SCRAPE_INTERVAL", "30"))
     MAX_CONCURRENT_SCRAPES = int(os.getenv("MAX_CONCURRENT_SCRAPES", "10"))
@@ -322,6 +375,9 @@ async def main():
     logger.info(f"Connecting to database: {DATABASE_URL}")
     db_pool = await asyncpg.create_pool(
         DATABASE_URL, min_size=2, max_size=10, command_timeout=60
+    )
+    timescale_pool = await asyncpg.create_pool(
+        TIMESCALE_URL, min_size=2, max_size=10, command_timeout=60
     )
 
     # Initialize Redis client
@@ -337,6 +393,7 @@ async def main():
         # Create monitor instance
         monitor = TrackedItemMonitor(
             db_pool=db_pool,
+            timescale_pool=timescale_pool,
             redis_client=redis_client,
             browser_pool=browser_pool,
             scrape_interval=SCRAPE_INTERVAL,
@@ -363,10 +420,13 @@ async def main():
             await browser_pool.close()
             await redis_client.close()
             await db_pool.close()
+            await timescale_pool.close()
             logger.info("Shutdown complete")
 
 
 if __name__ == "__main__":
+    metrics_port = int(os.getenv("METRICS_PORT", "8000"))
+    start_http_server(metrics_port, addr="0.0.0.0")
     try:
         asyncio.run(main())
     except KeyboardInterrupt:

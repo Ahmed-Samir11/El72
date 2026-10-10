@@ -100,11 +100,43 @@ async def test_close(client):
 async def test_create_pings_redis():
     mock_redis = AsyncMock()
     mock_redis.ping.return_value = True
+
     with patch(
-        "services.common.redis_client.aioredis.from_url", return_value=mock_redis
-    ):
-        client = await RedisStreamClient.create("redis://localhost:6379", password="x")
+        "services.common.redis_client.aioredis.from_url",
+        return_value=mock_redis,
+    ) as mock_from_url:
+        client = await RedisStreamClient.create(
+            "redis://localhost:6379",
+            password="x",
+        )
+
         assert client._redis is mock_redis
-        # singleton reuse
+        mock_redis.ping.assert_awaited_once()
+
+        mock_from_url.assert_called_once_with(
+            "redis://localhost:6379",
+            password="x",
+            decode_responses=False,
+            socket_timeout=None,
+            socket_connect_timeout=5,
+        )
+
+        # Singleton reuse must not create another Redis connection.
         again = await RedisStreamClient.create("redis://localhost:6379")
+
         assert again is client
+        mock_from_url.assert_called_once()
+
+@pytest.mark.asyncio
+async def test_create_propagates_ping_failure():
+    mock_redis = AsyncMock()
+    mock_redis.ping.side_effect = ConnectionError("Redis unavailable")
+
+    with patch(
+        "services.common.redis_client.aioredis.from_url",
+        return_value=mock_redis,
+    ):
+        with pytest.raises(ConnectionError, match="Redis unavailable"):
+            await RedisStreamClient.create("redis://localhost:6379")
+
+    assert RedisStreamClient._instance is None

@@ -16,6 +16,9 @@ CREATE TABLE IF NOT EXISTS users (
     salt VARCHAR(32) NOT NULL,
     tier VARCHAR(20) NOT NULL DEFAULT 'free',
     valid_until TIMESTAMP WITH TIME ZONE,
+    status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE'
+        CHECK (status IN ('ACTIVE', 'DELETED')),
+    deleted_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -320,6 +323,158 @@ CREATE INDEX IF NOT EXISTS idx_affiliate_clicks_clicked_at ON affiliate_clicks(c
 
 CREATE INDEX IF NOT EXISTS idx_retailer_analytics_store_id ON retailer_analytics(store_id);
 CREATE INDEX IF NOT EXISTS idx_retailer_analytics_period ON retailer_analytics(period_start, period_end);
+
+-- Analytical fact constellation. These tables belong in the TimescaleDB
+-- database alongside price_history. The source IDs are intentionally not
+-- cross-database foreign keys: operational users/products/retailers live in
+-- the PostgreSQL database and are mapped into conformed warehouse dimensions.
+CREATE SCHEMA IF NOT EXISTS analytics;
+
+CREATE TABLE IF NOT EXISTS analytics.dim_product (
+    product_key BIGSERIAL PRIMARY KEY,
+    source_product_id TEXT NOT NULL,
+    source_system VARCHAR(50) NOT NULL DEFAULT 'el72',
+    name TEXT,
+    brand TEXT,
+    category TEXT,
+    subcategory TEXT,
+    model TEXT,
+    specifications JSONB,
+    valid_from TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    valid_to TIMESTAMP WITH TIME ZONE,
+    is_current BOOLEAN NOT NULL DEFAULT TRUE,
+    UNIQUE (source_system, source_product_id, valid_from)
+);
+
+CREATE TABLE IF NOT EXISTS analytics.dim_retailer (
+    retailer_key BIGSERIAL PRIMARY KEY,
+    source_retailer_id TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    website TEXT,
+    retailer_type VARCHAR(50),
+    location TEXT
+);
+
+CREATE TABLE IF NOT EXISTS analytics.dim_user (
+    user_key BIGSERIAL PRIMARY KEY,
+    source_user_id UUID,
+    status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE'
+        CHECK (status IN ('ACTIVE', 'DELETED', 'ANONYMOUS')),
+    created_date DATE,
+    deleted_date DATE,
+    UNIQUE (source_user_id)
+);
+
+CREATE TABLE IF NOT EXISTS analytics.dim_date (
+    date_key INTEGER PRIMARY KEY,
+    full_date DATE NOT NULL UNIQUE,
+    day INTEGER NOT NULL CHECK (day BETWEEN 1 AND 31),
+    day_of_week INTEGER NOT NULL CHECK (day_of_week BETWEEN 1 AND 7),
+    week INTEGER NOT NULL CHECK (week BETWEEN 1 AND 53),
+    month INTEGER NOT NULL CHECK (month BETWEEN 1 AND 12),
+    month_name VARCHAR(20) NOT NULL,
+    quarter INTEGER NOT NULL CHECK (quarter BETWEEN 1 AND 4),
+    year INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS analytics.dim_time (
+    time_key INTEGER PRIMARY KEY,
+    hour INTEGER NOT NULL CHECK (hour BETWEEN 0 AND 23),
+    minute INTEGER NOT NULL CHECK (minute BETWEEN 0 AND 59),
+    second INTEGER NOT NULL CHECK (second BETWEEN 0 AND 59),
+    time_period VARCHAR(20) NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS analytics.dim_promotion (
+    promotion_key BIGSERIAL PRIMARY KEY,
+    promotion_type VARCHAR(50),
+    promotion_name TEXT,
+    advertised_discount NUMERIC(7, 4),
+    start_date DATE,
+    end_date DATE,
+    coupon_required BOOLEAN NOT NULL DEFAULT FALSE,
+    description TEXT
+);
+
+CREATE TABLE IF NOT EXISTS analytics.dim_channel (
+    channel_key BIGSERIAL PRIMARY KEY,
+    channel_name VARCHAR(30) NOT NULL UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS analytics.fact_price_history (
+    price_history_key BIGSERIAL,
+    observed_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    product_key BIGINT NOT NULL REFERENCES analytics.dim_product(product_key),
+    retailer_key BIGINT NOT NULL REFERENCES analytics.dim_retailer(retailer_key),
+    date_key INTEGER NOT NULL REFERENCES analytics.dim_date(date_key),
+    time_key INTEGER NOT NULL REFERENCES analytics.dim_time(time_key),
+    promotion_key BIGINT REFERENCES analytics.dim_promotion(promotion_key),
+    observed_price NUMERIC(12, 2) NOT NULL CHECK (observed_price >= 0),
+    currency VARCHAR(10) NOT NULL DEFAULT 'EGP',
+    availability BOOLEAN NOT NULL DEFAULT TRUE,
+    source_sku TEXT NOT NULL,
+    source_timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
+    PRIMARY KEY (observed_at, price_history_key)
+);
+
+CREATE TABLE IF NOT EXISTS analytics.fact_deal (
+    deal_key BIGSERIAL PRIMARY KEY,
+    evaluated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    product_key BIGINT NOT NULL REFERENCES analytics.dim_product(product_key),
+    retailer_key BIGINT NOT NULL REFERENCES analytics.dim_retailer(retailer_key),
+    date_key INTEGER NOT NULL REFERENCES analytics.dim_date(date_key),
+    promotion_key BIGINT REFERENCES analytics.dim_promotion(promotion_key),
+    current_price NUMERIC(12, 2) NOT NULL CHECK (current_price >= 0),
+    advertised_price NUMERIC(12, 2),
+    historical_avg_price NUMERIC(12, 2),
+    historical_min_price NUMERIC(12, 2),
+    historical_max_price NUMERIC(12, 2),
+    fair_price NUMERIC(12, 2),
+    price_change_percentage NUMERIC(7, 4),
+    advertised_discount_percentage NUMERIC(7, 4),
+    historical_discount_percentage NUMERIC(7, 4),
+    deal_score NUMERIC(7, 4),
+    classification VARCHAR(40) NOT NULL,
+    model_version VARCHAR(100) NOT NULL,
+    feature_version VARCHAR(100)
+);
+
+CREATE TABLE IF NOT EXISTS analytics.fact_notification (
+    notification_key BIGSERIAL PRIMARY KEY,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    user_key BIGINT NOT NULL REFERENCES analytics.dim_user(user_key),
+    product_key BIGINT REFERENCES analytics.dim_product(product_key),
+    retailer_key BIGINT REFERENCES analytics.dim_retailer(retailer_key),
+    date_key INTEGER NOT NULL REFERENCES analytics.dim_date(date_key),
+    channel_key BIGINT NOT NULL REFERENCES analytics.dim_channel(channel_key),
+    deal_key BIGINT REFERENCES analytics.fact_deal(deal_key),
+    status VARCHAR(20) NOT NULL CHECK (status IN ('queued', 'sent', 'delivered', 'failed')),
+    sent_at TIMESTAMP WITH TIME ZONE,
+    delivered_at TIMESTAMP WITH TIME ZONE,
+    provider_message_id TEXT,
+    error_code TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_fact_price_product_date
+    ON analytics.fact_price_history(product_key, date_key);
+CREATE INDEX IF NOT EXISTS idx_fact_price_retailer_date
+    ON analytics.fact_price_history(retailer_key, date_key);
+CREATE INDEX IF NOT EXISTS idx_fact_price_product_retailer_date
+    ON analytics.fact_price_history(product_key, retailer_key, date_key);
+CREATE INDEX IF NOT EXISTS idx_fact_price_source
+    ON analytics.fact_price_history(source_sku, observed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_fact_deal_product_date
+    ON analytics.fact_deal(product_key, date_key);
+CREATE INDEX IF NOT EXISTS idx_fact_deal_retailer_date
+    ON analytics.fact_deal(retailer_key, date_key);
+CREATE INDEX IF NOT EXISTS idx_fact_notification_user_date
+    ON analytics.fact_notification(user_key, date_key);
+CREATE INDEX IF NOT EXISTS idx_fact_notification_product_date
+    ON analytics.fact_notification(product_key, date_key);
+
+INSERT INTO analytics.dim_channel (channel_name)
+VALUES ('WhatsApp'), ('Web'), ('Email'), ('Push')
+ON CONFLICT (channel_name) DO NOTHING;
 
 -- Functions for updating timestamps
 CREATE OR REPLACE FUNCTION update_updated_at_column()

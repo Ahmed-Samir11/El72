@@ -1,0 +1,98 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{hyperref}
+\usepackage{booktabs}
+\title{El72 Data Architecture}
+\author{El72 Engineering}
+\date{October 2026}
+
+\begin{document}
+\maketitle
+
+\section{Architecture Overview}
+El72 uses PostgreSQL for operational application state, TimescaleDB for price
+observations and analytical facts, and Redis Streams for asynchronous delivery.
+The pipeline is:
+\begin{center}
+OLTP $\rightarrow$ Redis Streams $\rightarrow$ historical processing
+$\rightarrow$ dimensional facts $\rightarrow$ notification workers.
+\end{center}
+Scrapers publish observations to \texttt{stream:price\_ingest}. The analyzer
+persists the observation, calculates historical context, records \texttt{fact\_deal},
+and publishes a versioned deal event to \texttt{stream:confirmed\_deals}.
+
+\section{Operational and Analytical Data}
+The operational PostgreSQL database owns \texttt{users}, \texttt{alerts},
+tracked items, current prices, billing records, and subscriptions. The
+TimescaleDB database is the canonical owner of the existing
+\texttt{price\_history} evidence table and the \texttt{analytics} schema. The
+API's public history/deals/stats reads and the demo seeder use the explicit
+TimescaleDB connection; they never fall back to an operational PostgreSQL
+table with the same name. Source identifiers in analytical dimensions are
+mappings, not cross-database foreign keys.
+
+\section{Dimensional Model}
+The analytical model is a fact constellation with shared dimensions:
+\texttt{dim\_product}, \texttt{dim\_retailer}, \texttt{dim\_user},
+\texttt{dim\_date}, \texttt{dim\_time}, \texttt{dim\_promotion}, and
+\texttt{dim\_channel}. Dimension surrogate keys protect historical facts from
+mutable operational identifiers. Product rows support slowly changing identity
+attributes through \texttt{valid\_from}, \texttt{valid\_to}, and
+\texttt{is\_current}.
+
+\section{Fact Grains}
+\begin{itemize}
+  \item \texttt{fact\_price\_history}: one observed product price at one
+    retailer and timestamp.
+  \item \texttt{fact\_deal}: one deal evaluation for one product and retailer
+    at an evaluation timestamp, including the historical summary used by the
+    detector and its model version.
+  \item \texttt{fact\_notification}: one user/channel delivery attempt for a
+    deal, with queued, sent, delivered, or failed status.
+\end{itemize}
+
+\section{Price History and Deal Detection}
+\texttt{price\_history} is the evidence and is never overwritten by deal
+detection. The analyzer derives the recent average, minimum, maximum, and
+historical discount from that window. The result is stored in
+\texttt{fact\_deal}; model and feature versions make later audits and model
+comparisons reproducible. Additional ML features can be calculated from the
+same observations without changing the fact grain.
+
+\section{Notifications and Events}
+The analyzer does not call WhatsApp. It publishes an event containing an event
+type, schema version, deal reference, product, retailer, price, timestamp, and
+trace context. Notification consumers use Redis consumer groups and acknowledge
+messages only after successful delivery. Delivery results belong in
+\texttt{fact\_notification}; Redis is transport, not permanent storage.
+
+\section{Authentication and Deletion}
+Authentication remains against operational \texttt{users}; \texttt{dim\_user}
+is only an analytical mapping. \texttt{DELETE /auth/me} removes active alerts
+and tracked items, replaces the phone and password with non-identifying values,
+marks the account \texttt{DELETED}, and preserves the operational UUID. This
+prevents login and removes operational PII while allowing an analytical user
+dimension to become a deleted tombstone without breaking notification facts.
+
+\section{Docker and Migration Safety}
+The Compose services use \texttt{postgres:5432} internally for operational
+data, \texttt{timescaledb:5432} internally for canonical price history and analytics,
+and \texttt{redis:6379} for streams. Host mappings are PostgreSQL 5434,
+TimescaleDB 5433, and Redis 6379. Named volumes \texttt{pg-data},
+\texttt{timescale-data}, and \texttt{redis-data} are preserved. Raw SQL files
+under \texttt{infra/sql/migrations} are additive and idempotent; no database or
+volume is dropped by this migration.
+
+\section{ERD}
+The maintainable Mermaid ERD is in \texttt{docs/data\_architecture\_erd.md}.
+It represents the implemented analytical schema and its operational source
+boundary.
+
+\section{Future Kafka and ML Path}
+Redis Streams is sufficient at the current scale. Kafka becomes reasonable when
+retention, replay, partition throughput, and independent consumer ownership
+exceed Redis's operational role. The present model already supports forecasting,
+fair-price estimation, anomaly detection, fake-discount detection, and
+recommendations through historical observations and versioned deal facts.
+
+\end{document}
