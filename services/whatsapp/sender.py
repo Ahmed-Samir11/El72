@@ -231,9 +231,7 @@ async def send_whatsapp_message(phone: str, message_body: str) -> bool:
     """
     if MOCK_MODE:
         with whatsapp_send_duration_seconds.time():
-            logger.info(
-                f"[MOCK] WhatsApp text to {mask_phone(phone)}: {message_body}"
-            )
+            logger.info(f"[MOCK] WhatsApp text to {mask_phone(phone)}: {message_body}")
         return True
 
     if not ACCESS_TOKEN or not PHONE_NUMBER_ID:
@@ -544,6 +542,7 @@ async def process_message(message_id: str, fields: Dict[bytes, bytes]):
             asyncio.get_running_loop().time() - processing_start
         )
 
+
 async def consume_loop():
     """Main consumer loop - reads from Redis Stream and processes notifications."""
     logger.info(
@@ -579,6 +578,7 @@ async def consume_loop():
             whatsapp_redis_read_errors_total.inc()
             logger.error(f"Error in consumer loop: {e}", exc_info=True)
             await asyncio.sleep(5)  # Back off on error
+
 
 async def main():
     """Initialize Redis connection, test database, and start consumer loop."""

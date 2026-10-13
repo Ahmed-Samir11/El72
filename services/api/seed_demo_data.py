@@ -229,7 +229,10 @@ def _generate_series(
 def _safe_engine_target(engine: Engine) -> str:
     """Describe an engine without exposing credentials."""
     url = engine.url
-    return f"{url.drivername}://{url.host or 'local'}:{url.port or ''}/{url.database or ''}"
+    return (
+        f"{url.drivername}://{url.host or 'local'}:{url.port or ''}/"
+        f"{url.database or ''}"
+    )
 
 
 def _validate_price_history_target(engine: Engine) -> None:

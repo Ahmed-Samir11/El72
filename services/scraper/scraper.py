@@ -9,9 +9,9 @@ import time
 from typing import Any, Dict, List, Optional
 
 import asyncpg
-from prometheus_client import Counter, Gauge, Histogram, start_http_server
 from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import async_playwright
+from prometheus_client import Counter, Gauge, Histogram, start_http_server
 
 from services.common.redis_client import RedisStreamClient
 from services.scraper.browser_pool import BrowserPool
@@ -494,9 +494,7 @@ async def fetch_target(  # noqa: C901
             # release browser back to pool and return success
             await browser_pool.release(browser)
 
-            scraper_scrape_duration_seconds.observe(
-                time.monotonic() - scrape_start
-            )
+            scraper_scrape_duration_seconds.observe(time.monotonic() - scrape_start)
             scraper_targets_processed_total.inc()
             scraper_last_success_timestamp.set(time.time())
 
@@ -549,9 +547,7 @@ async def fetch_target(  # noqa: C901
         "Failed to fetch %s after %d attempts; pushed to %s", url, attempt, FAILED_QUEUE
     )
 
-    scraper_scrape_duration_seconds.observe(
-        time.monotonic() - scrape_start
-    )
+    scraper_scrape_duration_seconds.observe(time.monotonic() - scrape_start)
     scraper_targets_failed_total.inc()
 
     return False
@@ -648,13 +644,12 @@ async def run_from_redis_stream(
                             target, redis_client, browser_pool, proxy_pool
                         )
 
-                        await redis_client.xack(
-                            TARGETS_STREAM, "cg_scraper", msg_id
-                        )
+                        await redis_client.xack(TARGETS_STREAM, "cg_scraper", msg_id)
 
                         if not success:
                             logger.warning(
-                                "Target %s was received but scraping failed after retries",
+                                "Target %s was received but scraping failed "
+                                "after retries",
                                 msg_id,
                             )
 
@@ -708,6 +703,7 @@ def load_targets(path: str) -> List[Dict[str, Any]]:
 def start_metrics_server():
     start_http_server(METRICS_PORT, addr="0.0.0.0")
     logger.info("Prometheus metrics server listening on :%d", METRICS_PORT)
+
 
 if __name__ == "__main__":
     import argparse

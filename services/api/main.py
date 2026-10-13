@@ -3,13 +3,6 @@ import logging
 import os
 import time
 
-from starlette.middleware.base import BaseHTTPMiddleware
-
-from services.api.monitoring.metrics import (
-    HTTP_REQUEST_DURATION_SECONDS,
-    HTTP_REQUESTS_TOTAL,
-)
-
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, validator
@@ -18,11 +11,17 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from services.api.card_payment_models import CardPayment  # noqa: F401
 from services.api.dependencies import get_current_user, get_db
 from services.api.manual_payment_models import ManualPayment  # noqa: F401
 from services.api.models import Alert, Base, User
+from services.api.monitoring.metrics import (
+    HTTP_REQUEST_DURATION_SECONDS,
+    HTTP_REQUESTS_TOTAL,
+    metrics_response,
+)
 from services.api.routers import affiliate as affiliate_router
 from services.api.routers import auth, public_api
 from services.api.routers import credits as credits_router
@@ -30,7 +29,6 @@ from services.api.routers import payment as payment_router
 from services.api.tracked_items_api import router as tracked_items_router
 from services.api.tracked_items_models import Base as TrackedBase
 from services.common.redis_client import RedisStreamClient
-from services.api.monitoring.metrics import metrics_response
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +105,7 @@ def bootstrap_admin() -> None:
                 )
     finally:
         session.close()
+
 
 # Prometheus Class
 class PrometheusMiddleware(BaseHTTPMiddleware):
@@ -200,6 +199,7 @@ def _seed_demo_data_on_startup() -> None:
         logger.exception("Demo seed failed; API startup is stopping")
         raise
 
+
 @app.get("/metrics", include_in_schema=False)
 async def metrics():
     content, media_type = metrics_response()
@@ -209,10 +209,12 @@ async def metrics():
         media_type=media_type,
     )
 
+
 # Call for API health
 @app.get("/health", include_in_schema=False)
 async def health():
     return {"status": "ok"}
+
 
 # Background task function to push new alert targets to scraper stream
 async def push_to_stream(target_url: str, alert_id: int):

@@ -192,7 +192,9 @@ def get_price_history(
 
 @router.get("/deals/live")
 @limiter.limit("60/minute")
-def get_live_deals(request: Request, db: Session = Depends(get_timescale_db)) -> List[dict]:
+def get_live_deals(
+    request: Request, db: Session = Depends(get_timescale_db)
+) -> List[dict]:
     """Live deal discovery feed.
 
     A "deal" is a product whose current (latest-day) lowest price is below its
