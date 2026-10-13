@@ -1104,6 +1104,36 @@ class TestAdjustCredits:
             db.close()
 
 
+class TestUnifiedRejectFields:
+    def test_rejected_manual_payment_exposes_reject_reason(self, client):
+        # A rejected manual payment exposes reject_reason and resolved_at
+        # in the unified list (None for other methods).
+        admin_token = _admin_token(client)
+        user_id, _ = _seed_user(client, USER_PHONE)
+        _seed_payment_row(
+            client,
+            ManualPayment,
+            order_ref="ELH-REJ-1",
+            user_id=user_id,
+            user_phone=USER_PHONE,
+            package="standard",
+            amount_egp=30,
+            status="rejected",
+            reject_reason="insufficient funds",
+            resolved_at=datetime(2025, 1, 1, 12, 0, 0),
+        )
+        resp = client.get(
+            "/admin/payments",
+            headers=_auth_headers(admin_token),
+            params={"status_filter": "rejected"},
+        )
+        assert resp.status_code == 200
+        rows = resp.json()
+        entry = next(r for r in rows if r["order_id"] == "ELH-REJ-1")
+        assert entry["reject_reason"] == "insufficient funds"
+        assert entry["resolved_at"] is not None
+
+
 class TestAuditLog:
     def test_audit_log_returns_entries(self, client):
         admin_token = _admin_token(client)

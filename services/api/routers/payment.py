@@ -1274,6 +1274,9 @@ class AdminPaymentResponse(BaseModel):
     amount_egp: float
     status: str
     created_at: str
+    # Manual-payment-only fields (None for card / wallet / cash).
+    reject_reason: Optional[str] = None
+    resolved_at: Optional[str] = None
 
 
 # The four payment tables, in a stable order for the unified view.
@@ -1326,6 +1329,8 @@ def list_payments(
         if user is not None:
             q = q.filter(User.phone == user)
         for p, u in q.order_by(model.created_at.desc()).limit(500).all():
+            reject_reason = getattr(p, "reject_reason", None)
+            resolved_at = getattr(p, "resolved_at", None)
             rows.append(
                 {
                     "order_id": (
@@ -1339,6 +1344,8 @@ def list_payments(
                     "amount_egp": float(p.amount_egp),
                     "status": p.status,
                     "created_at": p.created_at.isoformat(),
+                    "reject_reason": reject_reason,
+                    "resolved_at": (resolved_at.isoformat() if resolved_at else None),
                 }
             )
     rows.sort(key=lambda r: r["created_at"], reverse=True)
