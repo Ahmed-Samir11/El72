@@ -1017,6 +1017,17 @@ class TestAdjustCredits:
         )
         assert resp.status_code == 400, resp.text
 
+    def test_adjust_zero_rejected(self, client):
+        # A zero-credit adjustment is a no-op and is rejected.
+        admin_token = _admin_token(client)
+        user_id, _ = _seed_user(client, USER_PHONE)
+        resp = client.post(
+            f"/admin/users/{user_id}/adjust-credits",
+            headers=_auth_headers(admin_token),
+            json={"amount": 0, "reason": "no-op"},
+        )
+        assert resp.status_code == 400, resp.text
+
     def test_adjust_credits_logged(self, client):
         admin_token = _admin_token(client)
         user_id, _ = _seed_user(client, USER_PHONE)

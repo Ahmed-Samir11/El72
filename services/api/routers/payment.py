@@ -1718,6 +1718,13 @@ def adjust_credits(
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
 
+    # A zero-credit adjustment is a no-op; reject it rather than logging a
+    # meaningless audit entry.
+    if body.amount == 0:
+        raise HTTPException(
+            status_code=400, detail="Adjustment amount must be non-zero"
+        )
+
     # Large adjustments require a second, distinct, VERIFIED admin (plan 6.2).
     approver_username = None
     if abs(body.amount) > LARGE_ADJUSTMENT_THRESHOLD:
