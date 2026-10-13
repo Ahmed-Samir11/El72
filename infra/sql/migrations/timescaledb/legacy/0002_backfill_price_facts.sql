@@ -1,5 +1,9 @@
 -- Backfill the analytical dimensions and price fact from preserved TimescaleDB
 -- observations. The NOT EXISTS predicate makes this safe to rerun.
+-- Wrapped in a transaction so a failure rolls back all inserts (review
+-- finding: backfill migration is not wrapped in a transaction).
+BEGIN;
+
 INSERT INTO analytics.dim_product (source_product_id, name)
 SELECT DISTINCT ph.sku, ph.sku
 FROM price_history ph
@@ -22,7 +26,7 @@ SELECT DISTINCT
     (ph.time AT TIME ZONE 'UTC')::date,
     extract(day FROM ph.time AT TIME ZONE 'UTC')::integer,
     extract(isodow FROM ph.time AT TIME ZONE 'UTC')::integer,
-    extract(week FROM ph.time AT TIME ZONE 'UTC')::integer,
+    GREATEST(1, LEAST(53, extract(week FROM ph.time AT TIME ZONE 'UTC')::integer)),
     extract(month FROM ph.time AT TIME ZONE 'UTC')::integer,
     to_char(ph.time AT TIME ZONE 'UTC', 'Month'),
     extract(quarter FROM ph.time AT TIME ZONE 'UTC')::integer,
@@ -65,3 +69,5 @@ WHERE NOT EXISTS (
       AND f.retailer_key = dr.retailer_key
       AND f.source_sku = ph.sku
 );
+
+COMMIT;

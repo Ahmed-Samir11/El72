@@ -45,7 +45,7 @@ services:
       REDIS_URL: "redis://redis:6379"
       DATABASE_URL: "${DATABASE_URL_DOCKER:-postgresql://elhaq:elhaq_pass@postgres:5432/elhaq}"
       TIMESCALE_URL: "${TIMESCALE_URL_DOCKER:-postgresql://elhaq:elhaq_pass@timescaledb:5432/elhaq_ts}"
-      DEMO_MODE: "${DEMO_MODE:-true}"
+      DEMO_MODE: "${DEMO_MODE:-false}"
     ports:
       - "8001:8000"
 
@@ -65,7 +65,7 @@ services:
       - "8000:8000"
 
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v2.53.0
     restart: unless-stopped
     depends_on:
       - api
@@ -74,9 +74,14 @@ services:
     volumes:
       - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:11.1.0
     restart: unless-stopped
     depends_on:
       - prometheus
@@ -84,6 +89,11 @@ services:
       - "3000:3000"
     volumes:
       - grafana-data:/var/lib/grafana
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   notifier:
     build:
@@ -155,6 +165,8 @@ services:
   
   postgres-exporter:
     image: prometheuscommunity/postgres-exporter:v0.17.1
+    depends_on:
+      - postgres
     environment:
       DATA_SOURCE_URI: "postgres:5432/elhaq?sslmode=disable"
       DATA_SOURCE_USER: "el72_monitor"
@@ -164,6 +176,8 @@ services:
 
   timescaledb-exporter:
     image: prometheuscommunity/postgres-exporter:v0.17.1
+    depends_on:
+      - timescaledb
     environment:
       DATA_SOURCE_URI: "timescaledb:5432/elhaq_ts?sslmode=disable"
       DATA_SOURCE_USER: "el72_monitor"
@@ -173,6 +187,8 @@ services:
 
   redis-exporter:
     image: oliver006/redis_exporter:v1.75.0
+    depends_on:
+      - redis
     environment:
       REDIS_ADDR: "redis://redis:6379"
     networks:

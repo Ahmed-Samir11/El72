@@ -149,6 +149,21 @@ CREATE TABLE IF NOT EXISTS analytics.fact_notification (
     error_code TEXT
 );
 
+-- Convert fact_price_history to a hypertable (review finding: fact_price_history
+-- is not created as a TimescaleDB hypertable).
+SELECT create_hypertable('analytics.fact_price_history', 'observed_at',
+    schema => 'analytics')
+WHERE NOT EXISTS (
+    SELECT 1 FROM timescaledb_information.hypertables
+    WHERE hypertable_name = 'fact_price_history'
+);
+
+-- Prevent multiple current rows for the same source product (review finding:
+-- dim_product allows multiple current rows for the same source product).
+CREATE UNIQUE INDEX IF NOT EXISTS uq_dim_product_one_current
+    ON analytics.dim_product (source_system, source_product_id)
+    WHERE is_current = TRUE;
+
 CREATE INDEX IF NOT EXISTS idx_fact_price_product_date
     ON analytics.fact_price_history(product_key, date_key);
 CREATE INDEX IF NOT EXISTS idx_fact_price_retailer_date
