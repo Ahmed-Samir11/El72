@@ -469,6 +469,7 @@ def billing_client(monkeypatch):
     with TestClient(billing_main.app) as c:
         c._test_user_id = user_id  # type: ignore[attr-defined]
         c._test_sub_id = sub_id  # type: ignore[attr-defined]
+        c._test_paymob_sub_id = "paymob_sub_1"  # type: ignore[attr-defined]
         c._test_engine = engine  # type: ignore[attr-defined]
         c._test_session = TestingSessionLocal  # type: ignore[attr-defined]
         yield c
@@ -538,7 +539,17 @@ class TestRenewalWebhook:
         assert sub.failed_renewals == 1
         assert sub.status == "active"
 
-    def test_auto_cancel_after_three_failures(self, billing_client):
+    def test_auto_cancel_after_three_failures(self, billing_client, monkeypatch):
+        # Verify the Paymob mandate is canceled on auto-cancel (review
+        # finding: auto-cancel external Paymob call failure handling).
+        import services.billing.main as billing_main
+
+        calls = []
+
+        def _cancel(subscription_id):
+            calls.append(subscription_id)
+
+        monkeypatch.setattr(billing_main, "cancel_subscription", _cancel)
         for i in range(3):
             resp = _renewal_webhook(billing_client, f"renewal_f{i}", "failed")
             assert resp.status_code == 200, resp.text
@@ -547,6 +558,9 @@ class TestRenewalWebhook:
         assert sub.status == "failed"
         assert sub.failed_renewals == 3
         assert sub.canceled_at is not None
+        # The Paymob mandate was canceled exactly once.
+        assert len(calls) == 1
+        assert calls[0] == billing_client._test_paymob_sub_id
 
     def test_idempotent_duplicate(self, billing_client):
         first = _renewal_webhook(billing_client, "renewal_dup", "succeeded")
