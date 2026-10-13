@@ -522,16 +522,23 @@ async def paymob_subscription_renewal_webhook(
 ):
     """Paymob subscription renewal webhook (Feature 7).
 
-    Fired by Paymob each month when it charges the subscriber's card.
+    Fired by Paymob for every subscription charge: the **first charge**
+    (made when the subscription is created) and each subsequent **monthly
+    renewal**. The first charge is confirmed here, not at creation —
+    credits are granted only when a charge succeeds (review finding:
+    premature credit granting at creation).
+
     Security gates mirror the one-time payment webhook (plan 7.5/7.6):
       - HMAC-SHA512 signature on the raw body -> 401
       - idempotency: unique paymob_renewal_id, duplicate -> no side effect
       - status whitelist (succeeded / failed)
+      - amount validation: the charged amount (paisa) must match the
+        server-determined subscription amount
 
     On success: credits are granted, ``next_charge`` advances a month, and
     the dunning counter resets. On failure: the dunning counter increments;
     after :data:`MAX_FAILED_RENEWALS` consecutive failures the subscription
-    is auto-canceled (plan 7.2).
+    is auto-canceled and the Paymob mandate is canceled (plan 7.2).
     """
     body = await request.body()
     ip = _client_ip(request)
@@ -620,6 +627,26 @@ async def paymob_subscription_renewal_webhook(
         )
         db.commit()
         return {"status": "inactive"}
+
+    # Validate the charged amount against the server-determined
+    # subscription amount (review finding: webhook does not validate the
+    # charged amount). The amount is in paisa. If the payload omits it,
+    # we trust the stored amount (the client never sets it, plan 7.1).
+    charged_amount_paisa = tx.get("amount")
+    if charged_amount_paisa is not None:
+        expected_paisa = round(subscription.amount_egp * 100)
+        if charged_amount_paisa != expected_paisa:
+            _reject_webhook(
+                db,
+                ip,
+                (
+                    f"amount_mismatch: charged={charged_amount_paisa}"
+                    f" expected={expected_paisa}"
+                ),
+                None,
+                renewal_id,
+            )
+            raise HTTPException(status_code=400, detail="Amount mismatch")
 
     user = db.query(User).filter(User.id == subscription.user_id).first()
     now = datetime.now(timezone.utc)

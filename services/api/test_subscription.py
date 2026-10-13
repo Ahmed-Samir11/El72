@@ -501,6 +501,11 @@ class TestRenewalWebhook:
     def test_succeeded_grants_credits_and_advances(self, billing_client):
         from services.api.credits import get_balance
 
+        # Capture the balance before the renewal so we can assert the
+        # exact credit delta (review finding: weak credit assertion).
+        with billing_client._test_session() as db:
+            user = db.get(User, billing_client._test_user_id)
+            balance_before = get_balance(db, user)
         resp = _renewal_webhook(billing_client, "renewal_1", "succeeded")
         assert resp.status_code == 200, resp.text
         assert resp.json()["status"] == "succeeded"
@@ -514,12 +519,12 @@ class TestRenewalWebhook:
                 .filter_by(paymob_renewal_id="renewal_1")
                 .first()
             )
-            balance = get_balance(db, user)
+            balance_after = get_balance(db, user)
         assert renewal is not None
         assert renewal.status == "succeeded"
         assert sub.failed_renewals == 0
-        # standard package grants 10 credits on renewal.
-        assert balance >= 10
+        # standard package grants exactly 10 credits on renewal.
+        assert balance_after - balance_before == 10
         # next_charge advanced ~30 days from now. (SQLite returns naive
         # datetimes, so compare against a naive UTC datetime.)
         now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
