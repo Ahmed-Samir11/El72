@@ -11,17 +11,22 @@ Covers:
 - payment_audit_log entries for every admin action
 """
 
+from datetime import datetime
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from services.api.admin_models import Admin
+from services.api.admin_models import Admin, Refund
+from services.api.card_payment_models import CardPayment
+from services.api.cash_payment_models import CashPayment
 from services.api.dependencies import get_db, get_password_hash
 from services.api.main import app
 from services.api.manual_payment_models import ManualPayment, PaymentAuditLog
-from services.api.models import Base, CreditTransaction
+from services.api.models import Base, CreditTransaction, User
+from services.api.wallet_payment_models import WalletPayment
 
 USER_PHONE = "+201098765432"
 OTHER_PHONE = "+201055555555"
@@ -99,6 +104,23 @@ def _admin_token(client):
     )
     assert resp.status_code == 200, f"admin login failed: {resp.text}"
     return resp.json()["access_token"]
+
+
+def _admin_jwt_for(username: str) -> str:
+    """Mint an admin JWT for ``username`` (signed under the admin secret).
+
+    Used to test the verified dual-admin approval flow: the approver must
+    present their own token. Uses ``jose`` (the same library the API uses),
+    not PyJWT, which is not installed in CI.
+    """
+    from jose import jwt
+
+    from services.api.dependencies import ALGORITHM
+    from services.api.routers.payment import ADMIN_SECRET_KEY
+
+    return jwt.encode(
+        {"sub": f"admin:{username}"}, ADMIN_SECRET_KEY, algorithm=ALGORITHM
+    )
 
 
 class TestManualPaymentCreate:
@@ -253,11 +275,11 @@ class TestAdminPayments:
         resp = client.get("/admin/payments", headers=_auth_headers(admin_token))
         assert resp.status_code == 200
         payments = resp.json()
-        entry = next(p for p in payments if p["order_ref"] == order_ref)
+        entry = next(p for p in payments if p["order_id"] == order_ref)
         # The full phone number must NOT appear anywhere in the list response.
         assert USER_PHONE not in resp.text
-        assert "*" in entry["user_phone_masked"]
-        assert entry["user_phone_masked"].startswith("+20")
+        assert "*" in entry["user_phone"]
+        assert entry["user_phone"].startswith("+20")
 
     def test_list_invalid_date_422(self, client):
         admin_token = _admin_token(client)
@@ -509,3 +531,679 @@ class TestApproveReject:
             assert payment.user_phone == USER_PHONE
         finally:
             db.close()
+
+
+# ---------------------------------------------------------------------------
+# Feature 6: Admin & dispute management
+# ---------------------------------------------------------------------------
+
+
+def _seed_user(client, phone):
+    """Register + login a user; return (user_id, phone)."""
+    reg = client.post("/auth/register", json={"phone": phone, "password": "pw12345678"})
+    assert reg.status_code == 200, f"register failed: {reg.text}"
+    gen = app.dependency_overrides[get_db]()
+    db = next(gen)
+    try:
+        user = db.query(User).filter_by(phone=phone).first()
+        user_id = user.id
+    finally:
+        db.close()
+    return user_id, phone
+
+
+def _seed_payment_row(client, model, **fields):
+    """Insert a payment row directly via the DB (bypasses the payment flow)."""
+    gen = app.dependency_overrides[get_db]()
+    db = next(gen)
+    try:
+        db.add(model(**fields))
+        db.commit()
+    finally:
+        db.close()
+
+
+class TestUnifiedPayments:
+    def test_list_includes_all_four_methods(self, client):
+        admin_token = _admin_token(client)
+        user_id, _ = _seed_user(client, USER_PHONE)
+        _seed_payment_row(
+            client,
+            ManualPayment,
+            order_ref="ELH-UNIF-1",
+            user_id=user_id,
+            user_phone=USER_PHONE,
+            package="standard",
+            amount_egp=30,
+            status="pending",
+        )
+        _seed_payment_row(
+            client,
+            CardPayment,
+            paymob_payment_id="pm_card_1",
+            user_id=user_id,
+            package="premium",
+            amount_egp=90,
+            status="succeeded",
+        )
+        _seed_payment_row(
+            client,
+            WalletPayment,
+            paymob_payment_id="pm_wallet_1",
+            user_id=user_id,
+            wallet_type="fawry",
+            package="standard",
+            amount_egp=30,
+            status="succeeded",
+        )
+        _seed_payment_row(
+            client,
+            CashPayment,
+            paymob_payment_id="pm_cash_1",
+            user_id=user_id,
+            payment_code="CODE123",
+            cash_type="fawry",
+            package="premium",
+            amount_egp=90,
+            status="pending",
+            expires_at=datetime(2025, 1, 2, 12, 0, 0),
+        )
+        resp = client.get("/admin/payments", headers=_auth_headers(admin_token))
+        assert resp.status_code == 200
+        rows = resp.json()
+        methods = {r["method"] for r in rows}
+        assert methods == {"manual", "card", "wallet", "cash"}
+        # Phones are masked by default.
+        assert all("*" in r["user_phone"] for r in rows)
+
+    def test_filter_by_user_phone(self, client):
+        admin_token = _admin_token(client)
+        user_id, _ = _seed_user(client, USER_PHONE)
+        other_id, _ = _seed_user(client, OTHER_PHONE)
+        _seed_payment_row(
+            client,
+            ManualPayment,
+            order_ref="ELH-FILT-1",
+            user_id=user_id,
+            user_phone=USER_PHONE,
+            package="standard",
+            amount_egp=30,
+            status="pending",
+        )
+        _seed_payment_row(
+            client,
+            ManualPayment,
+            order_ref="ELH-FILT-2",
+            user_id=other_id,
+            user_phone=OTHER_PHONE,
+            package="standard",
+            amount_egp=30,
+            status="pending",
+        )
+        resp = client.get(
+            "/admin/payments",
+            headers=_auth_headers(admin_token),
+            params={"user": USER_PHONE},
+        )
+        assert resp.status_code == 200
+        rows = resp.json()
+        assert len(rows) == 1
+        assert rows[0]["order_id"] == "ELH-FILT-1"
+
+    def test_filter_by_status(self, client):
+        admin_token = _admin_token(client)
+        user_id, _ = _seed_user(client, USER_PHONE)
+        _seed_payment_row(
+            client,
+            ManualPayment,
+            order_ref="ELH-STAT-1",
+            user_id=user_id,
+            user_phone=USER_PHONE,
+            package="standard",
+            amount_egp=30,
+            status="pending",
+        )
+        _seed_payment_row(
+            client,
+            ManualPayment,
+            order_ref="ELH-STAT-2",
+            user_id=user_id,
+            user_phone=USER_PHONE,
+            package="standard",
+            amount_egp=30,
+            status="approved",
+        )
+        resp = client.get(
+            "/admin/payments",
+            headers=_auth_headers(admin_token),
+            params={"status_filter": "pending"},
+        )
+        assert resp.status_code == 200
+        rows = resp.json()
+        assert len(rows) == 1
+        assert rows[0]["order_id"] == "ELH-STAT-1"
+
+
+class TestRefund:
+    def _make_refundable(self, client, admin_token, package="standard"):
+        user_id, _ = _seed_user(client, USER_PHONE)
+        # Give the user credits so the claw-back is observable.
+        gen = app.dependency_overrides[get_db]()
+        db = next(gen)
+        try:
+            from services.api.credits import grant
+
+            grant(db, db.query(User).filter_by(id=user_id).first(), 15, reason="seed")
+            db.commit()
+        finally:
+            db.close()
+        _seed_payment_row(
+            client,
+            ManualPayment,
+            order_ref="ELH-REF-1",
+            user_id=user_id,
+            user_phone=USER_PHONE,
+            package=package,
+            amount_egp=30 if package == "standard" else 90,
+            status="approved",
+        )
+        return user_id
+
+    def test_refund_deducts_credits_and_logs(self, client):
+        admin_token = _admin_token(client)
+        self._make_refundable(client, admin_token, package="standard")
+        resp = client.post(
+            "/admin/payments/ELH-REF-1/refund",
+            headers=_auth_headers(admin_token),
+            json={"reason": "customer requested refund"},
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["status"] == "refunded"
+        assert body["credits_deducted"] == 10  # standard package
+        # Free tier starts at 3; +15 seed, -10 claw-back => 8.
+        assert body["new_balance"] == 8
+
+        # A Refund row was recorded.
+        gen = app.dependency_overrides[get_db]()
+        db = next(gen)
+        try:
+            refund = db.query(Refund).filter_by(order_key="manual:ELH-REF-1").first()
+            assert refund is not None
+            assert refund.credits_deducted == 10
+            # An audit entry was written.
+            audit = (
+                db.query(PaymentAuditLog)
+                .filter_by(action="refund", order_ref="ELH-REF-1")
+                .first()
+            )
+            assert audit is not None
+            assert audit.actor_username == "admin1"
+        finally:
+            db.close()
+
+    def test_refund_idempotent_second_409(self, client):
+        admin_token = _admin_token(client)
+        self._make_refundable(client, admin_token, package="standard")
+        first = client.post(
+            "/admin/payments/ELH-REF-1/refund",
+            headers=_auth_headers(admin_token),
+            json={"reason": "customer requested refund"},
+        )
+        assert first.status_code == 200
+        second = client.post(
+            "/admin/payments/ELH-REF-1/refund",
+            headers=_auth_headers(admin_token),
+            json={"reason": "customer requested refund"},
+        )
+        assert second.status_code == 409
+
+    def test_refund_unknown_payment_404(self, client):
+        admin_token = _admin_token(client)
+        resp = client.post(
+            "/admin/payments/ELH-NOPE/refund",
+            headers=_auth_headers(admin_token),
+            json={"reason": "customer requested refund"},
+        )
+        assert resp.status_code == 404
+
+    def test_refund_requires_reason(self, client):
+        admin_token = _admin_token(client)
+        self._make_refundable(client, admin_token, package="standard")
+        resp = client.post(
+            "/admin/payments/ELH-REF-1/refund",
+            headers=_auth_headers(admin_token),
+            json={"reason": ""},
+        )
+        assert resp.status_code == 422
+
+    def test_refund_rejects_blank_reason(self, client):
+        # A whitespace-only reason is rejected (422).
+        admin_token = _admin_token(client)
+        self._make_refundable(client, admin_token, package="standard")
+        resp = client.post(
+            "/admin/payments/ELH-REF-1/refund",
+            headers=_auth_headers(admin_token),
+            json={"reason": "   "},
+        )
+        assert resp.status_code == 422, resp.text
+
+    def test_refund_rejects_incomplete_payment(self, client):
+        # A pending payment has no granted credits to claw back, so it must
+        # not be refundable.
+        admin_token = _admin_token(client)
+        user_id, _ = _seed_user(client, USER_PHONE)
+        _seed_payment_row(
+            client,
+            ManualPayment,
+            order_ref="ELH-PEND-1",
+            user_id=user_id,
+            user_phone=USER_PHONE,
+            package="standard",
+            amount_egp=30,
+            status="pending",
+        )
+        resp = client.post(
+            "/admin/payments/ELH-PEND-1/refund",
+            headers=_auth_headers(admin_token),
+            json={"reason": "customer requested refund"},
+        )
+        assert resp.status_code == 400, resp.text
+
+    def test_refund_card_payment(self, client):
+        # A succeeded card payment is refundable; credits are clawed back
+        # and the payment is marked refunded.
+        admin_token = _admin_token(client)
+        user_id, _ = _seed_user(client, USER_PHONE)
+        _seed_payment_row(
+            client,
+            CardPayment,
+            paymob_payment_id="pm_card_ref",
+            user_id=user_id,
+            package="standard",
+            amount_egp=30,
+            status="succeeded",
+        )
+        resp = client.post(
+            "/admin/payments/pm_card_ref/refund",
+            headers=_auth_headers(admin_token),
+            json={"reason": "card chargeback"},
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["status"] == "refunded"
+        assert body["credits_deducted"] == 10
+        # The payment row is marked refunded.
+        gen = app.dependency_overrides[get_db]()
+        db = next(gen)
+        try:
+            p = db.query(CardPayment).filter_by(paymob_payment_id="pm_card_ref").first()
+            assert p.status == "refunded"
+        finally:
+            db.close()
+
+    def test_refund_cash_payment(self, client):
+        # A succeeded cash payment is refundable.
+        admin_token = _admin_token(client)
+        user_id, _ = _seed_user(client, USER_PHONE)
+        _seed_payment_row(
+            client,
+            CashPayment,
+            paymob_payment_id="pm_cash_ref",
+            user_id=user_id,
+            payment_code="CODEREF",
+            cash_type="fawry",
+            package="premium",
+            amount_egp=90,
+            status="succeeded",
+            expires_at=datetime(2025, 1, 2, 12, 0, 0),
+        )
+        resp = client.post(
+            "/admin/payments/pm_cash_ref/refund",
+            headers=_auth_headers(admin_token),
+            json={"reason": "cash not received"},
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["status"] == "refunded"
+        assert body["credits_deducted"] == 30  # premium package
+
+    def test_refund_wallet_payment(self, client):
+        # A succeeded wallet payment is refundable.
+        admin_token = _admin_token(client)
+        user_id, _ = _seed_user(client, USER_PHONE)
+        _seed_payment_row(
+            client,
+            WalletPayment,
+            paymob_payment_id="pm_wallet_ref",
+            user_id=user_id,
+            wallet_type="fawry",
+            package="standard",
+            amount_egp=30,
+            status="succeeded",
+        )
+        resp = client.post(
+            "/admin/payments/pm_wallet_ref/refund",
+            headers=_auth_headers(admin_token),
+            json={"reason": "wallet reversal"},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["credits_deducted"] == 10
+
+    def test_refund_by_internal_id_when_paymob_id_absent(self, client):
+        # When a Paymob payment has no paymob_payment_id, the unified list
+        # exposes the internal id (str(id)); the refund endpoint must
+        # resolve it via the id fallback. All four Paymob tables use
+        # Integer primary keys, so str(id) is always numeric.
+        admin_token = _admin_token(client)
+        user_id, _ = _seed_user(client, USER_PHONE)
+        _seed_payment_row(
+            client,
+            CardPayment,
+            paymob_payment_id=None,
+            user_id=user_id,
+            package="standard",
+            amount_egp=30,
+            status="succeeded",
+        )
+        gen = app.dependency_overrides[get_db]()
+        db = next(gen)
+        try:
+            p = db.query(CardPayment).filter_by(paymob_payment_id=None).first()
+            internal_id = p.id
+        finally:
+            db.close()
+        resp = client.post(
+            f"/admin/payments/{internal_id}/refund",
+            headers=_auth_headers(admin_token),
+            json={"reason": "resolve by internal id"},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["status"] == "refunded"
+
+
+class TestAdjustCredits:
+    def test_small_adjustment_no_approval(self, client):
+        admin_token = _admin_token(client)
+        user_id, _ = _seed_user(client, USER_PHONE)
+        resp = client.post(
+            f"/admin/users/{user_id}/adjust-credits",
+            headers=_auth_headers(admin_token),
+            json={"amount": 5, "reason": "goodwill credit"},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["new_balance"] == 3 + 5  # free tier starts at 3
+
+    def test_large_adjustment_requires_approval(self, client):
+        admin_token = _admin_token(client)
+        user_id, _ = _seed_user(client, USER_PHONE)
+        resp = client.post(
+            f"/admin/users/{user_id}/adjust-credits",
+            headers=_auth_headers(admin_token),
+            json={"amount": 100, "reason": "large topup"},
+        )
+        assert resp.status_code == 403
+
+    def test_large_adjustment_same_admin_rejected(self, client):
+        admin_token = _admin_token(client)
+        user_id, _ = _seed_user(client, USER_PHONE)
+        gen = app.dependency_overrides[get_db]()
+        db = next(gen)
+        try:
+            admin = db.query(Admin).filter_by(username="admin1").first()
+            admin_id = admin.id
+        finally:
+            db.close()
+        resp = client.post(
+            f"/admin/users/{user_id}/adjust-credits",
+            headers=_auth_headers(admin_token),
+            json={"amount": 100, "reason": "large topup", "approver_id": admin_id},
+        )
+        assert resp.status_code == 403
+
+    def test_large_adjustment_requires_approver_token(self, client):
+        # A large adjustment with an approver_id but NO approver token is
+        # rejected: approval must be verified, not merely claimed.
+        admin_token = _admin_token(client)
+        user_id, _ = _seed_user(client, USER_PHONE)
+        resp = client.post(
+            f"/admin/users/{user_id}/adjust-credits",
+            headers=_auth_headers(admin_token),
+            json={"amount": 100, "reason": "large topup", "approver_id": "x"},
+        )
+        assert resp.status_code == 403
+
+    def test_large_adjustment_with_valid_approver(self, client):
+        admin_token = _admin_token(client)
+        user_id, _ = _seed_user(client, USER_PHONE)
+        # Provision a second admin out-of-band and mint their token.
+        gen = app.dependency_overrides[get_db]()
+        db = next(gen)
+        try:
+            second = Admin(username="admin2", password_hash=get_password_hash("pw"))
+            db.add(second)
+            db.commit()
+            second_id = second.id
+        finally:
+            db.close()
+        resp = client.post(
+            f"/admin/users/{user_id}/adjust-credits",
+            headers={
+                **_auth_headers(admin_token),
+                "X-Approver-Token": _admin_jwt_for("admin2"),
+            },
+            json={"amount": 100, "reason": "large topup", "approver_id": second_id},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["new_balance"] == 3 + 100
+
+    def test_large_adjustment_token_does_not_match(self, client):
+        # A valid approver token for a DIFFERENT admin than the claimed
+        # approver_id must be rejected (no spoofing).
+        admin_token = _admin_token(client)
+        user_id, _ = _seed_user(client, USER_PHONE)
+        gen = app.dependency_overrides[get_db]()
+        db = next(gen)
+        try:
+            second = Admin(username="admin2", password_hash=get_password_hash("pw"))
+            db.add(second)
+            db.commit()
+        finally:
+            db.close()
+        # Token is for admin2, but approver_id claims a nonexistent admin.
+        resp = client.post(
+            f"/admin/users/{user_id}/adjust-credits",
+            headers={
+                **_auth_headers(admin_token),
+                "X-Approver-Token": _admin_jwt_for("admin2"),
+            },
+            json={
+                "amount": 100,
+                "reason": "large topup",
+                "approver_id": "not-a-real-admin",
+            },
+        )
+        assert resp.status_code == 403
+
+    def test_large_adjustment_invalid_approver(self, client):
+        admin_token = _admin_token(client)
+        user_id, _ = _seed_user(client, USER_PHONE)
+        resp = client.post(
+            f"/admin/users/{user_id}/adjust-credits",
+            headers=_auth_headers(admin_token),
+            json={
+                "amount": 100,
+                "reason": "large topup",
+                "approver_id": "not-a-real-admin",
+            },
+        )
+        assert resp.status_code == 403
+
+    def test_adjust_unknown_user_404(self, client):
+        admin_token = _admin_token(client)
+        resp = client.post(
+            "/admin/users/not-a-real-user/adjust-credits",
+            headers=_auth_headers(admin_token),
+            json={"amount": 5, "reason": "goodwill credit"},
+        )
+        assert resp.status_code == 404
+
+    def test_adjust_cannot_go_negative(self, client):
+        # A manual adjustment must not drive the balance below zero (the
+        # free tier starts at 3; removing 4 would be negative).
+        admin_token = _admin_token(client)
+        user_id, _ = _seed_user(client, USER_PHONE)
+        resp = client.post(
+            f"/admin/users/{user_id}/adjust-credits",
+            headers=_auth_headers(admin_token),
+            json={"amount": -4, "reason": "overdraft correction"},
+        )
+        assert resp.status_code == 400, resp.text
+
+    def test_adjust_zero_rejected(self, client):
+        # A zero-credit adjustment is a no-op and is rejected.
+        admin_token = _admin_token(client)
+        user_id, _ = _seed_user(client, USER_PHONE)
+        resp = client.post(
+            f"/admin/users/{user_id}/adjust-credits",
+            headers=_auth_headers(admin_token),
+            json={"amount": 0, "reason": "no-op"},
+        )
+        assert resp.status_code == 400, resp.text
+
+    def test_adjust_out_of_bounds_rejected(self, client):
+        # Amounts outside the [-1000, 1000] bound are rejected (422).
+        admin_token = _admin_token(client)
+        user_id, _ = _seed_user(client, USER_PHONE)
+        for bad in (-1001, 1001):
+            resp = client.post(
+                f"/admin/users/{user_id}/adjust-credits",
+                headers=_auth_headers(admin_token),
+                json={"amount": bad, "reason": "out of bounds"},
+            )
+            assert resp.status_code == 422, resp.text
+
+    def test_adjust_credits_logged(self, client):
+        admin_token = _admin_token(client)
+        user_id, _ = _seed_user(client, USER_PHONE)
+        client.post(
+            f"/admin/users/{user_id}/adjust-credits",
+            headers=_auth_headers(admin_token),
+            json={"amount": 5, "reason": "goodwill credit"},
+        )
+        gen = app.dependency_overrides[get_db]()
+        db = next(gen)
+        try:
+            audit = (
+                db.query(PaymentAuditLog)
+                .filter_by(action="adjust_credits", target_user_id=user_id)
+                .first()
+            )
+            assert audit is not None
+            assert audit.actor_username == "admin1"
+        finally:
+            db.close()
+
+
+class TestUnifiedRejectFields:
+    def test_rejected_manual_payment_exposes_reject_reason(self, client):
+        # A rejected manual payment exposes reject_reason and resolved_at
+        # in the unified list (None for other methods).
+        admin_token = _admin_token(client)
+        user_id, _ = _seed_user(client, USER_PHONE)
+        _seed_payment_row(
+            client,
+            ManualPayment,
+            order_ref="ELH-REJ-1",
+            user_id=user_id,
+            user_phone=USER_PHONE,
+            package="standard",
+            amount_egp=30,
+            status="rejected",
+            reject_reason="insufficient funds",
+            resolved_at=datetime(2025, 1, 1, 12, 0, 0),
+        )
+        resp = client.get(
+            "/admin/payments",
+            headers=_auth_headers(admin_token),
+            params={"status_filter": "rejected"},
+        )
+        assert resp.status_code == 200
+        rows = resp.json()
+        entry = next(r for r in rows if r["order_id"] == "ELH-REJ-1")
+        assert entry["reject_reason"] == "insufficient funds"
+        assert entry["resolved_at"] is not None
+
+
+class TestAuditLog:
+    def test_audit_log_returns_entries(self, client):
+        admin_token = _admin_token(client)
+        user_id, _ = _seed_user(client, USER_PHONE)
+        client.post(
+            f"/admin/users/{user_id}/adjust-credits",
+            headers=_auth_headers(admin_token),
+            json={"amount": 5, "reason": "goodwill credit"},
+        )
+        resp = client.get("/admin/audit-log", headers=_auth_headers(admin_token))
+        assert resp.status_code == 200
+        rows = resp.json()
+        assert any(r["event_type"] == "adjust_credits" for r in rows)
+
+    def test_audit_log_filter_by_event_type(self, client):
+        admin_token = _admin_token(client)
+        user_id, _ = _seed_user(client, USER_PHONE)
+        client.post(
+            f"/admin/users/{user_id}/adjust-credits",
+            headers=_auth_headers(admin_token),
+            json={"amount": 5, "reason": "goodwill credit"},
+        )
+        resp = client.get(
+            "/admin/audit-log",
+            headers=_auth_headers(admin_token),
+            params={"event_type": "adjust_credits"},
+        )
+        assert resp.status_code == 200
+        rows = resp.json()
+        assert all(r["event_type"] == "adjust_credits" for r in rows)
+        assert len(rows) >= 1
+
+    def test_audit_log_filter_by_user_id(self, client):
+        admin_token = _admin_token(client)
+        user_id, _ = _seed_user(client, USER_PHONE)
+        client.post(
+            f"/admin/users/{user_id}/adjust-credits",
+            headers=_auth_headers(admin_token),
+            json={"amount": 5, "reason": "goodwill credit"},
+        )
+        resp = client.get(
+            "/admin/audit-log",
+            headers=_auth_headers(admin_token),
+            params={"user_id": user_id},
+        )
+        assert resp.status_code == 200
+        rows = resp.json()
+        # target_user_id is stored as a string; compare as strings.
+        assert all(r["user_id"] == str(user_id) for r in rows)
+        assert len(rows) >= 1
+
+    def test_audit_log_filter_by_date_from(self, client):
+        admin_token = _admin_token(client)
+        user_id, _ = _seed_user(client, USER_PHONE)
+        client.post(
+            f"/admin/users/{user_id}/adjust-credits",
+            headers=_auth_headers(admin_token),
+            json={"amount": 5, "reason": "goodwill credit"},
+        )
+        # A date_from in the future should exclude the just-created entry.
+        resp = client.get(
+            "/admin/audit-log",
+            headers=_auth_headers(admin_token),
+            params={"date_from": "2999-01-01"},
+        )
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+    def test_audit_log_requires_admin(self, client):
+        # No admin token -> 401/403.
+        resp = client.get("/admin/audit-log")
+        assert resp.status_code in (401, 403)

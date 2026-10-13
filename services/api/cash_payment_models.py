@@ -54,7 +54,7 @@ class CashPayment(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "status IN ('pending', 'succeeded', 'failed', 'canceled')",
+            "status IN ('pending', 'succeeded', 'failed', 'canceled', 'refunded')",
             name="cash_payments_status_check",
         ),
         # Mirror the SQL DDL CHECK constraints so ORM-created schemas

@@ -164,6 +164,8 @@ PAYMENT_EVENT_TYPES = frozenset(
         "approve",
         "reject",
         "reveal_contact",
+        "refund",
+        "adjust_credits",
         "webhook_received",
         "webhook_signature_failed",
         "webhook_duplicate",
