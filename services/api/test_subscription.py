@@ -266,6 +266,21 @@ class TestSubscriptionCreate:
             },
         )
         assert resp.status_code == 502, resp.text
+        # The staging token is consumed (not restored) even though the
+        # Paymob creation failed (review finding: no test for staging
+        # token state when Paymob creation fails). A consumed token cannot
+        # be reused.
+        resp2 = client.post(
+            "/subscription/create",
+            headers=_auth_headers(token),
+            json={
+                "staging_token": staging,
+                "token": "tok_sub_12345",
+                "package": "standard",
+                "interval": "month",
+            },
+        )
+        assert resp2.status_code == 400, resp2.text
 
     def test_cancel_provider_failure_502(self, client, monkeypatch):
         # If the Paymob cancel API fails, cancel returns a controlled 502.
@@ -647,6 +662,23 @@ class TestRenewalWebhook:
             )
         assert len(events) == 1
         assert events[0].action == "subscription_renewal_succeeded"
+
+    def test_failed_renewal_idempotent(self, billing_client):
+        # A duplicate failed renewal is a no-op (review finding: ensure
+        # webhook idempotency covers both success and failure).
+        first = _renewal_webhook(billing_client, "renewal_fdup", "failed")
+        assert first.status_code == 200
+        second = _renewal_webhook(billing_client, "renewal_fdup", "failed")
+        assert second.status_code == 200
+        assert second.json()["status"] == "duplicate"
+        # Only one renewal row.
+        with billing_client._test_session() as db:
+            count = (
+                db.query(SubscriptionRenewal)
+                .filter_by(paymob_renewal_id="renewal_fdup")
+                .count()
+            )
+        assert count == 1
 
     def test_unknown_subscription_404(self, billing_client):
         body = json.dumps(
