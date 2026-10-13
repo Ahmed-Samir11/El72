@@ -21,7 +21,6 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-import services.billing.main as billing_main
 from services.api.cash_payment_models import CashPayment
 from services.api.manual_payment_models import PaymentAuditLog
 from services.api.models import User
@@ -473,7 +472,15 @@ def _sign(body: bytes) -> str:
 
 @pytest.fixture
 def billing_client(monkeypatch):
-    """Billing app with a fresh in-memory DB and a known HMAC secret."""
+    """Billing app with a fresh in-memory DB and a known HMAC secret.
+
+    Deferred import: importing services.billing.main at collection time
+    would create its SQLAlchemy engine from whatever DATABASE_URL happens
+    to be set, which requires the postgres driver (same pattern as the
+    card payment tests).
+    """
+    import services.billing.main as billing_main
+
     monkeypatch.setattr(billing_main, "PAYMOB_HMAC_SECRET", TEST_HMAC_SECRET)
 
     engine = create_engine(
@@ -533,6 +540,8 @@ def _webhook(client, tx: dict, sign: bool = True):
 
 class TestBillingCashTransitions:
     def test_succeeded_webhook_transitions_cash_row(self, billing_client):
+        import services.billing.main as billing_main
+
         resp = _webhook(
             billing_client,
             {
@@ -560,6 +569,8 @@ class TestBillingCashTransitions:
             db.close()
 
     def test_failed_webhook_transitions_cash_row(self, billing_client):
+        import services.billing.main as billing_main
+
         resp = _webhook(
             billing_client,
             {
