@@ -878,6 +878,37 @@ class TestRefund:
         assert resp.status_code == 200, resp.text
         assert resp.json()["credits_deducted"] == 10
 
+    def test_refund_by_internal_id_when_paymob_id_absent(self, client):
+        # When a Paymob payment has no paymob_payment_id, the unified list
+        # exposes the internal id (str(id)); the refund endpoint must
+        # resolve it via the id fallback. All four Paymob tables use
+        # Integer primary keys, so str(id) is always numeric.
+        admin_token = _admin_token(client)
+        user_id, _ = _seed_user(client, USER_PHONE)
+        _seed_payment_row(
+            client,
+            CardPayment,
+            paymob_payment_id=None,
+            user_id=user_id,
+            package="standard",
+            amount_egp=30,
+            status="succeeded",
+        )
+        gen = app.dependency_overrides[get_db]()
+        db = next(gen)
+        try:
+            p = db.query(CardPayment).filter_by(paymob_payment_id=None).first()
+            internal_id = p.id
+        finally:
+            db.close()
+        resp = client.post(
+            f"/admin/payments/{internal_id}/refund",
+            headers=_auth_headers(admin_token),
+            json={"reason": "resolve by internal id"},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["status"] == "refunded"
+
 
 class TestAdjustCredits:
     def test_small_adjustment_no_approval(self, client):
