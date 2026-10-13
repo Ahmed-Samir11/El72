@@ -110,14 +110,15 @@ def _admin_jwt_for(username: str) -> str:
     """Mint an admin JWT for ``username`` (signed under the admin secret).
 
     Used to test the verified dual-admin approval flow: the approver must
-    present their own token.
+    present their own token. Uses ``jose`` (the same library the API uses),
+    not PyJWT, which is not installed in CI.
     """
-    import jwt as pyjwt
+    from jose import jwt
 
     from services.api.dependencies import ALGORITHM
     from services.api.routers.payment import ADMIN_SECRET_KEY
 
-    return pyjwt.encode(
+    return jwt.encode(
         {"sub": f"admin:{username}"}, ADMIN_SECRET_KEY, algorithm=ALGORITHM
     )
 
