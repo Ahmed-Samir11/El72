@@ -367,6 +367,37 @@ class TestSubscriptionCancel:
         status = client.get("/subscription/status", headers=_auth_headers(token)).json()
         assert status["active"] is False
 
+    def test_resubscribe_after_cancel(self, client, monkeypatch):
+        # A user can re-subscribe after canceling (review finding: missing
+        # re-subscription after cancel test). The partial unique index
+        # constrains only 'active' rows, so a canceled subscription does
+        # not block a new one.
+        import services.api.routers.subscription as sub_router
+
+        monkeypatch.setattr(sub_router, "cancel_subscription", lambda _id: None)
+        token = _user_token(client)
+        sub_id = self._create(client, token)
+        cancel_resp = client.post(
+            "/subscription/cancel",
+            headers=_auth_headers(token),
+            json={"subscription_id": sub_id},
+        )
+        assert cancel_resp.status_code == 200, cancel_resp.text
+        # Re-subscribe with a fresh staging token.
+        staging = _staging_token_for(client, token)
+        resp = client.post(
+            "/subscription/create",
+            headers=_auth_headers(token),
+            json={
+                "staging_token": staging,
+                "token": "tok_sub_re12345",
+                "package": "standard",
+                "interval": "month",
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["subscription_id"] != sub_id
+
     def test_cancel_unknown_404(self, client):
         token = _user_token(client)
         resp = client.post(
@@ -561,6 +592,30 @@ class TestRenewalWebhook:
         # The Paymob mandate was canceled exactly once.
         assert len(calls) == 1
         assert calls[0] == billing_client._test_paymob_sub_id
+
+    def test_auto_cancel_paymob_failure_still_marks_failed(
+        self, billing_client, monkeypatch
+    ):
+        # If the Paymob cancel fails, the local subscription is still marked
+        # failed (best-effort cancellation; the webhook is the source of
+        # truth). Review finding: auto-cancel Paymob failure test.
+        import services.billing.main as billing_main
+        from services.common.paymob_client import PaymobApiError
+
+        def _fail(subscription_id):
+            raise PaymobApiError(502, "paymob api unreachable")
+
+        monkeypatch.setattr(billing_main, "cancel_subscription", _fail)
+        for i in range(3):
+            resp = _renewal_webhook(billing_client, f"renewal_g{i}", "failed")
+            assert resp.status_code == 200, resp.text
+        with billing_client._test_session() as db:
+            sub = db.get(Subscription, billing_client._test_sub_id)
+        # The subscription is marked failed even though the Paymob cancel
+        # failed.
+        assert sub.status == "failed"
+        assert sub.failed_renewals == 3
+        assert sub.canceled_at is not None
 
     def test_idempotent_duplicate(self, billing_client):
         first = _renewal_webhook(billing_client, "renewal_dup", "succeeded")

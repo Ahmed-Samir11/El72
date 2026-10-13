@@ -88,13 +88,16 @@ class Subscription(Base):
         Index("ix_subscriptions_user_status", "user_id", "status"),
         # One active subscription per user, enforced at the database level
         # (plan 7.1). Partial unique index: only 'active' rows are
-        # constrained. ``postgresql_where`` applies on Postgres; SQLite
-        # tests rely on the application-level check in the router.
+        # constrained, so a canceled/failed subscription does not block a
+        # re-subscription. ``postgresql_where`` applies on Postgres and
+        # ``sqlite_where`` on SQLite (review finding: the index was not
+        # partial in SQLite, blocking re-subscription after cancel).
         Index(
             "uq_subscriptions_one_active_per_user",
             "user_id",
             unique=True,
             postgresql_where=text("status = 'active'"),
+            sqlite_where=text("status = 'active'"),
         ),
     )
 
