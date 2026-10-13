@@ -644,6 +644,84 @@ abstract class AppLocalizations {
   /// **'Try again'**
   String get retryPayment;
 
+  /// No description provided for @selectPaymentMethod.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose how you\'d like to pay'**
+  String get selectPaymentMethod;
+
+  /// No description provided for @paymentMethodWallet.
+  ///
+  /// In en, this message translates to:
+  /// **'Mobile wallet'**
+  String get paymentMethodWallet;
+
+  /// No description provided for @paymentMethodWalletDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Pay with a mobile wallet (Vodafone Cash, Orange Money, Etisalat Cash)'**
+  String get paymentMethodWalletDesc;
+
+  /// No description provided for @paymentMethodCash.
+  ///
+  /// In en, this message translates to:
+  /// **'Cash (Fawry / bank)'**
+  String get paymentMethodCash;
+
+  /// No description provided for @paymentMethodCashDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Get a payment code and pay at a Fawry point or bank branch'**
+  String get paymentMethodCashDesc;
+
+  /// No description provided for @selectCashChannel.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose your cash channel'**
+  String get selectCashChannel;
+
+  /// No description provided for @cashChannelFawry.
+  ///
+  /// In en, this message translates to:
+  /// **'Fawry'**
+  String get cashChannelFawry;
+
+  /// No description provided for @cashChannelBank.
+  ///
+  /// In en, this message translates to:
+  /// **'Bank branch'**
+  String get cashChannelBank;
+
+  /// No description provided for @cashCodeTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Your payment code'**
+  String get cashCodeTitle;
+
+  /// No description provided for @cashCodeDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Show this code at the cash point or bank branch. It expires in 24 hours.'**
+  String get cashCodeDesc;
+
+  /// No description provided for @cashExpiresAt.
+  ///
+  /// In en, this message translates to:
+  /// **'Expires {time}'**
+  String cashExpiresAt(String time);
+
+  /// No description provided for @copyCode.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy'**
+  String get copyCode;
+
+  /// No description provided for @codeCopied.
+  ///
+  /// In en, this message translates to:
+  /// **'Code copied'**
+  String get codeCopied;
+
   /// No description provided for @statCurrent.
   ///
   /// In en, this message translates to:

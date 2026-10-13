@@ -100,7 +100,8 @@ class PaymentAuditLog(Base):
             "'webhook_received', 'webhook_signature_failed', "
             "'webhook_duplicate', 'validation_rejected', 'otp_failed', "
             "'token_expired', 'amount_mismatch', 'card_payment_created', "
-            "'staging_rejected', 'wallet_payment_created')",
+            "'staging_rejected', 'wallet_payment_created', "
+            "'cash_payment_created', 'cash_expired')",
         ),
     )
 

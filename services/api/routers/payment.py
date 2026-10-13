@@ -8,10 +8,12 @@ Implements the manual payment flow from plans/paymob-integration.md:
 - GET /admin/payments/{order_ref}/contact — audited full-contact reveal
 - POST /admin/payments/{order_ref}/approve — idempotent, concurrency-safe
 - POST /admin/payments/{order_ref}/reject — with reason, audited
-- GET /payment/start — card/wallet staging token (Paymob customer)
-- POST /payment/confirm — card (ToC token) or wallet (type + number)
+- GET /payment/start — card/wallet/cash staging token (Paymob customer)
+- POST /payment/confirm — card (ToC token), wallet (type + number) or
+  cash (channel; returns a single-use payment code with 24 h expiry)
 - POST /payment/confirm-otp — wallet OTP confirmation (3-attempt budget)
-- GET /payment/status/{payment_id} — owner-only status (card or wallet)
+- GET /payment/status/{payment_id} — owner-only status (card, wallet or
+  cash; cash lookups are rate-limited to 1/minute and lazily expire)
 
 Security properties:
 - Package pricing is server-determined from an allowlist (no client amounts).
@@ -42,6 +44,7 @@ from sqlalchemy.orm import Session
 
 from services.api.admin_models import Admin
 from services.api.card_payment_models import CardPayment
+from services.api.cash_payment_models import CashPayment
 from services.api.credits import get_balance, grant
 from services.api.dependencies import (
     ALGORITHM,
@@ -70,10 +73,12 @@ from services.billing.models import PaymentLog
 from services.common.paymob_client import (
     PaymobApiError,
     confirm_wallet_otp,
+    create_cash_payment,
     create_customer,
     create_payment,
     create_payment_method,
     create_wallet_payment_method,
+    extract_cash_code,
 )
 
 logger = logging.getLogger(__name__)
@@ -135,6 +140,20 @@ OTP_RE = re.compile(r"^\d{4,8}$")
 OTP_FLOOD_LIMIT = 5
 OTP_FLOOD_WINDOW_SECONDS = 600
 
+# Cash flow (Feature 3).
+CASH_TYPES = frozenset({"fawry", "bank"})  # plan 3: server-side allowlist
+# 5 cash confirms/hour per user (anti-abuse, mirrors the wallet limit).
+MAX_CASH_CONFIRMS_PER_HOUR = 5
+# Code/order expiry: 24 h (plan 3.3).
+CASH_CODE_TTL_HOURS = 24
+# Plan 3.2: cash status polling is limited to 1 request/minute per payment
+# (code-enumeration guard); card/wallet lookups are not subject to it.
+CASH_STATUS_POLL_LIMIT = 1
+CASH_STATUS_POLL_WINDOW_SECONDS = 60
+# Unambiguous alphabet (no 0/O/1/I) for copyable, non-sequential codes.
+CASH_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+CASH_CODE_LENGTH = 8
+
 
 def _utcnow() -> datetime:
     """Timezone-aware UTC now."""
@@ -149,6 +168,15 @@ def _generate_order_ref() -> str:
     date_part = _utcnow().strftime("%Y%m%d")
     random_part = secrets.token_hex(4)  # 8 hex chars
     return f"ELH-{date_part}-{random_part}"
+
+
+def _generate_cash_code() -> str:
+    """Random, non-sequential cash payment code (plan 3.1/3.2).
+
+    8 chars from an unambiguous alphabet (no 0/O/1/I) so the code is safe
+    to write down and read aloud. Contains no user data.
+    """
+    return "".join(secrets.choice(CASH_CODE_ALPHABET) for _ in range(CASH_CODE_LENGTH))
 
 
 def _mask_phone(phone: Optional[str]) -> str:
@@ -403,13 +431,15 @@ class PaymentStartResponse(BaseModel):
 
 class PaymentConfirmBody(BaseModel):
     staging_token: str
-    method_type: str = "card"  # "card" | "wallet"
+    method_type: str = "card"  # "card" | "wallet" | "cash"
     package: str  # "standard" | "premium"
     # card: ToC SDK output — a reference only, never card data.
     token: Optional[str] = None
     # wallet: type (plan 2.7 allowlist) + Egyptian wallet number.
     wallet_type: Optional[str] = None
     wallet_number: Optional[str] = None
+    # cash: channel (plan Feature 3 allowlist).
+    cash_type: Optional[str] = None
 
 
 class PaymentConfirmResponse(BaseModel):
@@ -417,6 +447,9 @@ class PaymentConfirmResponse(BaseModel):
     status: str
     # card only: for the ToS SDK (3DS).
     authentication_token: Optional[str] = None
+    # cash only: the single-use payment code + its 24 h expiry.
+    payment_code: Optional[str] = None
+    expires_at: Optional[str] = None
 
 
 class OtpConfirmBody(BaseModel):
@@ -435,6 +468,9 @@ class PaymentStatusResponse(BaseModel):
     amount_egp: float
     status: str
     created_at: str
+    # cash only: the single-use payment code + its expiry.
+    payment_code: Optional[str] = None
+    expires_at: Optional[str] = None
 
 
 def _paymob_error_response(exc: PaymobApiError) -> None:
@@ -604,6 +640,8 @@ def confirm_payment(
         return _confirm_card_payment(body, request, db, user)
     if body.method_type == "wallet":
         return _confirm_wallet_payment(body, request, db, user)
+    if body.method_type == "cash":
+        return _confirm_cash_payment(body, request, db, user)
     raise HTTPException(status_code=400, detail="Unsupported method type")
 
 
@@ -809,6 +847,117 @@ def _confirm_wallet_payment(
     return PaymentConfirmResponse(payment_id=payment_id, status=initial_status)
 
 
+def _confirm_cash_payment(
+    body: PaymentConfirmBody,
+    request: Request,
+    db: Session,
+    user: User,
+) -> PaymentConfirmResponse:
+    """Confirm a cash payment (Fawry / bank, Feature 3).
+
+    Security (plan 3.x):
+    - ``cash_type`` is validated against the server-side allowlist (fawry /
+      bank) — unknown channels are rejected before any Paymob call.
+    - Rate-limited to 5 confirms/hour per user, enforced BEFORE consuming
+      the staging token (mirrors the wallet limit).
+    - Amount is server-determined from the package (3.4).
+    - The payment code is random and non-sequential (3.2), carries no user
+      data (3.1), expires after 24 h (3.3), and is audited with the payment
+      (3.5).
+    """
+    if not body.cash_type:
+        raise HTTPException(status_code=400, detail="Missing cash_type")
+    cash_type = body.cash_type.strip().lower()
+    if cash_type not in CASH_TYPES:
+        raise HTTPException(status_code=400, detail="Invalid cash type")
+
+    # Serialize this user's confirmations (rate-limit + staging consumption).
+    db.execute(select(User).where(User.id == user.id).with_for_update())
+
+    store = get_staging_store()
+
+    # Rate limit BEFORE consuming the staging token so a rejected request
+    # does not burn a valid token.
+    hour_ago = _utcnow() - timedelta(hours=1)
+    cash_count = (
+        db.query(CashPayment)
+        .filter(
+            CashPayment.user_id == user.id,
+            CashPayment.paymob_payment_id.isnot(None),
+            CashPayment.created_at >= hour_ago,
+        )
+        .count()
+    )
+    if cash_count >= MAX_CASH_CONFIRMS_PER_HOUR:
+        raise HTTPException(
+            status_code=429,
+            detail="Rate limit: maximum 5 cash payment confirmations per hour",
+        )
+
+    _consume_staging_token(store, body.staging_token, user, request, db)
+
+    # Server-determined amount (piastres) — the client never sets it.
+    reference_id = f"elhaq-{user.id}-{body.package}"
+    try:
+        payment_resp = create_cash_payment(
+            body.staging_token,
+            cash_type,
+            PACKAGE_PRICES_PAISA[body.package],
+            "EGP",
+            reference_id,
+        )
+    except PaymobApiError as exc:
+        _paymob_error_response(exc)
+
+    payment_id = _paymob_payment_id(payment_resp)
+    code = extract_cash_code(payment_resp)
+    if not code:
+        raise HTTPException(
+            status_code=502, detail="Payment provider did not return a payment code"
+        )
+
+    expires_at = _utcnow() + timedelta(hours=CASH_CODE_TTL_HOURS)
+    payment = CashPayment(
+        user_id=user.id,
+        paymob_payment_id=payment_id,
+        payment_code=code,
+        cash_type=cash_type,
+        package=body.package,
+        amount_egp=PACKAGE_PRICING[body.package],
+        status="pending",
+        expires_at=expires_at,
+    )
+    db.add(payment)
+    # 3.5: cash payments are logged with the code (not user-sensitive data),
+    # status, package and amount.
+    record_payment_event(
+        db,
+        event_type="cash_payment_created",
+        user_id=str(user.id),
+        payment_ref=payment_id,
+        detail=sanitize_for_log(
+            f"package={body.package} cash_type={cash_type} code={code}"
+            f" amount_egp={PACKAGE_PRICING[body.package]}"
+        ),
+        ip_address=_client_ip(request),
+    )
+    db.commit()
+
+    logger.info(
+        "Cash payment %s confirmed for user %s (%s/%s)",
+        payment_id,
+        user.id,
+        cash_type,
+        body.package,
+    )
+    return PaymentConfirmResponse(
+        payment_id=payment_id,
+        status="pending",
+        payment_code=code,
+        expires_at=expires_at.isoformat(),
+    )
+
+
 @router.post("/payment/confirm-otp", response_model=OtpConfirmResponse)
 def submit_wallet_otp(
     body: OtpConfirmBody,
@@ -961,14 +1110,22 @@ def submit_wallet_otp(
 @router.get("/payment/status/{payment_id}", response_model=PaymentStatusResponse)
 def get_payment_status(
     payment_id: str,
+    request: Request,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """Get payment status (owner only, plan 1.8). Card and wallet payments
-    resolve here; the final state comes from the Paymob webhook (recorded in
-    ``payment_logs``). Until then the row's own status is returned (``pending``
-    for cards, ``pending_otp``/``processing`` for wallets). A 404 (not 403)
-    avoids leaking that a payment exists for someone else.
+    """Get payment status (owner only, plan 1.8). Card, wallet and cash
+    payments resolve here; the final state comes from the Paymob webhook
+    (recorded in ``payment_logs``). Until then the row's own status is
+    returned (``pending`` for cards, ``pending_otp``/``processing`` for
+    wallets, ``pending`` for cash). A 404 (not 403) avoids leaking that a
+    payment exists for someone else.
+
+    Cash rows (Feature 3) additionally get:
+    - lazy expiry (plan 3.3): a ``pending`` row past ``expires_at``
+      transitions to ``canceled`` and is audited as ``cash_expired``;
+    - a code-enumeration guard (plan 3.2): 1 status lookup per payment per
+      minute (atomic counter keyed by payment id; Redis fail-closed 503).
     """
     card = (
         db.query(CardPayment)
@@ -978,6 +1135,8 @@ def get_payment_status(
         )
         .first()
     )
+    code = None
+    expires = None
     if card is not None:
         fallback_status = "pending"
         package, amount, created = card.package, card.amount_egp, card.created_at
@@ -990,10 +1149,17 @@ def get_payment_status(
             )
             .first()
         )
-        if wallet is None:
-            raise HTTPException(status_code=404, detail="Payment not found")
-        fallback_status = wallet.status
-        package, amount, created = wallet.package, wallet.amount_egp, wallet.created_at
+        if wallet is not None:
+            fallback_status = wallet.status
+            package, amount, created = (
+                wallet.package,
+                wallet.amount_egp,
+                wallet.created_at,
+            )
+        else:
+            package, amount, created, fallback_status, code, expires = (
+                _resolve_cash_payment(db, payment_id, user, request)
+            )
 
     # Take the LATEST payment log for this order (a re-delivery or a
     # succeeded-after-failed sequence must not shadow the authoritative
@@ -1014,6 +1180,76 @@ def get_payment_status(
         amount_egp=float(amount),
         status=status_value,
         created_at=created.isoformat(),
+        payment_code=code,
+        expires_at=expires.isoformat() if expires is not None else None,
+    )
+
+
+def _resolve_cash_payment(
+    db: Session,
+    payment_id: str,
+    user: User,
+    request: Request,
+) -> tuple:
+    """Resolve a cash payment row (Feature 3) for /payment/status.
+
+    Returns ``(package, amount, created, fallback_status, code, expires)``
+    or raises 404 (owner-only) / 429 (poll rate limit) / 503 (Redis
+    unavailable — fail closed).
+    """
+    cash = (
+        db.query(CashPayment)
+        .filter(
+            CashPayment.paymob_payment_id == payment_id,
+            CashPayment.user_id == user.id,
+        )
+        .first()
+    )
+    if cash is None:
+        raise HTTPException(status_code=404, detail="Payment not found")
+
+    # Code-enumeration guard (plan 3.2): 1 lookup per payment per minute.
+    # Card/wallet lookups are deliberately NOT subject to this limit (their
+    # in-app polling is faster).
+    store = get_staging_store()
+    try:
+        poll_count = store.incr(
+            f"paymob:cash_poll:{payment_id}", CASH_STATUS_POLL_WINDOW_SECONDS
+        )
+    except _redis.RedisError:
+        raise HTTPException(
+            status_code=503, detail="Payment service temporarily unavailable"
+        ) from None
+    if poll_count > CASH_STATUS_POLL_LIMIT:
+        raise HTTPException(
+            status_code=429, detail="Rate limit: status polls too frequent"
+        )
+
+    # Lazy expiry (plan 3.3): a pending cash row past its 24 h expiry is
+    # canceled on sight and audited. A later succeeded webhook still wins
+    # (the webhook is the source of truth, consistent with Features 1/2).
+    expires = cash.expires_at
+    if expires is not None and expires.tzinfo is None:
+        expires = expires.replace(tzinfo=timezone.utc)
+    if cash.status == "pending" and expires is not None and _utcnow() > expires:
+        cash.status = "canceled"
+        record_payment_event(
+            db,
+            event_type="cash_expired",
+            user_id=str(user.id),
+            payment_ref=payment_id,
+            detail=sanitize_for_log(f"code={cash.payment_code}"),
+            ip_address=_client_ip(request),
+        )
+        db.commit()
+
+    return (
+        cash.package,
+        cash.amount_egp,
+        cash.created_at,
+        cash.status,
+        cash.payment_code,
+        expires,
     )
 
 

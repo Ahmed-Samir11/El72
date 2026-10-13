@@ -2,14 +2,15 @@ import 'package:flutter/material.dart';
 
 import '../data/models/payment_models.dart';
 import '../../l10n/app_localizations.dart';
-import 'payment/wallet_payment_screen.dart';
+import 'payment/payment_flow_screen.dart';
 
 /// Credit packages screen (one-time purchases, server-priced).
 ///
 /// Replaces the old mock "subscription plans" screen: the app only offers
 /// the real one-time credit packages and routes the purchase through the
-/// Paymob wallet flow (Feature 2). Pricing displayed here mirrors the
-/// server allowlist — the authoritative price is always the backend's.
+/// Paymob payment flow (Features 2 + 3: wallet and cash). Pricing
+/// displayed here mirrors the server allowlist — the authoritative price
+/// is always the backend's.
 class SubscriptionScreen extends StatelessWidget {
   const SubscriptionScreen({super.key});
 
@@ -60,7 +61,7 @@ class SubscriptionScreen extends StatelessWidget {
                     context,
                     MaterialPageRoute(
                       builder: (_) =>
-                          WalletPaymentScreen(initialPackage: package),
+                          PaymentFlowScreen(initialPackage: package),
                     ),
                   ),
                   child: Padding(
