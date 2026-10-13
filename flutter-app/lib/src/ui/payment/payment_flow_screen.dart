@@ -217,6 +217,15 @@ class _PaymentFlowScreenState extends State<PaymentFlowScreen> {
     try {
       final result = await confirm();
       if (!mounted) return;
+      // An empty payment id is a malformed confirm response; surface an
+      // error instead of entering the result step with invalid polling.
+      if (result.paymentId.isEmpty) {
+        setState(() {
+          _submitting = false;
+          _fieldError = l10n.paymentError;
+        });
+        return;
+      }
       final status = PaymentStatus.parse(result.status);
       setState(() {
         _paymentId = result.paymentId;
@@ -649,7 +658,11 @@ class _PaymentFlowScreenState extends State<PaymentFlowScreen> {
           ],
         ),
         const SizedBox(height: 16),
-        Text(l10n.cashCodeDesc, style: TextStyle(color: scheme.outline)),
+        // Describe the method (not the code, which does not exist yet).
+        Text(
+          l10n.paymentMethodCashDesc,
+          style: TextStyle(color: scheme.outline),
+        ),
         const SizedBox(height: 8),
         Text(_packageSummary, style: TextStyle(color: scheme.outline)),
       ],

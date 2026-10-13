@@ -659,7 +659,7 @@ abstract class AppLocalizations {
   /// No description provided for @paymentMethodWalletDesc.
   ///
   /// In en, this message translates to:
-  /// **'Pay with Vodafone Cash, Orange Money, Etisalat Cash or Fawry'**
+  /// **'Pay with a mobile wallet (Vodafone Cash, Orange Money, Etisalat Cash)'**
   String get paymentMethodWalletDesc;
 
   /// No description provided for @paymentMethodCash.

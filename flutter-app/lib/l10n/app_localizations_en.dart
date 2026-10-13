@@ -315,7 +315,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get paymentMethodWalletDesc =>
-      'Pay with Vodafone Cash, Orange Money, Etisalat Cash or Fawry';
+      'Pay with a mobile wallet (Vodafone Cash, Orange Money, Etisalat Cash)';
 
   @override
   String get paymentMethodCash => 'Cash (Fawry / bank)';

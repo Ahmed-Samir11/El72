@@ -165,7 +165,7 @@
 
   "selectPaymentMethod": "Choose how you'd like to pay",
   "paymentMethodWallet": "Mobile wallet",
-  "paymentMethodWalletDesc": "Pay with Vodafone Cash, Orange Money, Etisalat Cash or Fawry",
+  "paymentMethodWalletDesc": "Pay with a mobile wallet (Vodafone Cash, Orange Money, Etisalat Cash)",
   "paymentMethodCash": "Cash (Fawry / bank)",
   "paymentMethodCashDesc": "Get a payment code and pay at a Fawry point or bank branch",
   "selectCashChannel": "Choose your cash channel",

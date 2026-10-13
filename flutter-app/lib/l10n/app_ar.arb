@@ -165,7 +165,7 @@
 
   "selectPaymentMethod": "اختر طريقة الدفع",
   "paymentMethodWallet": "محفظة جوال",
-  "paymentMethodWalletDesc": "ادفع بمحفظة فودافون كاش أو أورنج موني أو اتصالات كاش أو فوري",
+  "paymentMethodWalletDesc": "ادفع بمحفظة جوال (فودافون كاش أو أورنج موني أو اتصالات كاش)",
   "paymentMethodCash": "نقدي (فوري / بنك)",
   "paymentMethodCashDesc": "احصل على رمز دفع وادفع في نقطة فوري أو فرع بنك",
   "selectCashChannel": "اختر قناة الدفع النقدي",

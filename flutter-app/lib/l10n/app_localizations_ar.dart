@@ -315,7 +315,7 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get paymentMethodWalletDesc =>
-      'ادفع بمحفظة فودافون كاش أو أورنج موني أو اتصالات كاش أو فوري';
+      'ادفع بمحفظة جوال (فودافون كاش أو أورنج موني أو اتصالات كاش)';
 
   @override
   String get paymentMethodCash => 'نقدي (فوري / بنك)';
