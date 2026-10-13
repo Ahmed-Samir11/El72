@@ -42,9 +42,11 @@ from services.common.paymob_client import (
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["subscriptions"])
 
-# Server-determined pricing (the client never sets the amount, plan 7.1).
+# Server-determined pricing (the client never sets it, plan 7.1). The paisa
+# amounts are derived from the EGP prices to avoid duplication (review
+# finding: pricing duplicated in EGP and paisa dictionaries).
 PACKAGE_PRICING = {"standard": 30.0, "premium": 90.0}
-PACKAGE_PRICES_PAISA = {"standard": 3000, "premium": 9000}
+PACKAGE_PRICES_PAISA = {k: round(v * 100) for k, v in PACKAGE_PRICING.items()}
 
 # A user may have at most one active subscription at a time.
 ONE_ACTIVE_SUBSCRIPTION = True
@@ -141,7 +143,7 @@ def create_subscription_endpoint(
     subscription_id = _paymob_subscription_id(sub_resp)
     subscription = Subscription(
         id=str(uuid.uuid4()),
-        user_id=user.id,
+        user_id=str(user.id),
         paymob_subscription_id=subscription_id,
         card_payment_method_id=method["id"],
         package=body.package,
@@ -169,9 +171,18 @@ def create_subscription_endpoint(
     except IntegrityError as exc:
         # Lost a race to a concurrent duplicate creation: the partial
         # unique index (one active subscription per user) was just
-        # inserted by the other request. Roll back and return 409
-        # (review finding: concurrent duplicate creation -> 500).
+        # inserted by the other request. Roll back, cancel the orphaned
+        # Paymob subscription (so it does not keep charging the card),
+        # and return 409 (review finding: Paymob subscription created
+        # before local commit, not canceled on IntegrityError).
         db.rollback()
+        try:
+            cancel_subscription(subscription_id)
+        except PaymobApiError:
+            logger.warning(
+                "Could not cancel orphaned Paymob subscription %s",
+                subscription_id,
+            )
         raise HTTPException(
             status_code=409, detail="Already have an active subscription"
         ) from exc

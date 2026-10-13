@@ -51,9 +51,9 @@ class Subscription(Base):
     status = Column(String(20), nullable=False, default="active")
     # Consecutive failed renewals (dunning counter; plan 7.2).
     failed_renewals = Column(Integer, nullable=False, default=0)
-    next_charge = Column(DateTime, nullable=False)
-    created_at = Column(DateTime, default=_utcnow, nullable=False)
-    canceled_at = Column(DateTime, nullable=True)
+    next_charge = Column(DateTime(timezone=True), nullable=False)
+    created_at = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    canceled_at = Column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
         CheckConstraint(
@@ -98,8 +98,8 @@ class SubscriptionRenewal(Base):
     amount_egp = Column(Numeric(10, 2), nullable=False)
     # succeeded / failed.
     status = Column(String(20), nullable=False)
-    charged_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=_utcnow, nullable=False)
+    charged_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
 
     __table_args__ = (
         CheckConstraint(
