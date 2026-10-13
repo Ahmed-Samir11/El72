@@ -106,6 +106,22 @@ def _admin_token(client):
     return resp.json()["access_token"]
 
 
+def _admin_jwt_for(username: str) -> str:
+    """Mint an admin JWT for ``username`` (signed under the admin secret).
+
+    Used to test the verified dual-admin approval flow: the approver must
+    present their own token.
+    """
+    import jwt as pyjwt
+
+    from services.api.dependencies import ALGORITHM
+    from services.api.routers.payment import ADMIN_SECRET_KEY
+
+    return pyjwt.encode(
+        {"sub": f"admin:{username}"}, ADMIN_SECRET_KEY, algorithm=ALGORITHM
+    )
+
+
 class TestManualPaymentCreate:
     def test_create_standard_package(self, client):
         token = _user_token(client)
@@ -760,6 +776,28 @@ class TestRefund:
         )
         assert resp.status_code == 422
 
+    def test_refund_rejects_incomplete_payment(self, client):
+        # A pending payment has no granted credits to claw back, so it must
+        # not be refundable.
+        admin_token = _admin_token(client)
+        user_id, _ = _seed_user(client, USER_PHONE)
+        _seed_payment_row(
+            client,
+            ManualPayment,
+            order_ref="ELH-PEND-1",
+            user_id=user_id,
+            user_phone=USER_PHONE,
+            package="standard",
+            amount_egp=30,
+            status="pending",
+        )
+        resp = client.post(
+            "/admin/payments/ELH-PEND-1/refund",
+            headers=_auth_headers(admin_token),
+            json={"reason": "customer requested refund"},
+        )
+        assert resp.status_code == 400, resp.text
+
 
 class TestAdjustCredits:
     def test_small_adjustment_no_approval(self, client):
@@ -800,10 +838,22 @@ class TestAdjustCredits:
         )
         assert resp.status_code == 403
 
+    def test_large_adjustment_requires_approver_token(self, client):
+        # A large adjustment with an approver_id but NO approver token is
+        # rejected: approval must be verified, not merely claimed.
+        admin_token = _admin_token(client)
+        user_id, _ = _seed_user(client, USER_PHONE)
+        resp = client.post(
+            f"/admin/users/{user_id}/adjust-credits",
+            headers=_auth_headers(admin_token),
+            json={"amount": 100, "reason": "large topup", "approver_id": "x"},
+        )
+        assert resp.status_code == 403
+
     def test_large_adjustment_with_valid_approver(self, client):
         admin_token = _admin_token(client)
         user_id, _ = _seed_user(client, USER_PHONE)
-        # Provision a second admin out-of-band.
+        # Provision a second admin out-of-band and mint their token.
         gen = app.dependency_overrides[get_db]()
         db = next(gen)
         try:
@@ -815,11 +865,42 @@ class TestAdjustCredits:
             db.close()
         resp = client.post(
             f"/admin/users/{user_id}/adjust-credits",
-            headers=_auth_headers(admin_token),
+            headers={
+                **_auth_headers(admin_token),
+                "X-Approver-Token": _admin_jwt_for("admin2"),
+            },
             json={"amount": 100, "reason": "large topup", "approver_id": second_id},
         )
         assert resp.status_code == 200, resp.text
         assert resp.json()["new_balance"] == 3 + 100
+
+    def test_large_adjustment_token_does_not_match(self, client):
+        # A valid approver token for a DIFFERENT admin than the claimed
+        # approver_id must be rejected (no spoofing).
+        admin_token = _admin_token(client)
+        user_id, _ = _seed_user(client, USER_PHONE)
+        gen = app.dependency_overrides[get_db]()
+        db = next(gen)
+        try:
+            second = Admin(username="admin2", password_hash=get_password_hash("pw"))
+            db.add(second)
+            db.commit()
+        finally:
+            db.close()
+        # Token is for admin2, but approver_id claims a nonexistent admin.
+        resp = client.post(
+            f"/admin/users/{user_id}/adjust-credits",
+            headers={
+                **_auth_headers(admin_token),
+                "X-Approver-Token": _admin_jwt_for("admin2"),
+            },
+            json={
+                "amount": 100,
+                "reason": "large topup",
+                "approver_id": "not-a-real-admin",
+            },
+        )
+        assert resp.status_code == 403
 
     def test_large_adjustment_invalid_approver(self, client):
         admin_token = _admin_token(client)

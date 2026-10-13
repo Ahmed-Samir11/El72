@@ -315,8 +315,6 @@ CREATE TABLE IF NOT EXISTS refunds (
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_refunds_order_key ON refunds(order_key);
-
 -- Affiliate clicks for merchant revenue attribution
 CREATE TABLE IF NOT EXISTS affiliate_clicks (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

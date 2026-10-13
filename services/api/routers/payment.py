@@ -32,7 +32,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 import redis as _redis
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from fastapi.security import HTTPAuthorizationCredentials
 from jose import JWTError, jwt
 from pydantic import BaseModel, Field
@@ -211,10 +211,11 @@ def _audit_entry(
     action: str,
     request: Request,
     target_user_phone: Optional[str] = None,
-) -> None:
+) -> PaymentAuditLog:
     """Append an audit entry via the single record_payment_event entry point
-    (no UPDATE/DELETE path exists for this table)."""
-    record_payment_event(
+    (no UPDATE/DELETE path exists for this table). Returns the entry so the
+    caller can enrich its ``detail`` before the transaction commits."""
+    return record_payment_event(
         db,
         event_type=action,
         user_id=target_user_id,
@@ -1536,8 +1537,10 @@ def reject_manual_payment(
 def _find_payment_across(db: Session, order_id: str):
     """Locate a payment by its public order id across all four tables.
 
-    Returns ``(method, payment, order_id)`` or ``None``. Manual payments are
-    keyed by ``order_ref``; Paymob payments by ``paymob_payment_id``.
+    Returns ``(method, payment, order_id)`` or ``None``. The public order id
+    matches the unified list: ``order_ref`` for manual, ``paymob_payment_id``
+    for Paymob payments (falling back to the internal ``id`` when the Paymob
+    id is absent), so the list and the refund endpoint resolve the same key.
     """
     mp = db.query(ManualPayment).filter(ManualPayment.order_ref == order_id).first()
     if mp is not None:
@@ -1548,8 +1551,12 @@ def _find_payment_across(db: Session, order_id: str):
         ("cash", CashPayment),
     ):
         p = db.query(model).filter(model.paymob_payment_id == order_id).first()
+        if p is None and order_id.isdigit():
+            # Fall back to the internal id (the list exposes str(id) when the
+            # Paymob id is absent).
+            p = db.query(model).filter(model.id == int(order_id)).first()
         if p is not None:
-            return method, p, p.paymob_payment_id
+            return method, p, (p.paymob_payment_id or str(p.id))
     return None
 
 
@@ -1585,14 +1592,30 @@ def refund_payment(
 ):
     """Process a refund for a payment (plan 6.4).
 
-    Claws the package's credits back from the user, records an idempotent
-    ``Refund`` (a second refund for the same order is 409), and logs the
-    action. Refunds are irreversible.
+    Only completed payments (manual ``approved`` / Paymob ``succeeded``) are
+    refundable — refunding a pending, failed, canceled, or rejected payment
+    would claw back credits that were never granted. Claws the package's
+    credits back from the user, records an idempotent ``Refund`` (a second
+    refund for the same order is 409), and logs the action. Refunds are
+    irreversible.
     """
     found = _find_payment_across(db, order_id)
     if found is None:
         raise HTTPException(status_code=404, detail="Payment not found")
     method, payment, oid = found
+
+    # Only completed payments are refundable (plan 6.4).
+    refundable = {
+        "manual": {"approved"},
+        "card": {"succeeded"},
+        "wallet": {"succeeded"},
+        "cash": {"succeeded"},
+    }
+    if payment.status not in refundable[method]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot refund payment in '{payment.status}' state",
+        )
 
     # Idempotency: one refund per order (plan 6.4: irreversible).
     existing = db.query(Refund).filter(Refund.order_key == f"{method}:{oid}").first()
@@ -1609,30 +1632,36 @@ def refund_payment(
     if user is not None and credits > 0:
         new_balance = _claw_back_credits(db, user, credits, reason=f"refund_{method}")
 
-    db.add(
-        Refund(
-            order_key=f"{method}:{oid}",
-            method=method,
-            order_id=oid,
-            user_id=payment.user_id,
-            package=payment.package,
-            amount_egp=payment.amount_egp,
-            credits_deducted=credits if user is not None else 0,
-            reason=body.reason,
-            admin_id=str(admin.id),
-            admin_username=admin.username,
+    try:
+        db.add(
+            Refund(
+                order_key=f"{method}:{oid}",
+                method=method,
+                order_id=oid,
+                user_id=payment.user_id,
+                package=payment.package,
+                amount_egp=payment.amount_egp,
+                credits_deducted=credits if user is not None else 0,
+                reason=body.reason,
+                admin_id=str(admin.id),
+                admin_username=admin.username,
+            )
         )
-    )
-    _audit_entry(
-        db,
-        admin,
-        payment.user_id,
-        oid,
-        "refund",
-        request,
-        target_user_phone=payment.user_phone if method == "manual" else None,
-    )
-    db.commit()
+        _audit_entry(
+            db,
+            admin,
+            payment.user_id,
+            oid,
+            "refund",
+            request,
+            target_user_phone=payment.user_phone if method == "manual" else None,
+        )
+        db.commit()
+    except IntegrityError:
+        # Lost a race to a concurrent refund: the UNIQUE order_key constraint
+        # fired. Surface it as 409 (idempotent) rather than a 500.
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Already refunded") from None
     logger.info("Refunded payment %s (%s)", oid, method)
     return {
         "status": "refunded",
@@ -1643,7 +1672,7 @@ def refund_payment(
 
 class AdjustCreditsBody(BaseModel):
     amount: int
-    reason: str
+    reason: str = Field(min_length=3, max_length=500)
     approver_id: Optional[str] = None
 
 
@@ -1659,18 +1688,23 @@ def adjust_credits(
     body: AdjustCreditsBody,
     db: Session = Depends(get_db),
     admin: Admin = Depends(get_current_admin),
+    approver_token: Optional[str] = Header(default=None, alias="X-Approver-Token"),
 ):
     """Manually adjust a user's credit balance (plan 6.2).
 
     A reason is always required and the action is logged. Adjustments whose
     magnitude exceeds :data:`LARGE_ADJUSTMENT_THRESHOLD` require a second,
-    distinct admin's approval (``approver_id``).
+    distinct admin's approval. The approval is **verified**, not merely
+    claimed: the second admin must present their own admin token
+    (``X-Approver-Token``) that decodes to the claimed ``approver_id``, so a
+    single admin cannot spoof another admin's approval.
     """
     user = db.query(User).filter(User.id == user_id).first()
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # Large adjustments require a second, distinct admin (plan 6.2).
+    # Large adjustments require a second, distinct, VERIFIED admin (plan 6.2).
+    approver_username = None
     if abs(body.amount) > LARGE_ADJUSTMENT_THRESHOLD:
         if not body.approver_id:
             raise HTTPException(
@@ -1680,14 +1714,40 @@ def adjust_credits(
             raise HTTPException(
                 status_code=403, detail="Approver must be a different admin"
             )
-        approver = db.query(Admin).filter(Admin.id == body.approver_id).first()
-        if approver is None:
-            raise HTTPException(status_code=403, detail="Approver is not a valid admin")
+        if not approver_token:
+            raise HTTPException(
+                status_code=403,
+                detail="Large adjustment requires the approver's admin token",
+            )
+        # Verify the approver actually presented their own credentials:
+        # the token must decode (under the admin secret) to the claimed id.
+        try:
+            payload = jwt.decode(
+                approver_token, ADMIN_SECRET_KEY, algorithms=[ALGORITHM]
+            )
+            approver_sub = payload.get("sub")
+        except JWTError:
+            raise HTTPException(
+                status_code=403, detail="Approver token is invalid"
+            ) from None
+        if not approver_sub or not approver_sub.startswith("admin:"):
+            raise HTTPException(
+                status_code=403, detail="Approver token is not an admin token"
+            )
+        approver_username_claim = approver_sub[len("admin:") :]
+        approver = (
+            db.query(Admin).filter(Admin.username == approver_username_claim).first()
+        )
+        if approver is None or approver.id != body.approver_id:
+            raise HTTPException(
+                status_code=403, detail="Approver token does not match approver_id"
+            )
+        approver_username = approver.username
 
     credit = _ensure_row(db, user)
     credit.balance += body.amount
     db.add(CreditTransaction(user_id=user.id, amount=body.amount, reason=body.reason))
-    _audit_entry(
+    audit = _audit_entry(
         db,
         admin,
         user.id,
@@ -1696,6 +1756,9 @@ def adjust_credits(
         request,
         target_user_phone=user.phone,
     )
+    # Record the verified approver in the audit trail for large adjustments.
+    if approver_username is not None:
+        audit.detail = f"{audit.detail} [approver={approver_username}]"
     db.commit()
     logger.info("Adjusted credits for %s by %+d", user_id, body.amount)
     return {"new_balance": credit.balance}
