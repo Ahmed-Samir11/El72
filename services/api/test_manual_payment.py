@@ -776,6 +776,17 @@ class TestRefund:
         )
         assert resp.status_code == 422
 
+    def test_refund_rejects_blank_reason(self, client):
+        # A whitespace-only reason is rejected (422).
+        admin_token = _admin_token(client)
+        self._make_refundable(client, admin_token, package="standard")
+        resp = client.post(
+            "/admin/payments/ELH-REF-1/refund",
+            headers=_auth_headers(admin_token),
+            json={"reason": "   "},
+        )
+        assert resp.status_code == 422, resp.text
+
     def test_refund_rejects_incomplete_payment(self, client):
         # A pending payment has no granted credits to claw back, so it must
         # not be refundable.

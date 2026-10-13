@@ -35,7 +35,7 @@ import redis as _redis
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from fastapi.security import HTTPAuthorizationCredentials
 from jose import JWTError, jwt
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from sqlalchemy import select, update
@@ -1578,6 +1578,13 @@ LARGE_ADJUSTMENT_THRESHOLD = 50
 class RefundBody(BaseModel):
     reason: str = Field(min_length=3, max_length=500)
 
+    @field_validator("reason")
+    @classmethod
+    def _reason_not_blank(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("reason must not be blank")
+        return v.strip()
+
 
 @router.post(
     "/admin/payments/{order_id}/refund", response_model=dict, include_in_schema=False
@@ -1691,6 +1698,13 @@ class AdjustCreditsBody(BaseModel):
     amount: int = Field(ge=-1000, le=1000)
     reason: str = Field(min_length=3, max_length=500)
     approver_id: Optional[str] = None
+
+    @field_validator("reason")
+    @classmethod
+    def _reason_not_blank(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("reason must not be blank")
+        return v.strip()
 
 
 @router.post(
