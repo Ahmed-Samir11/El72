@@ -23,6 +23,7 @@ from services.api.payment_security import (
 from services.api.subscription_models import Subscription, SubscriptionRenewal
 from services.billing.models import PaymentLog
 from services.common.paymob import verify_paymob_hmac
+from services.common.paymob_client import PaymobApiError, cancel_subscription
 
 logger = logging.getLogger(__name__)
 
@@ -623,71 +624,97 @@ async def paymob_subscription_renewal_webhook(
     user = db.query(User).filter(User.id == subscription.user_id).first()
     now = datetime.now(timezone.utc)
 
-    if status_value == "succeeded":
-        renewal = SubscriptionRenewal(
-            id=str(uuid.uuid4()),
-            subscription_id=subscription.id,
-            paymob_renewal_id=renewal_id,
-            amount_egp=subscription.amount_egp,
-            status="succeeded",
-            charged_at=now,
-        )
-        db.add(renewal)
-        if user is not None:
-            grant(
-                db,
-                user,
-                PACKAGE_CREDITS[subscription.package],
-                reason=f"subscription_renewal_{subscription.package}",
+    try:
+        if status_value == "succeeded":
+            renewal = SubscriptionRenewal(
+                id=str(uuid.uuid4()),
+                subscription_id=subscription.id,
+                paymob_renewal_id=renewal_id,
+                amount_egp=subscription.amount_egp,
+                status="succeeded",
+                charged_at=now,
             )
-        # Advance the next charge and reset the dunning counter.
-        subscription.failed_renewals = 0
-        subscription.next_charge = now + timedelta(days=30)
-        record_payment_event(
-            db,
-            event_type="subscription_renewal_succeeded",
-            user_id=str(subscription.user_id),
-            payment_ref=renewal_id,
-            detail=sanitize_for_log(f"package={subscription.package}"),
-            ip_address=ip,
-        )
-    else:
-        # Failed renewal: increment the dunning counter.
-        renewal = SubscriptionRenewal(
-            id=str(uuid.uuid4()),
-            subscription_id=subscription.id,
-            paymob_renewal_id=renewal_id,
-            amount_egp=subscription.amount_egp,
-            status="failed",
-            charged_at=None,
-        )
-        db.add(renewal)
-        subscription.failed_renewals += 1
-        if subscription.failed_renewals >= MAX_FAILED_RENEWALS:
-            # Auto-cancel after 3 consecutive failures (plan 7.2).
-            subscription.status = "failed"
-            subscription.canceled_at = now
+            db.add(renewal)
+            if user is not None:
+                grant(
+                    db,
+                    user,
+                    PACKAGE_CREDITS[subscription.package],
+                    reason=f"subscription_renewal_{subscription.package}",
+                )
+            # Advance the next charge and reset the dunning counter.
+            subscription.failed_renewals = 0
+            subscription.next_charge = now + timedelta(days=30)
             record_payment_event(
                 db,
-                event_type="subscription_auto_canceled",
+                event_type="subscription_renewal_succeeded",
                 user_id=str(subscription.user_id),
                 payment_ref=renewal_id,
-                detail=sanitize_for_log(
-                    f"failed_renewals={subscription.failed_renewals}"
-                ),
+                detail=sanitize_for_log(f"package={subscription.package}"),
                 ip_address=ip,
             )
         else:
-            record_payment_event(
-                db,
-                event_type="subscription_renewal_failed",
-                user_id=str(subscription.user_id),
-                payment_ref=renewal_id,
-                detail=sanitize_for_log(
-                    f"failed_renewals={subscription.failed_renewals}"
-                ),
-                ip_address=ip,
+            # Failed renewal: increment the dunning counter.
+            renewal = SubscriptionRenewal(
+                id=str(uuid.uuid4()),
+                subscription_id=subscription.id,
+                paymob_renewal_id=renewal_id,
+                amount_egp=subscription.amount_egp,
+                status="failed",
+                charged_at=None,
             )
+            db.add(renewal)
+            subscription.failed_renewals += 1
+            if subscription.failed_renewals >= MAX_FAILED_RENEWALS:
+                # Auto-cancel after 3 consecutive failures (plan 7.2). Also
+                # cancel the Paymob subscription so it stops charging the
+                # card. A provider failure here is non-fatal: the local
+                # subscription is marked failed regardless (the webhook is
+                # the source of truth for the final state).
+                try:
+                    cancel_subscription(subscription.paymob_subscription_id)
+                except PaymobApiError:
+                    logger.warning(
+                        "Could not cancel Paymob subscription %s after dunning",
+                        subscription.paymob_subscription_id,
+                    )
+                subscription.status = "failed"
+                subscription.canceled_at = now
+                record_payment_event(
+                    db,
+                    event_type="subscription_auto_canceled",
+                    user_id=str(subscription.user_id),
+                    payment_ref=renewal_id,
+                    detail=sanitize_for_log(
+                        f"failed_renewals={subscription.failed_renewals}"
+                    ),
+                    ip_address=ip,
+                )
+            else:
+                record_payment_event(
+                    db,
+                    event_type="subscription_renewal_failed",
+                    user_id=str(subscription.user_id),
+                    payment_ref=renewal_id,
+                    detail=sanitize_for_log(
+                        f"failed_renewals={subscription.failed_renewals}"
+                    ),
+                    ip_address=ip,
+                )
+        db.commit()
+    except IntegrityError:
+        # Lost a race to a concurrent duplicate delivery: the unique
+        # paymob_renewal_id was just inserted by the other request. Roll
+        # back and return an idempotent "duplicate" (no 500).
+        db.rollback()
+        record_payment_event(
+            db,
+            event_type="webhook_duplicate",
+            payment_ref=renewal_id,
+            detail=sanitize_for_log("concurrent duplicate renewal"),
+            ip_address=ip,
+        )
+        db.commit()
+        return {"status": "duplicate"}
 
-    db.commit()
     return {"status": status_value}

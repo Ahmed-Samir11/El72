@@ -145,8 +145,14 @@ class TestSubscriptionCreate:
         assert data["subscription_id"]
         assert "next_charge" in data
 
-    def test_create_grants_credits(self, client):
+    def test_create_does_not_grant_credits(self, client):
+        # Credits are granted only when the first charge is confirmed by the
+        # renewal webhook, not at creation (review finding: premature
+        # credit granting). Creation must not change the balance.
         token = _user_token(client)
+        before = client.get("/credits/balance", headers=_auth_headers(token)).json()[
+            "balance"
+        ]
         staging = _staging_token_for(client, token)
         resp = client.post(
             "/subscription/create",
@@ -159,9 +165,13 @@ class TestSubscriptionCreate:
             },
         )
         assert resp.status_code == 200, resp.text
-        # The first charge grants the package credits (standard = 10).
-        balance = client.get("/credits/balance", headers=_auth_headers(token)).json()
-        assert balance["balance"] >= 10
+        data = resp.json()
+        assert data["subscription_id"]
+        assert data["next_charge"]
+        after = client.get("/credits/balance", headers=_auth_headers(token)).json()[
+            "balance"
+        ]
+        assert after == before
 
     def test_create_invalid_package_400(self, client):
         token = _user_token(client)
@@ -217,6 +227,76 @@ class TestSubscriptionCreate:
             },
         )
         assert resp.status_code == 401
+
+    def test_create_missing_token_400(self, client):
+        token = _user_token(client)
+        staging = _staging_token_for(client, token)
+        resp = client.post(
+            "/subscription/create",
+            headers=_auth_headers(token),
+            json={
+                "staging_token": staging,
+                "token": "",
+                "package": "standard",
+                "interval": "month",
+            },
+        )
+        assert resp.status_code == 400, resp.text
+
+    def test_create_provider_failure_502(self, client, monkeypatch):
+        # If the Paymob API fails, create returns a controlled 502.
+        import services.api.routers.subscription as sub_router
+
+        def _raise(method_id, amount_paisa, currency, reference_id, interval="month"):
+            from services.common.paymob_client import PaymobApiError
+
+            raise PaymobApiError(502, "paymob api unreachable")
+
+        monkeypatch.setattr(sub_router, "create_subscription", _raise)
+        token = _user_token(client)
+        staging = _staging_token_for(client, token)
+        resp = client.post(
+            "/subscription/create",
+            headers=_auth_headers(token),
+            json={
+                "staging_token": staging,
+                "token": "tok_sub_12345",
+                "package": "standard",
+                "interval": "month",
+            },
+        )
+        assert resp.status_code == 502, resp.text
+
+    def test_cancel_provider_failure_502(self, client, monkeypatch):
+        # If the Paymob cancel API fails, cancel returns a controlled 502.
+        import services.api.routers.subscription as sub_router
+
+        def _raise(subscription_id):
+            from services.common.paymob_client import PaymobApiError
+
+            raise PaymobApiError(502, "paymob api unreachable")
+
+        monkeypatch.setattr(sub_router, "cancel_subscription", _raise)
+        token = _user_token(client)
+        staging = _staging_token_for(client, token)
+        create = client.post(
+            "/subscription/create",
+            headers=_auth_headers(token),
+            json={
+                "staging_token": staging,
+                "token": "tok_sub_12345",
+                "package": "standard",
+                "interval": "month",
+            },
+        )
+        assert create.status_code == 200, create.text
+        sub_id = create.json()["subscription_id"]
+        resp = client.post(
+            "/subscription/cancel",
+            headers=_auth_headers(token),
+            json={"subscription_id": sub_id},
+        )
+        assert resp.status_code == 502, resp.text
 
 
 # ---------------------------------------------------------------------------
@@ -419,20 +499,31 @@ class TestRenewalWebhook:
         assert resp.status_code == 401
 
     def test_succeeded_grants_credits_and_advances(self, billing_client):
+        from services.api.credits import get_balance
+
         resp = _renewal_webhook(billing_client, "renewal_1", "succeeded")
         assert resp.status_code == 200, resp.text
         assert resp.json()["status"] == "succeeded"
-        # The renewal row is recorded and next_charge advanced.
+        # The renewal row is recorded, credits granted, and next_charge
+        # advanced a month (the dunning counter resets).
         with billing_client._test_session() as db:
             sub = db.get(Subscription, billing_client._test_sub_id)
+            user = db.get(User, billing_client._test_user_id)
             renewal = (
                 db.query(SubscriptionRenewal)
                 .filter_by(paymob_renewal_id="renewal_1")
                 .first()
             )
+            balance = get_balance(db, user)
         assert renewal is not None
         assert renewal.status == "succeeded"
         assert sub.failed_renewals == 0
+        # standard package grants 10 credits on renewal.
+        assert balance >= 10
+        # next_charge advanced ~30 days from now. (SQLite returns naive
+        # datetimes, so compare against a naive UTC datetime.)
+        now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+        assert sub.next_charge > now_naive
 
     def test_failed_increments_dunning(self, billing_client):
         resp = _renewal_webhook(billing_client, "renewal_f1", "failed")

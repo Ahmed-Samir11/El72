@@ -354,6 +354,13 @@ CREATE TABLE IF NOT EXISTS subscriptions (
 CREATE INDEX IF NOT EXISTS ix_subscriptions_user_status
     ON subscriptions (user_id, status);
 
+-- One active subscription per user, enforced at the database level
+-- (plan 7.1). Partial unique index: only 'active' rows are constrained,
+-- so a user can keep multiple historical (canceled/failed) subscriptions.
+DROP INDEX IF EXISTS uq_subscriptions_one_active_per_user;
+CREATE UNIQUE INDEX uq_subscriptions_one_active_per_user
+    ON subscriptions (user_id) WHERE status = 'active';
+
 -- Append-only: a renewal is a historical record of a charge. The UNIQUE
 -- paymob_renewal_id is the idempotency guard against double-charging
 -- (plan 7.6). No UPDATE or DELETE.

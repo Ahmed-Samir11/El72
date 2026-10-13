@@ -21,7 +21,6 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from services.api.credits import grant
 from services.api.dependencies import get_current_user, get_db
 from services.api.models import User
 from services.api.payment_security import record_payment_event, sanitize_for_log
@@ -45,7 +44,6 @@ router = APIRouter(tags=["subscriptions"])
 # Server-determined pricing (the client never sets the amount, plan 7.1).
 PACKAGE_PRICING = {"standard": 30.0, "premium": 90.0}
 PACKAGE_PRICES_PAISA = {"standard": 3000, "premium": 9000}
-CREDITS_BY_PACKAGE = {"standard": 10, "premium": 30}
 
 # A user may have at most one active subscription at a time.
 ONE_ACTIVE_SUBSCRIPTION = True
@@ -150,14 +148,10 @@ def create_subscription_endpoint(
         next_charge=next_charge,
     )
     db.add(subscription)
-    # First charge grants the package credits immediately (the recurring
-    # charges are handled by the renewal webhook, Feature 7).
-    grant(
-        db,
-        user,
-        CREDITS_BY_PACKAGE[body.package],
-        reason=f"subscription_{body.package}",
-    )
+    # Credits are NOT granted here: the first charge is confirmed by the
+    # renewal webhook (Feature 7), which grants credits on success. Granting
+    # at creation would credit the user before the charge is confirmed
+    # (review finding: premature credit granting).
     record_payment_event(
         db,
         event_type="subscription_created",
@@ -210,6 +204,9 @@ def cancel_subscription_endpoint(
         _paymob_error_response(exc)
 
     now = _utcnow()
+    # Cancellation is effective at the end of the current billing period
+    # (plan 7.4): the user is not charged again after ``next_charge``.
+    effective = subscription.next_charge
     subscription.status = "canceled"
     subscription.canceled_at = now
     record_payment_event(
@@ -227,7 +224,9 @@ def cancel_subscription_endpoint(
         subscription.paymob_subscription_id,
         user.id,
     )
-    return SubscriptionCancelResponse(status="canceled", effective=now.isoformat())
+    return SubscriptionCancelResponse(
+        status="canceled", effective=effective.isoformat()
+    )
 
 
 @router.get("/subscription/status", response_model=SubscriptionStatusResponse)

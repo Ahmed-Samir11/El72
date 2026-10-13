@@ -20,6 +20,7 @@ from sqlalchemy import (
     Integer,
     Numeric,
     String,
+    text,
 )
 
 from services.api.models import Base
@@ -72,6 +73,16 @@ class Subscription(Base):
             name="subscriptions_interval_check",
         ),
         Index("ix_subscriptions_user_status", "user_id", "status"),
+        # One active subscription per user, enforced at the database level
+        # (plan 7.1). Partial unique index: only 'active' rows are
+        # constrained. ``postgresql_where`` applies on Postgres; SQLite
+        # tests rely on the application-level check in the router.
+        Index(
+            "uq_subscriptions_one_active_per_user",
+            "user_id",
+            unique=True,
+            postgresql_where=text("status = 'active'"),
+        ),
     )
 
 
