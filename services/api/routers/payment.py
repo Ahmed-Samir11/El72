@@ -32,20 +32,20 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 import redis as _redis
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.security import HTTPAuthorizationCredentials
 from jose import JWTError, jwt
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from services.api.admin_models import Admin
+from services.api.admin_models import Admin, Refund
 from services.api.card_payment_models import CardPayment
 from services.api.cash_payment_models import CashPayment
-from services.api.credits import get_balance, grant
+from services.api.credits import _ensure_row, get_balance, grant
 from services.api.dependencies import (
     ALGORITHM,
     SECRET_KEY,
@@ -55,8 +55,8 @@ from services.api.dependencies import (
     pwd_context,
     security,
 )
-from services.api.manual_payment_models import ManualPayment
-from services.api.models import User
+from services.api.manual_payment_models import ManualPayment, PaymentAuditLog
+from services.api.models import CreditTransaction, User
 from services.api.payment_security import (
     record_payment_event,
     sanitize_for_log,
@@ -1259,15 +1259,29 @@ def _resolve_cash_payment(
 
 
 class AdminPaymentResponse(BaseModel):
-    id: str
-    order_ref: str
-    user_phone_masked: str
+    """Unified admin payment row across the four payment tables (plan 6).
+
+    ``method`` distinguishes the source (manual / card / wallet / cash) and
+    ``order_id`` is the public identifier (``order_ref`` for manual, the
+    Paymob payment id otherwise). Phones are masked by default (plan 6.3).
+    """
+
+    order_id: str
+    method: str
+    user_phone: str
     package: str
     amount_egp: float
     status: str
-    reject_reason: Optional[str] = None
     created_at: str
-    resolved_at: Optional[str] = None
+
+
+# The four payment tables, in a stable order for the unified view.
+_ADMIN_PAYMENT_TABLES = (
+    ("manual", ManualPayment),
+    ("card", CardPayment),
+    ("wallet", WalletPayment),
+    ("cash", CashPayment),
+)
 
 
 @router.get(
@@ -1276,48 +1290,58 @@ class AdminPaymentResponse(BaseModel):
     include_in_schema=False,
 )
 @limiter.limit("20/minute")
-def list_manual_payments(
+def list_payments(
     request: Request,
     db: Session = Depends(get_db),
     admin: Admin = Depends(get_current_admin),
     status_filter: Optional[str] = None,
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
+    user: Optional[str] = Query(default=None, description="Filter by user phone."),
 ):
-    """List manual payments for admins (phone numbers masked by default).
+    """Unified view of ALL payments across the four payment tables (plan 6).
 
+    Manual / card / wallet / cash payments are normalized into one list and
+    filtered by status, date range, and user phone. Phones are masked by
+    default (plan 6.3); the full number is available via the audited
+    ``/admin/payments/{order_ref}/contact`` endpoint for manual payments.
     Invalid date filter values are rejected by FastAPI with a 422.
     """
-    query = db.query(ManualPayment, User).join(User, ManualPayment.user_id == User.id)
-    if status_filter:
-        query = query.filter(ManualPayment.status == status_filter)
-    if date_from is not None:
-        query = query.filter(
-            ManualPayment.created_at
-            >= datetime.combine(date_from, datetime.min.time(), tzinfo=timezone.utc)
-        )
-    if date_to is not None:
-        query = query.filter(
-            ManualPayment.created_at
-            <= datetime.combine(date_to, datetime.max.time(), tzinfo=timezone.utc)
-        )
-
-    payments = query.order_by(ManualPayment.created_at.desc()).limit(100).all()
-
-    return [
-        {
-            "id": str(p.id),
-            "order_ref": p.order_ref,
-            "user_phone_masked": _mask_phone(user.phone),
-            "package": p.package,
-            "amount_egp": float(p.amount_egp),
-            "status": p.status,
-            "reject_reason": p.reject_reason,
-            "created_at": p.created_at.isoformat(),
-            "resolved_at": p.resolved_at.isoformat() if p.resolved_at else None,
-        }
-        for p, user in payments
-    ]
+    rows: list[dict] = []
+    for method, model in _ADMIN_PAYMENT_TABLES:
+        q = db.query(model, User).join(User, model.user_id == User.id)
+        if status_filter:
+            q = q.filter(model.status == status_filter)
+        if date_from is not None:
+            q = q.filter(
+                model.created_at
+                >= datetime.combine(date_from, datetime.min.time(), tzinfo=timezone.utc)
+            )
+        if date_to is not None:
+            q = q.filter(
+                model.created_at
+                <= datetime.combine(date_to, datetime.max.time(), tzinfo=timezone.utc)
+            )
+        if user is not None:
+            q = q.filter(User.phone == user)
+        for p, u in q.order_by(model.created_at.desc()).limit(500).all():
+            rows.append(
+                {
+                    "order_id": (
+                        p.order_ref
+                        if method == "manual"
+                        else (p.paymob_payment_id or str(p.id))
+                    ),
+                    "method": method,
+                    "user_phone": _mask_phone(u.phone),
+                    "package": p.package,
+                    "amount_egp": float(p.amount_egp),
+                    "status": p.status,
+                    "created_at": p.created_at.isoformat(),
+                }
+            )
+    rows.sort(key=lambda r: r["created_at"], reverse=True)
+    return rows
 
 
 @router.get(
@@ -1502,3 +1526,212 @@ def reject_manual_payment(
         "status": "rejected",
         "reject_reason": body.reason,
     }
+
+
+# ---------------------------------------------------------------------------
+# Dispute & adjustment endpoints (plan Feature 6)
+# ---------------------------------------------------------------------------
+
+
+def _find_payment_across(db: Session, order_id: str):
+    """Locate a payment by its public order id across all four tables.
+
+    Returns ``(method, payment, order_id)`` or ``None``. Manual payments are
+    keyed by ``order_ref``; Paymob payments by ``paymob_payment_id``.
+    """
+    mp = db.query(ManualPayment).filter(ManualPayment.order_ref == order_id).first()
+    if mp is not None:
+        return "manual", mp, mp.order_ref
+    for method, model in (
+        ("card", CardPayment),
+        ("wallet", WalletPayment),
+        ("cash", CashPayment),
+    ):
+        p = db.query(model).filter(model.paymob_payment_id == order_id).first()
+        if p is not None:
+            return method, p, p.paymob_payment_id
+    return None
+
+
+def _claw_back_credits(db: Session, user: User, amount: int, reason: str) -> int:
+    """Deduct ``amount`` credits for a refund, allowing the balance to go
+    negative (a claw-back, not a spend — plan 6.4)."""
+    credit = _ensure_row(db, user)
+    credit.balance -= amount
+    db.add(CreditTransaction(user_id=user.id, amount=-amount, reason=reason))
+    db.flush()
+    return credit.balance
+
+
+# Adjustments with |amount| strictly greater than this require a second
+# admin's approval (plan 6.2).
+LARGE_ADJUSTMENT_THRESHOLD = 50
+
+
+class RefundBody(BaseModel):
+    reason: str = Field(min_length=3, max_length=500)
+
+
+@router.post(
+    "/admin/payments/{order_id}/refund", response_model=dict, include_in_schema=False
+)
+@limiter.limit("20/minute")
+def refund_payment(
+    request: Request,
+    order_id: str,
+    body: RefundBody,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(get_current_admin),
+):
+    """Process a refund for a payment (plan 6.4).
+
+    Claws the package's credits back from the user, records an idempotent
+    ``Refund`` (a second refund for the same order is 409), and logs the
+    action. Refunds are irreversible.
+    """
+    found = _find_payment_across(db, order_id)
+    if found is None:
+        raise HTTPException(status_code=404, detail="Payment not found")
+    method, payment, oid = found
+
+    # Idempotency: one refund per order (plan 6.4: irreversible).
+    existing = db.query(Refund).filter(Refund.order_key == f"{method}:{oid}").first()
+    if existing is not None:
+        raise HTTPException(status_code=409, detail="Already refunded")
+
+    user = (
+        db.query(User).filter(User.id == payment.user_id).first()
+        if payment.user_id
+        else None
+    )
+    credits = CREDITS_BY_PACKAGE.get(payment.package, 0)
+    new_balance = None
+    if user is not None and credits > 0:
+        new_balance = _claw_back_credits(db, user, credits, reason=f"refund_{method}")
+
+    db.add(
+        Refund(
+            order_key=f"{method}:{oid}",
+            method=method,
+            order_id=oid,
+            user_id=payment.user_id,
+            package=payment.package,
+            amount_egp=payment.amount_egp,
+            credits_deducted=credits if user is not None else 0,
+            reason=body.reason,
+            admin_id=str(admin.id),
+            admin_username=admin.username,
+        )
+    )
+    _audit_entry(
+        db,
+        admin,
+        payment.user_id,
+        oid,
+        "refund",
+        request,
+        target_user_phone=payment.user_phone if method == "manual" else None,
+    )
+    db.commit()
+    logger.info("Refunded payment %s (%s)", oid, method)
+    return {
+        "status": "refunded",
+        "credits_deducted": credits if user is not None else 0,
+        "new_balance": new_balance,
+    }
+
+
+class AdjustCreditsBody(BaseModel):
+    amount: int
+    reason: str
+    approver_id: Optional[str] = None
+
+
+@router.post(
+    "/admin/users/{user_id}/adjust-credits",
+    response_model=dict,
+    include_in_schema=False,
+)
+@limiter.limit("20/minute")
+def adjust_credits(
+    request: Request,
+    user_id: str,
+    body: AdjustCreditsBody,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(get_current_admin),
+):
+    """Manually adjust a user's credit balance (plan 6.2).
+
+    A reason is always required and the action is logged. Adjustments whose
+    magnitude exceeds :data:`LARGE_ADJUSTMENT_THRESHOLD` require a second,
+    distinct admin's approval (``approver_id``).
+    """
+    user = db.query(User).filter(User.id == user_id).first()
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Large adjustments require a second, distinct admin (plan 6.2).
+    if abs(body.amount) > LARGE_ADJUSTMENT_THRESHOLD:
+        if not body.approver_id:
+            raise HTTPException(
+                status_code=403, detail="Large adjustment requires a second admin"
+            )
+        if body.approver_id == str(admin.id):
+            raise HTTPException(
+                status_code=403, detail="Approver must be a different admin"
+            )
+        approver = db.query(Admin).filter(Admin.id == body.approver_id).first()
+        if approver is None:
+            raise HTTPException(status_code=403, detail="Approver is not a valid admin")
+
+    credit = _ensure_row(db, user)
+    credit.balance += body.amount
+    db.add(CreditTransaction(user_id=user.id, amount=body.amount, reason=body.reason))
+    _audit_entry(
+        db,
+        admin,
+        user.id,
+        "n/a",
+        "adjust_credits",
+        request,
+        target_user_phone=user.phone,
+    )
+    db.commit()
+    logger.info("Adjusted credits for %s by %+d", user_id, body.amount)
+    return {"new_balance": credit.balance}
+
+
+@router.get("/admin/audit-log", response_model=list[dict], include_in_schema=False)
+@limiter.limit("20/minute")
+def list_audit_log(
+    request: Request,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(get_current_admin),
+    event_type: Optional[str] = Query(default=None, description="Filter by action."),
+    user_id: Optional[str] = Query(default=None),
+    date_from: Optional[date] = None,
+):
+    """Read the append-only audit trail with optional filters (plan 6.5)."""
+    q = db.query(PaymentAuditLog)
+    if event_type is not None:
+        q = q.filter(PaymentAuditLog.action == event_type)
+    if user_id is not None:
+        q = q.filter(PaymentAuditLog.target_user_id == user_id)
+    if date_from is not None:
+        q = q.filter(
+            PaymentAuditLog.created_at
+            >= datetime.combine(date_from, datetime.min.time(), tzinfo=timezone.utc)
+        )
+    rows = q.order_by(PaymentAuditLog.created_at.desc()).limit(500).all()
+    return [
+        {
+            "event_type": r.action,
+            "user_id": r.target_user_id,
+            "detail": r.detail,
+            "ip_address": r.client_ip,
+            "actor_username": r.actor_username,
+            "order_ref": r.order_ref,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        }
+        for r in rows
+    ]

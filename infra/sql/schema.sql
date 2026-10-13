@@ -259,6 +259,7 @@ CREATE TABLE IF NOT EXISTS payment_audit_log (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     action VARCHAR(50) NOT NULL
         CHECK (action IN ('approve', 'reject', 'reveal_contact',
+            'refund', 'adjust_credits',
             'webhook_received', 'webhook_signature_failed',
             'webhook_duplicate', 'validation_rejected', 'otp_failed',
             'token_expired', 'amount_mismatch', 'card_payment_created',
@@ -293,6 +294,28 @@ DROP TRIGGER IF EXISTS payment_audit_log_append_only ON payment_audit_log;
 CREATE TRIGGER payment_audit_log_append_only
     BEFORE UPDATE OR DELETE ON payment_audit_log
     FOR EACH ROW EXECUTE FUNCTION prevent_payment_audit_modification();
+
+-- Admin-processed refunds (plan Feature 6). Append-only: a refund is
+-- irreversible, and the unique order_key is the idempotency guard against
+-- double-deducting a user's credits.
+CREATE TABLE IF NOT EXISTS refunds (
+    id VARCHAR(36) PRIMARY KEY DEFAULT gen_random_uuid(),
+    order_key VARCHAR(255) NOT NULL UNIQUE,
+    method VARCHAR(20) NOT NULL
+        CHECK (method IN ('manual', 'card', 'wallet', 'cash')),
+    order_id VARCHAR(255) NOT NULL,
+    user_id VARCHAR(36) REFERENCES users(id) ON DELETE SET NULL,
+    package VARCHAR(20) NOT NULL
+        CHECK (package IN ('standard', 'premium')),
+    amount_egp NUMERIC(10, 2) NOT NULL CHECK (amount_egp > 0),
+    credits_deducted INTEGER NOT NULL,
+    reason TEXT NOT NULL,
+    admin_id VARCHAR(36) REFERENCES admins(id) ON DELETE SET NULL,
+    admin_username VARCHAR(50),
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_refunds_order_key ON refunds(order_key);
 
 -- Affiliate clicks for merchant revenue attribution
 CREATE TABLE IF NOT EXISTS affiliate_clicks (
