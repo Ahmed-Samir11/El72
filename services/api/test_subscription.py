@@ -632,6 +632,20 @@ class TestRenewalWebhook:
             )
         assert count == 1
 
+    def test_renewal_records_audit_event(self, billing_client):
+        # A successful renewal records a payment audit event (review
+        # finding: missing edge-case tests for audit behavior).
+        from services.api.manual_payment_models import PaymentAuditLog
+
+        resp = _renewal_webhook(billing_client, "renewal_audit", "succeeded")
+        assert resp.status_code == 200, resp.text
+        with billing_client._test_session() as db:
+            events = (
+                db.query(PaymentAuditLog).filter_by(order_ref="renewal_audit").all()
+            )
+        assert len(events) == 1
+        assert events[0].action == "subscription_renewal_succeeded"
+
     def test_unknown_subscription_404(self, billing_client):
         body = json.dumps(
             {

@@ -20,6 +20,11 @@ append-only trigger and idempotency implications):
   later reported as "succeeded") is NOT applied — the first delivery wins.
   This is an accepted trade-off for v2 (the webhook is the source of
   truth; corrections require manual admin intervention).
+
+``next_charge`` is a local approximation: it advances exactly 30 days from
+the last charge (review finding: document that next_charge is a local
+approximation). A true calendar month (e.g., the 15th to the 15th) would
+be more accurate, but 30 days is an accepted simplification for v2.
 """
 
 from datetime import datetime, timezone
