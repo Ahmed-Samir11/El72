@@ -210,7 +210,7 @@ void main() {
     expect(find.text('CODE1234'), findsOneWidget);
     // The expiry is formatted for the user, not a raw ISO timestamp.
     final expectedExpiry = DateFormat(
-      'yMMMMdEEE',
+      'yMMMMdEEEjm',
       'en',
     ).format(DateTime.parse('2025-01-02T12:00:00Z').toLocal());
     expect(find.text('Expires $expectedExpiry'), findsOneWidget);

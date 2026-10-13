@@ -103,9 +103,13 @@ class _PaymentFlowScreenState extends State<PaymentFlowScreen> {
   /// The selected package's label and one-time price, used by the wallet
   /// and cash steps (the price is server-determined; this mirrors the
   /// server allowlist, plan 2.4/3.4).
-  String get _packageSummary =>
-      '${_package == CreditPackage.premium ? l10n.premiumPackage : l10n.standardPackage}'
-      ': ${l10n.egpOnce('${_package.priceEgp}')}';
+  String get _packageSummary {
+    final label = switch (_package) {
+      CreditPackage.premium => l10n.premiumPackage,
+      _ => l10n.standardPackage,
+    };
+    return '$label: ${l10n.egpOnce('${_package.priceEgp}')}';
+  }
 
   // ---------------------------------------------------------------------
   // Flow actions
@@ -793,7 +797,8 @@ class _PaymentFlowScreenState extends State<PaymentFlowScreen> {
     if (dt == null) return null;
     final locale = Localizations.localeOf(context).toString();
     if (_expiryFormatter == null || _expiryFormatterLocale != locale) {
-      _expiryFormatter = DateFormat('yMMMMdEEE', locale);
+      // Include the time: a 24 h expiry is date+time, not just a day.
+      _expiryFormatter = DateFormat('yMMMMdEEEjm', locale);
       _expiryFormatterLocale = locale;
     }
     return _expiryFormatter!.format(dt.toLocal());
