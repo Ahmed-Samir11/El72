@@ -1005,6 +1005,18 @@ class TestAdjustCredits:
         )
         assert resp.status_code == 404
 
+    def test_adjust_cannot_go_negative(self, client):
+        # A manual adjustment must not drive the balance below zero (the
+        # free tier starts at 3; removing 4 would be negative).
+        admin_token = _admin_token(client)
+        user_id, _ = _seed_user(client, USER_PHONE)
+        resp = client.post(
+            f"/admin/users/{user_id}/adjust-credits",
+            headers=_auth_headers(admin_token),
+            json={"amount": -4, "reason": "overdraft correction"},
+        )
+        assert resp.status_code == 400, resp.text
+
     def test_adjust_credits_logged(self, client):
         admin_token = _admin_token(client)
         user_id, _ = _seed_user(client, USER_PHONE)

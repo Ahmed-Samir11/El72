@@ -1760,6 +1760,15 @@ def adjust_credits(
         approver_username = approver.username
 
     credit = _ensure_row(db, user)
+    # A manual adjustment must not drive the balance negative (unlike a
+    # refund claw-back, which is explicitly allowed to go negative). If the
+    # admin needs to remove more credits than the user holds, that is a
+    # refund, not an adjustment.
+    if credit.balance + body.amount < 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Adjustment would result in a negative balance",
+        )
     credit.balance += body.amount
     db.add(CreditTransaction(user_id=user.id, amount=body.amount, reason=body.reason))
     audit = _audit_entry(
