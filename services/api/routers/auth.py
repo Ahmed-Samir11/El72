@@ -8,8 +8,8 @@ from sqlalchemy.orm import Session
 from services.api.dependencies import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
     create_access_token,
-    get_db,
     get_current_user,
+    get_db,
     get_password_hash,
     pwd_context,
 )
@@ -70,9 +70,7 @@ def register(user: UserRegister, db: Session = Depends(get_db)):
 @router.post("/login", response_model=Token)
 def login(user: UserRegister, db: Session = Depends(get_db)):
     db_user = (
-        db.query(User)
-        .filter(User.phone == user.phone, User.status == "ACTIVE")
-        .first()
+        db.query(User).filter(User.phone == user.phone, User.status == "ACTIVE").first()
     )
     if not db_user or not pwd_context.verify(user.password, db_user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid credentials")
@@ -85,7 +83,9 @@ def login(user: UserRegister, db: Session = Depends(get_db)):
 
 
 @router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
-def delete_account(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def delete_account(
+    current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
+):
     """Anonymize the operational account while preserving its analytical identity."""
     db.query(Alert).filter(Alert.user_id == current_user.id).delete(
         synchronize_session=False

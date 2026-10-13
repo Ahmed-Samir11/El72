@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from decimal import Decimal
 from statistics import mean
 from typing import Any, Sequence
@@ -55,9 +55,7 @@ async def record_deal_evaluation(
     historical_min = min(historical) if historical else price
     historical_max = max(historical) if historical else price
     historical_discount = (
-        ((historical_avg - price) / historical_avg) * 100
-        if historical_avg
-        else 0.0
+        ((historical_avg - price) / historical_avg) * 100 if historical_avg else 0.0
     )
 
     product_key = await _dimension_key(
@@ -90,7 +88,8 @@ async def record_deal_evaluation(
     date_key = _date_key(evaluated_at)
     await conn.execute(
         """INSERT INTO analytics.dim_date
-           (date_key, full_date, day, day_of_week, week, month, month_name, quarter, year)
+           (date_key, full_date, day, day_of_week, week, month,
+            month_name, quarter, year)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
            ON CONFLICT (date_key) DO NOTHING""",
         date_key,
@@ -166,12 +165,11 @@ async def record_price_observation(
         (store,),
     )
     date_key = _date_key(observed_at)
-    time_key = (
-        observed_at.hour * 10000 + observed_at.minute * 100 + observed_at.second
-    )
+    time_key = observed_at.hour * 10000 + observed_at.minute * 100 + observed_at.second
     await conn.execute(
         """INSERT INTO analytics.dim_date
-           (date_key, full_date, day, day_of_week, week, month, month_name, quarter, year)
+           (date_key, full_date, day, day_of_week, week, month,
+            month_name, quarter, year)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
            ON CONFLICT (date_key) DO NOTHING""",
         date_key,

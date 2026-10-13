@@ -403,7 +403,8 @@ async def insert_price_history(conn: asyncpg.Connection, event: Dict[str, Any]) 
     """
     await conn.execute(
         """
-        INSERT INTO price_history (time, sku, store_id, price_usd, price_local, in_stock)
+        INSERT INTO price_history
+            (time, sku, store_id, price_usd, price_local, in_stock)
         VALUES (to_timestamp($1)::timestamptz, $2, $3, $4, $5, $6)
         """,
         event.get("timestamp"),

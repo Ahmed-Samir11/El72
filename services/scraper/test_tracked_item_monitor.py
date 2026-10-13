@@ -4,9 +4,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from services.scraper import tracked_item_monitor as monitor_module
 from services.scraper.store_scrapers import ScrapeResult
 from services.scraper.tracked_item_monitor import TrackedItemMonitor
-from services.scraper import tracked_item_monitor as monitor_module
+
 
 @pytest.fixture
 def monitor():
@@ -184,6 +185,7 @@ async def test_scrape_cycle_and_run_shutdown(monitor):
     await run_task
     assert monitor.running is False
 
+
 @pytest.mark.asyncio
 async def test_empty_cycle_updates_metrics(monitor, monkeypatch):
     cycles = MagicMock()
@@ -229,13 +231,9 @@ async def test_cycle_fetch_failure_updates_error_metrics(monitor, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_item_task_exception_updates_item_error_metric(
-    monitor, monkeypatch
-):
+async def test_item_task_exception_updates_item_error_metric(monitor, monkeypatch):
     item_errors = MagicMock()
-    monkeypatch.setattr(
-        monitor_module, "MONITOR_ITEM_ERRORS", item_errors
-    )
+    monkeypatch.setattr(monitor_module, "MONITOR_ITEM_ERRORS", item_errors)
 
     monitor.fetch_tracked_items = AsyncMock(
         return_value=[
@@ -248,9 +246,7 @@ async def test_item_task_exception_updates_item_error_metric(
             }
         ]
     )
-    monitor.browser_pool.acquire.side_effect = RuntimeError(
-        "browser unavailable"
-    )
+    monitor.browser_pool.acquire.side_effect = RuntimeError("browser unavailable")
 
     await monitor.scrape_cycle()
 

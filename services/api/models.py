@@ -137,7 +137,9 @@ class UserCredit(Base):
     __tablename__ = "user_credits"
 
     user_id = Column(
-        OperationalIdType(), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+        OperationalIdType(),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
     )
     balance = Column(Integer, nullable=False, default=0)
     updated_at = Column(

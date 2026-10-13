@@ -1,13 +1,13 @@
 import json
 import logging
 import os
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-import time
-from prometheus_client import Counter, Histogram, make_asgi_app
 
 from fastapi import Depends, FastAPI, HTTPException, Request
+from prometheus_client import Counter, Histogram, make_asgi_app
 from pydantic import BaseModel
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -63,6 +63,7 @@ def _webhook_rate_limit_key(request) -> str:
     """
     return request.client.host if request.client else "unknown"
 
+
 HTTP_REQUESTS = Counter(
     "el72_billing_http_requests_total",
     "HTTP requests handled by the billing service",
@@ -88,6 +89,7 @@ limiter = Limiter(**limiter_kwargs)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+
 @app.middleware("http")
 async def observe_http_requests(request: Request, call_next):
     if request.url.path == "/metrics":
@@ -104,16 +106,15 @@ async def observe_http_requests(request: Request, call_next):
         route = request.scope.get("route")
         route_path = getattr(route, "path", "unmatched")
 
-        HTTP_REQUESTS.labels(
-            request.method, route_path, str(status_code)
-        ).inc()
+        HTTP_REQUESTS.labels(request.method, route_path, str(status_code)).inc()
 
-        HTTP_REQUEST_DURATION.labels(
-            request.method, route_path
-        ).observe(time.perf_counter() - start)
+        HTTP_REQUEST_DURATION.labels(request.method, route_path).observe(
+            time.perf_counter() - start
+        )
 
 
 app.mount("/metrics", make_asgi_app())
+
 
 # Pydantic models
 class PurchaseRequest(BaseModel):

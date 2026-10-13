@@ -14,10 +14,10 @@ import os
 import signal
 import time
 from typing import Dict, List
-from prometheus_client import Counter, Gauge, Histogram, start_http_server
 
 import asyncpg
 from playwright.async_api import Browser, async_playwright
+from prometheus_client import Counter, Gauge, Histogram, start_http_server
 
 from services.common.redis_client import RedisStreamClient
 from services.scraper.alert_emitter import AlertEmitter
@@ -61,6 +61,7 @@ MONITOR_STORE_SCRAPES = Counter(
     "Store scraping outcomes",
     ["outcome"],
 )
+
 
 class TrackedItemMonitor:
     """Main orchestrator for tracked item price monitoring."""
@@ -292,11 +293,9 @@ class TrackedItemMonitor:
                         await self.browser_pool.release(browser)
 
             tasks = [process_item(item) for item in tracked_items]
-            task_results = await asyncio.gather(
-                *tasks, return_exceptions=True
-            )
+            task_results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            for item, result in zip(tracked_items, task_results):
+            for item, result in zip(tracked_items, task_results, strict=False):
                 if isinstance(result, Exception):
                     MONITOR_ITEM_ERRORS.inc()
                     logger.error(

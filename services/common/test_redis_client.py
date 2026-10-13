@@ -127,6 +127,7 @@ async def test_create_pings_redis():
         assert again is client
         mock_from_url.assert_called_once()
 
+
 @pytest.mark.asyncio
 async def test_create_propagates_ping_failure():
     mock_redis = AsyncMock()

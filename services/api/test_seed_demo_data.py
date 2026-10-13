@@ -1,6 +1,7 @@
 """Focused tests for the canonical TimescaleDB demo-history target."""
 
 from sqlalchemy import create_engine, text
+
 from services.api import seed_demo_data
 
 
@@ -32,6 +33,7 @@ def test_run_seed_uses_history_engine_for_price_rows(monkeypatch):
 
     seen = {}
     monkeypatch.setattr(seed_demo_data.Base.metadata, "create_all", lambda bind: None)
+
     def seed_history(session):
         seen["history_engine"] = session.get_bind()
         return 3

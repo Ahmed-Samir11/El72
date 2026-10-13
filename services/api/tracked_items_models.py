@@ -1,6 +1,5 @@
 """SQLAlchemy models for tracked items and price monitoring."""
 
-import uuid
 from datetime import datetime
 
 from sqlalchemy import (
@@ -25,6 +24,7 @@ def _new_id(table: str):
         return _new_operational_id(context, table)
 
     return _fn
+
 
 users = Base.metadata.tables["users"]
 

@@ -1,6 +1,4 @@
-from prometheus_client import Counter, Histogram, generate_latest
-from prometheus_client import CONTENT_TYPE_LATEST
-
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
 
 HTTP_REQUESTS_TOTAL = Counter(
     "el72_http_requests_total",
