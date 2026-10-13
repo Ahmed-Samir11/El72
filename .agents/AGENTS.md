@@ -194,7 +194,7 @@ api (port 8000) → analyzer (port 8001) → scraper-monitor → scraper → not
 | Models | `models.py` or `*_models.py` | `tracked_items_models.py` |
 | Tests | `test_*.py` | `test_store_scrapers.py` |
 | Dockerfiles | `Dockerfile` or `Dockerfile.<variant>` | `Dockerfile.monitor` |
-| SQL schemas | `infra/sql/*.sql` | `schema.sql` |
+| SQL schemas | `infra/sql/schema/*.sql` | `postgres.sql`, `timescaledb.sql` |
 
 ---
 

@@ -87,6 +87,11 @@ services:
       - prometheus
     ports:
       - "3000:3000"
+    environment:
+      # Review finding: Grafana is deployed without an admin password.
+      # Set GRAFANA_ADMIN_PASSWORD in .env for production.
+      GF_SECURITY_ADMIN_USER: "${GRAFANA_ADMIN_USER:-admin}"
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD in .env}"
     volumes:
       - grafana-data:/var/lib/grafana
     healthcheck:
@@ -165,6 +170,7 @@ services:
   
   postgres-exporter:
     image: prometheuscommunity/postgres-exporter:v0.17.1
+    restart: unless-stopped
     depends_on:
       - postgres
     environment:
@@ -176,6 +182,7 @@ services:
 
   timescaledb-exporter:
     image: prometheuscommunity/postgres-exporter:v0.17.1
+    restart: unless-stopped
     depends_on:
       - timescaledb
     environment:
@@ -187,6 +194,7 @@ services:
 
   redis-exporter:
     image: oliver006/redis_exporter:v1.75.0
+    restart: unless-stopped
     depends_on:
       - redis
     environment:
