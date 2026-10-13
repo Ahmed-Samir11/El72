@@ -1,8 +1,8 @@
-// Payment data models for the Paymob wallet flow (Feature 2).
+// Payment data models for the Paymob payment flow (Features 2 + 3).
 //
 // Pricing is SERVER-DETERMINED: the app only ever sends a package id and a
-// wallet choice; the backend looks up the price (plan 2.4). The constants
-// below mirror the server allowlist for display purposes only.
+// method choice; the backend looks up the price (plan 2.4). The constants
+// below mirror the server allowlists for display purposes only.
 
 /// One-time credit packages (server-priced, not subscriptions).
 class CreditPackage {
@@ -90,6 +90,19 @@ enum PaymentStatus {
       this == succeeded || this == failed || this == canceled;
 }
 
+/// Cash channels supported by the backend allowlist (plan Feature 3).
+/// Values are matched case-insensitively server-side; [apiValue] is the
+/// canonical token the API accepts.
+enum CashType {
+  fawry('fawry'),
+  bank('bank');
+
+  const CashType(this.apiValue);
+
+  /// Canonical token sent in the `cash_type` field.
+  final String apiValue;
+}
+
 /// Egyptian wallet number: 01[0125] + 8 digits (mirrors the server regex).
 final RegExp walletNumberRegExp = RegExp(r'^01[0125]\d{8}$');
 
@@ -133,6 +146,32 @@ class OtpResult {
   final int? attemptsRemaining;
 }
 
+/// Result of `POST /payment/confirm` (cash). The [paymentCode] is the
+/// random single-use code the user pays with at a cash point; it expires at
+/// [expiresAt] (24 h, plan 3.3).
+class CashPaymentResult {
+  const CashPaymentResult({
+    required this.paymentId,
+    required this.paymentCode,
+    required this.expiresAt,
+    required this.status,
+  });
+
+  factory CashPaymentResult.fromJson(Map<String, dynamic> json) {
+    return CashPaymentResult(
+      paymentId: json['payment_id']?.toString() ?? '',
+      paymentCode: json['payment_code']?.toString() ?? '',
+      expiresAt: json['expires_at']?.toString() ?? '',
+      status: json['status']?.toString() ?? 'pending',
+    );
+  }
+
+  final String paymentId;
+  final String paymentCode;
+  final String expiresAt;
+  final String status;
+}
+
 /// Result of `GET /payment/status/{payment_id}`.
 class PaymentStatusInfo {
   const PaymentStatusInfo({
@@ -141,6 +180,8 @@ class PaymentStatusInfo {
     required this.amountEgp,
     required this.status,
     required this.createdAt,
+    this.paymentCode,
+    this.expiresAt,
   });
 
   factory PaymentStatusInfo.fromJson(Map<String, dynamic> json) {
@@ -151,6 +192,8 @@ class PaymentStatusInfo {
       amountEgp: amount is num ? amount.toDouble() : 0,
       status: json['status']?.toString() ?? 'pending',
       createdAt: json['created_at']?.toString() ?? '',
+      paymentCode: json['payment_code']?.toString(),
+      expiresAt: json['expires_at']?.toString(),
     );
   }
 
@@ -159,4 +202,10 @@ class PaymentStatusInfo {
   final double amountEgp;
   final String status;
   final String createdAt;
+
+  /// Cash payments only: the single-use payment code (plan 3.1).
+  final String? paymentCode;
+
+  /// Cash payments only: the code/order expiry (plan 3.3).
+  final String? expiresAt;
 }

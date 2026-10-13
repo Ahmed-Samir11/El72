@@ -163,6 +163,25 @@
   "paymentError": "Something went wrong. Please try again.",
   "retryPayment": "Try again",
 
+  "selectPaymentMethod": "Choose how you'd like to pay",
+  "paymentMethodWallet": "Mobile wallet",
+  "paymentMethodWalletDesc": "Pay with Vodafone Cash, Orange Money, Etisalat Cash or Fawry",
+  "paymentMethodCash": "Cash (Fawry / bank)",
+  "paymentMethodCashDesc": "Get a payment code and pay at a Fawry point or bank branch",
+  "selectCashChannel": "Choose your cash channel",
+  "cashChannelFawry": "Fawry",
+  "cashChannelBank": "Bank branch",
+  "cashCodeTitle": "Your payment code",
+  "cashCodeDesc": "Show this code at the cash point or bank branch. It expires in 24 hours.",
+  "cashExpiresAt": "Expires {time}",
+  "@cashExpiresAt": {
+    "placeholders": {
+      "time": { "type": "String" }
+    }
+  },
+  "copyCode": "Copy",
+  "codeCopied": "Code copied",
+
   "statCurrent": "Current",
   "statLow90d": "90d Low",
   "statHigh90d": "90d High",

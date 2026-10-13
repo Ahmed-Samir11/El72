@@ -114,6 +114,13 @@ PAYMOB_WALLET_TYPES: Dict[str, str] = {
     "FAWRY": "Fawry",
 }
 
+# Canonical cash channels accepted by our API -> Paymob method_type values.
+# (plan Feature 3: "fawry" | "bank")
+PAYMOB_CASH_TYPES: Dict[str, str] = {
+    "fawry": "fawry",
+    "bank": "bank",
+}
+
 
 def create_wallet_payment_method(
     staging_token: str, wallet_type: str, wallet_number: str
@@ -145,3 +152,42 @@ def confirm_wallet_otp(payment_id: str, otp: str) -> Dict[str, Any]:
     request payload only — ``_post`` never logs request bodies (plan 2.6).
     """
     return _post(f"payment/{payment_id}/otp_confirmation", {"otp": otp})
+
+
+def create_cash_payment(
+    staging_token: str,
+    cash_type: str,
+    amount_paisa: int,
+    currency: str,
+    reference_id: str,
+) -> Dict[str, Any]:
+    """Create a Paymob cash payment (Fawry / bank). Returns the payment
+    object including the cash payment code.
+
+    Cash payments select the method at payment-creation time (``method_type``)
+    rather than via a payment_method indirection. ``cash_type`` must be one
+    of :data:`PAYMOB_CASH_TYPES` (the router validates against the same
+    allowlist before calling). The code field is read defensively
+    (``payment_code`` with an ``otp`` fallback for provider field drift).
+    """
+    paymob_type = PAYMOB_CASH_TYPES.get(cash_type)
+    if paymob_type is None:
+        raise PaymobApiError(400, "unsupported cash type")
+    return _post(
+        "payment",
+        {
+            "staging_token": staging_token,
+            "method_type": paymob_type,
+            "amount": amount_paisa,
+            "currency": currency,
+            "reference_id": reference_id,
+        },
+    )
+
+
+def extract_cash_code(payment_resp: Dict[str, Any]) -> str:
+    """Pull the cash payment code out of a create-payment response."""
+    code = payment_resp.get("payment_code") or payment_resp.get("otp")
+    if isinstance(code, (str, int)) and str(code).strip():
+        return str(code).strip()
+    return ""

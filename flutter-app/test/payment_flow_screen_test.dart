@@ -7,16 +7,18 @@ import 'package:elhaq_tracker/l10n/app_localizations.dart';
 import 'package:elhaq_tracker/src/core/styles/app_theme.dart';
 import 'package:elhaq_tracker/src/data/models/payment_models.dart';
 import 'package:elhaq_tracker/src/data/repositories/payment_repository.dart';
-import 'package:elhaq_tracker/src/ui/payment/wallet_payment_screen.dart';
+import 'package:elhaq_tracker/src/ui/payment/payment_flow_screen.dart';
 
 /// Scripted repository: returns queued results; records calls.
 class _FakePaymentRepository implements PaymentRepository {
   final List<WalletPaymentResult> confirmResults = [];
+  final List<CashPaymentResult> cashConfirmResults = [];
   final List<OtpResult> otpResults = [];
   final List<String> otpSubmissions = [];
   final List<String> statusResults = [];
 
   int confirmCalls = 0;
+  int cashConfirmCalls = 0;
   int otpCalls = 0;
   int statusCalls = 0;
   bool statusThrows = false;
@@ -38,6 +40,24 @@ class _FakePaymentRepository implements PaymentRepository {
     final r = confirmResults.isEmpty
         ? const WalletPaymentResult(paymentId: 'pay_1', status: 'pending_otp')
         : confirmResults.removeAt(0);
+    return Future.value(r);
+  }
+
+  @override
+  Future<CashPaymentResult> confirmCashPayment({
+    required String stagingToken,
+    required CashType cashType,
+    required String packageId,
+  }) {
+    cashConfirmCalls += 1;
+    final r = cashConfirmResults.isEmpty
+        ? const CashPaymentResult(
+            paymentId: 'cpay_1',
+            paymentCode: 'CODE1234',
+            expiresAt: '2025-01-02T12:00:00Z',
+            status: 'pending',
+          )
+        : cashConfirmResults.removeAt(0);
     return Future.value(r);
   }
 
@@ -89,52 +109,136 @@ Widget _wrap(Widget child) {
   );
 }
 
-Future<void> _openWalletStep(
+Future<void> _openMethodStep(
   WidgetTester tester,
   _FakePaymentRepository repo,
 ) async {
-  await tester.pumpWidget(_wrap(WalletPaymentScreen(repository: repo)));
-  // Package step: tap the Standard card to proceed to the wallet step.
+  await tester.pumpWidget(_wrap(PaymentFlowScreen(repository: repo)));
+  // Package step: tap the Standard card to proceed to the method step.
   await tester.tap(find.text('Standard').first);
   await tester.pumpAndSettle();
 }
 
+Future<void> _openWalletStep(
+  WidgetTester tester,
+  _FakePaymentRepository repo,
+) async {
+  await _openMethodStep(tester, repo);
+  // Method step: choose the wallet to proceed to the wallet step.
+  await tester.tap(find.byKey(const ValueKey('method-wallet')));
+  await tester.pump();
+}
+
+Future<void> _openCashStep(
+  WidgetTester tester,
+  _FakePaymentRepository repo,
+) async {
+  await _openMethodStep(tester, repo);
+  // Method step: choose cash to proceed to the cash step.
+  await tester.tap(find.byKey(const ValueKey('method-cash')));
+  await tester.pump();
+}
+
 void main() {
-  testWidgets('full wallet flow: package -> wallet -> otp -> success', (
+  testWidgets('method step is shown after package selection', (tester) async {
+    final repo = _FakePaymentRepository();
+    await _openMethodStep(tester, repo);
+    expect(find.text('Choose how you\'d like to pay'), findsOneWidget);
+    expect(find.byKey(const ValueKey('method-wallet')), findsOneWidget);
+    expect(find.byKey(const ValueKey('method-cash')), findsOneWidget);
+  });
+
+  testWidgets(
+    'full wallet flow: package -> method -> wallet -> otp -> success',
+    (tester) async {
+      final repo = _FakePaymentRepository();
+      await _openWalletStep(tester, repo);
+
+      // Select a wallet type.
+      await tester.tap(find.byKey(const ValueKey('wallet-type-VODAFONE_CASH')));
+      await tester.pump();
+
+      // Enter a valid number and confirm.
+      await tester.enterText(
+        find.byKey(const ValueKey('wallet-number')),
+        '01012345678',
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('confirm-wallet-payment')));
+      await tester.pumpAndSettle();
+
+      // Confirmation dialog (plan 2.3) echoes the number.
+      expect(find.textContaining('01012345678'), findsWidgets);
+      await tester.tap(find.text('Confirm payment').last);
+      await tester.pumpAndSettle();
+
+      expect(repo.confirmCalls, 1);
+      // OTP step.
+      expect(find.byKey(const ValueKey('otp-input')), findsOneWidget);
+
+      // Enter the OTP and verify.
+      await tester.enterText(find.byKey(const ValueKey('otp-input')), '123456');
+      await tester.tap(find.byKey(const ValueKey('verify-otp')));
+      await tester.pumpAndSettle();
+
+      expect(repo.otpSubmissions, ['123456']);
+      expect(find.text('Payment successful!'), findsOneWidget);
+    },
+  );
+
+  testWidgets('full cash flow: package -> method -> cash -> code display', (
     tester,
   ) async {
     final repo = _FakePaymentRepository();
-    await _openWalletStep(tester, repo);
+    await _openCashStep(tester, repo);
 
-    // Select a wallet type.
-    await tester.tap(find.byKey(const ValueKey('wallet-type-VODAFONE_CASH')));
+    // Select a cash channel.
+    await tester.tap(find.byKey(const ValueKey('cash-type-fawry')));
     await tester.pump();
 
-    // Enter a valid number and confirm.
-    await tester.enterText(
-      find.byKey(const ValueKey('wallet-number')),
-      '01012345678',
-    );
+    // Confirm; no OTP step for cash. Bounded pumps: the pending result
+    // shows an indeterminate spinner, so pumpAndSettle would never settle.
+    await tester.tap(find.byKey(const ValueKey('confirm-cash-payment')));
     await tester.pump();
-    await tester.tap(find.byKey(const ValueKey('confirm-wallet-payment')));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(repo.cashConfirmCalls, 1);
+    // The single-use code is displayed with its expiry (plan 3.1/3.3).
+    expect(find.byKey(const ValueKey('cash-code')), findsOneWidget);
+    expect(find.text('CODE1234'), findsOneWidget);
+    expect(find.text('Expires 2025-01-02T12:00:00Z'), findsOneWidget);
+    expect(find.byKey(const ValueKey('copy-cash-code')), findsOneWidget);
+    // No wallet UI leaked into the cash flow.
+    expect(find.byKey(const ValueKey('wallet-number')), findsNothing);
+  });
+
+  testWidgets('copying the cash code puts it on the clipboard', (tester) async {
+    final repo = _FakePaymentRepository();
+    await _openCashStep(tester, repo);
+    await tester.tap(find.byKey(const ValueKey('cash-type-bank')));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('confirm-cash-payment')));
+    // Bounded pumps: the pending result shows an indeterminate spinner,
+    // so pumpAndSettle would never settle.
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    await tester.tap(find.byKey(const ValueKey('copy-cash-code')));
+    await tester.pump();
+    expect(find.text('Code copied'), findsOneWidget);
+  });
+
+  testWidgets('cash confirm without a channel selected shows an error', (
+    tester,
+  ) async {
+    final repo = _FakePaymentRepository();
+    await _openCashStep(tester, repo);
+    await tester.tap(find.byKey(const ValueKey('confirm-cash-payment')));
     await tester.pumpAndSettle();
 
-    // Confirmation dialog (plan 2.3) echoes the number.
-    expect(find.textContaining('01012345678'), findsWidgets);
-    await tester.tap(find.text('Confirm payment').last);
-    await tester.pumpAndSettle();
-
-    expect(repo.confirmCalls, 1);
-    // OTP step.
-    expect(find.byKey(const ValueKey('otp-input')), findsOneWidget);
-
-    // Enter the OTP and verify.
-    await tester.enterText(find.byKey(const ValueKey('otp-input')), '123456');
-    await tester.tap(find.byKey(const ValueKey('verify-otp')));
-    await tester.pumpAndSettle();
-
-    expect(repo.otpSubmissions, ['123456']);
-    expect(find.text('Payment successful!'), findsOneWidget);
+    expect(find.text('Choose your cash channel'), findsOneWidget);
+    // No backend call was made.
+    expect(repo.cashConfirmCalls, 0);
   });
 
   testWidgets('rejects an invalid wallet number before submitting', (
@@ -213,15 +317,15 @@ void main() {
     final repo = _FakePaymentRepository();
     await tester.pumpWidget(
       _wrap(
-        WalletPaymentScreen(
+        PaymentFlowScreen(
           repository: repo,
           initialPackage: CreditPackage.premium,
         ),
       ),
     );
-    // The wallet step is shown directly.
-    expect(find.byKey(const ValueKey('wallet-number')), findsOneWidget);
-    expect(find.byKey(const ValueKey('wallet-type-FAWRY')), findsOneWidget);
+    // The method step is shown directly (not the package step).
+    expect(find.byKey(const ValueKey('method-wallet')), findsOneWidget);
+    expect(find.byKey(const ValueKey('method-cash')), findsOneWidget);
   });
 
   testWidgets('terminal failed result offers retry', (tester) async {
@@ -245,11 +349,12 @@ void main() {
     expect(find.text('Payment failed'), findsOneWidget);
     expect(find.text('Try again'), findsOneWidget);
 
-    // Retry returns to the wallet step.
+    // Retry returns to the method step.
     await tester.tap(find.text('Try again'));
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('wallet-number')), findsOneWidget);
+    expect(find.byKey(const ValueKey('method-wallet')), findsOneWidget);
   });
+
   testWidgets('poll failure is surfaced while status stays pending', (
     tester,
   ) async {

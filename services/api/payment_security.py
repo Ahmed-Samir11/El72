@@ -174,6 +174,8 @@ PAYMENT_EVENT_TYPES = frozenset(
         "card_payment_created",
         "staging_rejected",
         "wallet_payment_created",
+        "cash_payment_created",
+        "cash_expired",
     }
 )
 

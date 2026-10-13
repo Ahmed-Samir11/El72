@@ -136,6 +136,41 @@ void main() {
     });
   });
 
+  group('confirmCashPayment', () {
+    test('parses the code, expiry and status', () async {
+      final repo = repoWith(
+        200,
+        '{"payment_id": "cpay_1", "payment_code": "CODE1234", '
+        '"expires_at": "2025-01-02T12:00:00Z", "status": "pending"}',
+      );
+      final result = await repo.confirmCashPayment(
+        stagingToken: 'stg_123',
+        cashType: CashType.fawry,
+        packageId: 'standard',
+      );
+      expect(result.paymentId, 'cpay_1');
+      expect(result.paymentCode, 'CODE1234');
+      expect(result.expiresAt, '2025-01-02T12:00:00Z');
+      expect(result.status, 'pending');
+    });
+
+    test(
+      'demo mode simulates a pending cash code on network failure',
+      () async {
+        AppConfig.demoMode = true;
+        final repo = repoWith(503, 'oops');
+        final result = await repo.confirmCashPayment(
+          stagingToken: 'stg',
+          cashType: CashType.bank,
+          packageId: 'premium',
+        );
+        expect(result.status, 'pending');
+        expect(result.paymentId, isNotEmpty);
+        expect(result.paymentCode, isNotEmpty);
+      },
+    );
+  });
+
   group('confirmWalletOtp', () {
     test('parses success', () async {
       final repo = repoWith(200, '{"status": "processing"}');
@@ -189,6 +224,21 @@ void main() {
       expect(info.package, 'standard');
       expect(info.amountEgp, 30);
       expect(info.status, 'succeeded');
+      // Non-cash payloads carry no code/expiry.
+      expect(info.paymentCode, isNull);
+      expect(info.expiresAt, isNull);
+    });
+
+    test('parses the cash code and expiry when present', () async {
+      final repo = repoWith(
+        200,
+        '{"payment_id": "cpay_1", "package": "standard", '
+        '"amount_egp": 30, "status": "pending", "created_at": "now", '
+        '"payment_code": "CODE1234", "expires_at": "2025-01-02T12:00:00Z"}',
+      );
+      final info = await repo.getPaymentStatus('cpay_1');
+      expect(info.paymentCode, 'CODE1234');
+      expect(info.expiresAt, '2025-01-02T12:00:00Z');
     });
 
     test('live mode rethrows on 404', () async {

@@ -337,6 +337,7 @@ async def paymob_webhook(request: Request, db: Session = Depends(get_db)):
         # -> user sees error, no credits granted").
         _update_card_payment_status(db, order_id, status_value)
         _update_wallet_payment_status(db, order_id, status_value)
+        _update_cash_payment_status(db, order_id, status_value)
         return {"status": "ignored"}
 
     # 4.5: atomic credit grant — payment log + credits + audit in ONE
@@ -393,6 +394,8 @@ async def paymob_webhook(request: Request, db: Session = Depends(get_db)):
     # Same for wallet payments (Feature 2): the webhook is the source of
     # truth for the payment's fate.
     _update_wallet_payment_status(db, order_id, status_value)
+    # Same for cash payments (Feature 3).
+    _update_cash_payment_status(db, order_id, status_value)
 
     return {"status": "processed"}
 
@@ -460,6 +463,35 @@ def _update_wallet_payment_status(
         # payment) or the table may be absent in a billing-only deployment.
         db.rollback()
         logger.warning("Could not update wallet_payments status for %s", order_id)
+
+
+def _update_cash_payment_status(db: Session, order_id: str, status_value: str) -> None:
+    """Transition the CashPayment row to the webhook-confirmed terminal
+    state (Feature 3).
+
+    Same semantics as :func:`_update_wallet_payment_status`: the webhook is
+    the source of truth, prior terminal states are transitioned (a later
+    ``succeeded`` delivery of the same order wins), and the UPDATE is
+    committed explicitly (the get_db teardown closes without committing).
+    """
+    from sqlalchemy import text as _text
+
+    try:
+        db.execute(
+            _text(
+                "UPDATE cash_payments SET status = :status "
+                "WHERE paymob_payment_id = :order_id "
+                "AND status IN ('pending', 'failed', 'canceled')"
+            ),
+            {"status": status_value, "order_id": order_id},
+        )
+        db.commit()
+    except Exception:
+        # Non-fatal: the CashPayment row may not exist (card, wallet or
+        # manual payment) or the table may be absent in a billing-only
+        # deployment.
+        db.rollback()
+        logger.warning("Could not update cash_payments status for %s", order_id)
 
 
 @app.get("/pricing")

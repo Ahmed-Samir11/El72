@@ -308,6 +308,50 @@ class AppLocalizationsEn extends AppLocalizations {
   String get retryPayment => 'Try again';
 
   @override
+  String get selectPaymentMethod => 'Choose how you\'d like to pay';
+
+  @override
+  String get paymentMethodWallet => 'Mobile wallet';
+
+  @override
+  String get paymentMethodWalletDesc =>
+      'Pay with Vodafone Cash, Orange Money, Etisalat Cash or Fawry';
+
+  @override
+  String get paymentMethodCash => 'Cash (Fawry / bank)';
+
+  @override
+  String get paymentMethodCashDesc =>
+      'Get a payment code and pay at a Fawry point or bank branch';
+
+  @override
+  String get selectCashChannel => 'Choose your cash channel';
+
+  @override
+  String get cashChannelFawry => 'Fawry';
+
+  @override
+  String get cashChannelBank => 'Bank branch';
+
+  @override
+  String get cashCodeTitle => 'Your payment code';
+
+  @override
+  String get cashCodeDesc =>
+      'Show this code at the cash point or bank branch. It expires in 24 hours.';
+
+  @override
+  String cashExpiresAt(String time) {
+    return 'Expires $time';
+  }
+
+  @override
+  String get copyCode => 'Copy';
+
+  @override
+  String get codeCopied => 'Code copied';
+
+  @override
   String get statCurrent => 'Current';
 
   @override

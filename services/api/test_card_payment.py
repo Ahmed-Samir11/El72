@@ -606,7 +606,9 @@ class TestCardDataSecurity:
             db.close()
 
     def test_confirm_response_contains_no_card_data(self, client):
-        """The confirm response only contains payment_id and authentication_token."""
+        """The confirm response contains no card data — only payment_id and
+        authentication_token (plus the shared response model's optional
+        cash-only fields, which are null for card payments)."""
         token = _user_token(client)
         start = client.get("/payment/start", headers=_auth_headers(token))
         staging_token = start.json()["staging_token"]
@@ -623,7 +625,16 @@ class TestCardDataSecurity:
         assert resp.status_code == 200
         data = resp.json()
         # Only these fields should be present.
-        assert set(data.keys()) == {"payment_id", "authentication_token", "status"}
+        assert set(data.keys()) == {
+            "payment_id",
+            "authentication_token",
+            "status",
+            "payment_code",
+            "expires_at",
+        }
+        # The cash-only fields must be null for a card payment.
+        assert data["payment_code"] is None
+        assert data["expires_at"] is None
 
 
 # ---------------------------------------------------------------------------

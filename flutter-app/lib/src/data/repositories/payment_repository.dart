@@ -5,11 +5,12 @@ import '../config.dart';
 import '../models/payment_models.dart';
 import '../services/api_client.dart';
 
-/// Data source for the Paymob wallet payment flow (Feature 2).
+/// Data source for the Paymob payment flow (Features 2 + 3).
 ///
 /// Endpoints (all Bearer-authenticated via [ApiClient]):
 /// - `GET /payment/start` → staging token
 /// - `POST /payment/confirm` (wallet) → payment id + initial status
+/// - `POST /payment/confirm` (cash) → payment id + single-use code + expiry
 /// - `POST /payment/confirm-otp` → OTP verification result
 /// - `GET /payment/status/{payment_id}` → owner-only status
 ///
@@ -103,6 +104,41 @@ class PaymentRepository {
       demo: () => WalletPaymentResult(
         paymentId: 'demo_payment_${walletNumber.hashCode}',
         status: 'pending_otp',
+      ),
+    );
+  }
+
+  /// Confirm a cash payment (Fawry / bank, Feature 3). Returns the
+  /// single-use payment code and its 24 h expiry; the price is
+  /// server-determined from [packageId] (plan 3.4).
+  Future<CashPaymentResult> confirmCashPayment({
+    required String stagingToken,
+    required CashType cashType,
+    required String packageId,
+  }) {
+    const path = '/payment/confirm';
+    return _call(
+      path: path,
+      live: () async {
+        final data = _jsonMap(
+          await _apiClient.dio.post(
+            path,
+            data: {
+              'staging_token': stagingToken,
+              'method_type': 'cash',
+              'cash_type': cashType.apiValue,
+              'package': packageId,
+            },
+          ),
+          path,
+        );
+        return CashPaymentResult.fromJson(data);
+      },
+      demo: () => CashPaymentResult(
+        paymentId: 'demo_cash_${cashType.apiValue}',
+        paymentCode: 'DEMO2345',
+        expiresAt: '',
+        status: 'pending',
       ),
     );
   }
