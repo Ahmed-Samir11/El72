@@ -7,6 +7,19 @@ requirement 7.1).
 
 ``SubscriptionRenewal`` records each monthly renewal (idempotency guard via
 the unique ``paymob_renewal_id``; plan 7.6).
+
+Append-only and idempotency implications (review finding: document the
+append-only trigger and idempotency implications):
+
+- ``SubscriptionRenewal`` is append-only (a DB trigger blocks UPDATE and
+  DELETE). A renewal is a historical record of a charge; it is never
+  modified or deleted.
+- The unique ``paymob_renewal_id`` is the idempotency guard: a duplicate
+  webhook delivery for the same renewal is a no-op (no double charge,
+  plan 7.6). This also means a status correction (e.g., a "failed" renewal
+  later reported as "succeeded") is NOT applied — the first delivery wins.
+  This is an accepted trade-off for v2 (the webhook is the source of
+  truth; corrections require manual admin intervention).
 """
 
 from datetime import datetime, timezone

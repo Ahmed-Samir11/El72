@@ -48,9 +48,6 @@ router = APIRouter(tags=["subscriptions"])
 PACKAGE_PRICING = {"standard": 30.0, "premium": 90.0}
 PACKAGE_PRICES_PAISA = {k: round(v * 100) for k, v in PACKAGE_PRICING.items()}
 
-# A user may have at most one active subscription at a time.
-ONE_ACTIVE_SUBSCRIPTION = True
-
 
 class SubscriptionCreateBody(BaseModel):
     staging_token: str
@@ -114,7 +111,7 @@ def create_subscription_endpoint(
         )
         .first()
     )
-    if existing is not None and ONE_ACTIVE_SUBSCRIPTION:
+    if existing is not None:
         raise HTTPException(
             status_code=409, detail="An active subscription already exists"
         )
