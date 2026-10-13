@@ -1604,6 +1604,14 @@ def refund_payment(
         raise HTTPException(status_code=404, detail="Payment not found")
     method, payment, oid = found
 
+    # Idempotency: one refund per order (plan 6.4: irreversible). Checked
+    # FIRST so a repeat request is a clean 409 even though the payment is
+    # now in the 'refunded' state (which the guard below would reject with
+    # 400).
+    existing = db.query(Refund).filter(Refund.order_key == f"{method}:{oid}").first()
+    if existing is not None:
+        raise HTTPException(status_code=409, detail="Already refunded")
+
     # Only completed payments are refundable (plan 6.4).
     refundable = {
         "manual": {"approved"},
@@ -1617,11 +1625,6 @@ def refund_payment(
             detail=f"Cannot refund payment in '{payment.status}' state",
         )
 
-    # Idempotency: one refund per order (plan 6.4: irreversible).
-    existing = db.query(Refund).filter(Refund.order_key == f"{method}:{oid}").first()
-    if existing is not None:
-        raise HTTPException(status_code=409, detail="Already refunded")
-
     user = (
         db.query(User).filter(User.id == payment.user_id).first()
         if payment.user_id
@@ -1630,38 +1633,50 @@ def refund_payment(
     credits = CREDITS_BY_PACKAGE.get(payment.package, 0)
     new_balance = None
     if user is not None and credits > 0:
-        new_balance = _claw_back_credits(db, user, credits, reason=f"refund_{method}")
+        new_balance = _claw_back_credits(
+            db, user, credits, reason=f"refund_{method}_{oid}"
+        )
 
+    # Mark the payment as refunded so the status is visible in the unified
+    # list (the Refund row is the source of truth; the status is a
+    # convenience marker).
+    payment.status = "refunded"
+
+    db.add(
+        Refund(
+            order_key=f"{method}:{oid}",
+            method=method,
+            order_id=oid,
+            user_id=payment.user_id,
+            package=payment.package,
+            amount_egp=payment.amount_egp,
+            credits_deducted=credits if user is not None else 0,
+            reason=body.reason,
+            admin_id=str(admin.id),
+            admin_username=admin.username,
+        )
+    )
+    _audit_entry(
+        db,
+        admin,
+        payment.user_id,
+        oid,
+        "refund",
+        request,
+        target_user_phone=payment.user_phone if method == "manual" else None,
+    )
+    # Flush now so the UNIQUE order_key constraint fires HERE (not at commit),
+    # keeping the IntegrityError scope tight to the idempotency guard. An
+    # unrelated integrity failure (FK, NOT NULL) would have already surfaced
+    # during the earlier _claw_back_credits flush.
     try:
-        db.add(
-            Refund(
-                order_key=f"{method}:{oid}",
-                method=method,
-                order_id=oid,
-                user_id=payment.user_id,
-                package=payment.package,
-                amount_egp=payment.amount_egp,
-                credits_deducted=credits if user is not None else 0,
-                reason=body.reason,
-                admin_id=str(admin.id),
-                admin_username=admin.username,
-            )
-        )
-        _audit_entry(
-            db,
-            admin,
-            payment.user_id,
-            oid,
-            "refund",
-            request,
-            target_user_phone=payment.user_phone if method == "manual" else None,
-        )
-        db.commit()
+        db.flush()
     except IntegrityError:
         # Lost a race to a concurrent refund: the UNIQUE order_key constraint
         # fired. Surface it as 409 (idempotent) rather than a 500.
         db.rollback()
         raise HTTPException(status_code=409, detail="Already refunded") from None
+    db.commit()
     logger.info("Refunded payment %s (%s)", oid, method)
     return {
         "status": "refunded",

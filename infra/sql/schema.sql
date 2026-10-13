@@ -165,7 +165,7 @@ CREATE TABLE IF NOT EXISTS manual_payments (
         CHECK (package IN ('standard', 'premium')),
     amount_egp NUMERIC(10, 2) NOT NULL CHECK (amount_egp > 0),
     status VARCHAR(20) NOT NULL DEFAULT 'pending'
-        CHECK (status IN ('pending', 'approved', 'rejected')),
+        CHECK (status IN ('pending', 'approved', 'rejected', 'refunded')),
     reject_reason TEXT,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     resolved_at TIMESTAMP WITH TIME ZONE,
@@ -193,7 +193,7 @@ CREATE TABLE IF NOT EXISTS card_payments (
         CHECK (package IN ('standard', 'premium')),
     amount_egp NUMERIC(10, 2) NOT NULL CHECK (amount_egp > 0),
     status VARCHAR(20) NOT NULL DEFAULT 'pending'
-        CHECK (status IN ('pending', 'succeeded', 'failed', 'canceled')),
+        CHECK (status IN ('pending', 'succeeded', 'failed', 'canceled', 'refunded')),
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
 
@@ -214,7 +214,7 @@ CREATE TABLE IF NOT EXISTS wallet_payments (
     amount_egp NUMERIC(10, 2) NOT NULL CHECK (amount_egp > 0),
     status VARCHAR(20) NOT NULL DEFAULT 'pending_otp'
         CHECK (status IN ('pending_otp', 'processing', 'succeeded',
-            'failed', 'canceled')),
+            'failed', 'canceled', 'refunded')),
     -- OTP brute-force guard (plan 2.1): max 3 attempts, then canceled.
     otp_attempts INTEGER NOT NULL DEFAULT 0 CHECK (otp_attempts >= 0),
     -- OTP challenge expiry (60 s from payment creation, plan 2.1).
@@ -241,7 +241,7 @@ CREATE TABLE IF NOT EXISTS cash_payments (
         CHECK (package IN ('standard', 'premium')),
     amount_egp NUMERIC(10, 2) NOT NULL CHECK (amount_egp > 0),
     status VARCHAR(20) NOT NULL DEFAULT 'pending'
-        CHECK (status IN ('pending', 'succeeded', 'failed', 'canceled')),
+        CHECK (status IN ('pending', 'succeeded', 'failed', 'canceled', 'refunded')),
     -- Code/order expiry: 24 h from creation (plan 3.3).
     expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()

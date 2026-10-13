@@ -798,6 +798,86 @@ class TestRefund:
         )
         assert resp.status_code == 400, resp.text
 
+    def test_refund_card_payment(self, client):
+        # A succeeded card payment is refundable; credits are clawed back
+        # and the payment is marked refunded.
+        admin_token = _admin_token(client)
+        user_id, _ = _seed_user(client, USER_PHONE)
+        _seed_payment_row(
+            client,
+            CardPayment,
+            paymob_payment_id="pm_card_ref",
+            user_id=user_id,
+            package="standard",
+            amount_egp=30,
+            status="succeeded",
+        )
+        resp = client.post(
+            "/admin/payments/pm_card_ref/refund",
+            headers=_auth_headers(admin_token),
+            json={"reason": "card chargeback"},
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["status"] == "refunded"
+        assert body["credits_deducted"] == 10
+        # The payment row is marked refunded.
+        gen = app.dependency_overrides[get_db]()
+        db = next(gen)
+        try:
+            p = db.query(CardPayment).filter_by(paymob_payment_id="pm_card_ref").first()
+            assert p.status == "refunded"
+        finally:
+            db.close()
+
+    def test_refund_cash_payment(self, client):
+        # A succeeded cash payment is refundable.
+        admin_token = _admin_token(client)
+        user_id, _ = _seed_user(client, USER_PHONE)
+        _seed_payment_row(
+            client,
+            CashPayment,
+            paymob_payment_id="pm_cash_ref",
+            user_id=user_id,
+            payment_code="CODEREF",
+            cash_type="fawry",
+            package="premium",
+            amount_egp=90,
+            status="succeeded",
+            expires_at=datetime(2025, 1, 2, 12, 0, 0),
+        )
+        resp = client.post(
+            "/admin/payments/pm_cash_ref/refund",
+            headers=_auth_headers(admin_token),
+            json={"reason": "cash not received"},
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["status"] == "refunded"
+        assert body["credits_deducted"] == 30  # premium package
+
+    def test_refund_wallet_payment(self, client):
+        # A succeeded wallet payment is refundable.
+        admin_token = _admin_token(client)
+        user_id, _ = _seed_user(client, USER_PHONE)
+        _seed_payment_row(
+            client,
+            WalletPayment,
+            paymob_payment_id="pm_wallet_ref",
+            user_id=user_id,
+            wallet_type="fawry",
+            package="standard",
+            amount_egp=30,
+            status="succeeded",
+        )
+        resp = client.post(
+            "/admin/payments/pm_wallet_ref/refund",
+            headers=_auth_headers(admin_token),
+            json={"reason": "wallet reversal"},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["credits_deducted"] == 10
+
 
 class TestAdjustCredits:
     def test_small_adjustment_no_approval(self, client):

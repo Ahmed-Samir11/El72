@@ -43,7 +43,7 @@ class ManualPayment(Base):
         Index("idx_manual_payments_status_created", "status", "created_at"),
         CheckConstraint("package IN ('standard', 'premium')"),
         CheckConstraint("amount_egp > 0"),
-        CheckConstraint("status IN ('pending', 'approved', 'rejected')"),
+        CheckConstraint("status IN ('pending', 'approved', 'rejected', 'refunded')"),
     )
 
     id = Column(
