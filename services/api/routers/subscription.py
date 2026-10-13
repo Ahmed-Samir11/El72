@@ -19,6 +19,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from services.api.dependencies import get_current_user, get_db
@@ -121,7 +122,10 @@ def create_subscription_endpoint(
 
     now = _utcnow()
     next_charge = now + timedelta(days=30)
-    reference_id = f"elhaq-sub-{user.id}-{body.package}"
+    # The reference_id must be unique per subscription; use a UUID so a
+    # re-subscription (after cancel) does not collide (review finding:
+    # deterministic reference_id can collide).
+    reference_id = f"elhaq-sub-{uuid.uuid4()}"
     try:
         method = create_payment_method(body.token, "card")
         sub_resp = create_subscription(
@@ -160,7 +164,17 @@ def create_subscription_endpoint(
         detail=sanitize_for_log(f"package={body.package}"),
         ip_address=_client_ip(request),
     )
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        # Lost a race to a concurrent duplicate creation: the partial
+        # unique index (one active subscription per user) was just
+        # inserted by the other request. Roll back and return 409
+        # (review finding: concurrent duplicate creation -> 500).
+        db.rollback()
+        raise HTTPException(
+            status_code=409, detail="Already have an active subscription"
+        ) from exc
 
     logger.info(
         "Subscription %s created for user %s (%s)",
