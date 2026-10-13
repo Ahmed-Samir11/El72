@@ -1686,7 +1686,9 @@ def refund_payment(
 
 
 class AdjustCreditsBody(BaseModel):
-    amount: int
+    # Bounded so a single adjustment cannot be an unreasonable value; the
+    # dual-admin approval gate (|amount| > 50) already guards large moves.
+    amount: int = Field(ge=-1000, le=1000)
     reason: str = Field(min_length=3, max_length=500)
     approver_id: Optional[str] = None
 

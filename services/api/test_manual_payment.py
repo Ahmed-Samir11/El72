@@ -1059,6 +1059,18 @@ class TestAdjustCredits:
         )
         assert resp.status_code == 400, resp.text
 
+    def test_adjust_out_of_bounds_rejected(self, client):
+        # Amounts outside the [-1000, 1000] bound are rejected (422).
+        admin_token = _admin_token(client)
+        user_id, _ = _seed_user(client, USER_PHONE)
+        for bad in (-1001, 1001):
+            resp = client.post(
+                f"/admin/users/{user_id}/adjust-credits",
+                headers=_auth_headers(admin_token),
+                json={"amount": bad, "reason": "out of bounds"},
+            )
+            assert resp.status_code == 422, resp.text
+
     def test_adjust_credits_logged(self, client):
         admin_token = _admin_token(client)
         user_id, _ = _seed_user(client, USER_PHONE)
