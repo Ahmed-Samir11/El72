@@ -1,5 +1,6 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:intl/intl.dart';
@@ -313,6 +314,21 @@ void main() {
   });
 
   testWidgets('copying the cash code puts it on the clipboard', (tester) async {
+    // Capture the Clipboard.setData platform call: reading the clipboard
+    // back (Clipboard.getData) would hang in a widget test with no
+    // platform channel mock.
+    String? copiedText;
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          copiedText =
+              (call.arguments as Map<String, dynamic>)['text'] as String?;
+        }
+        return null;
+      },
+    );
+
     final repo = _FakePaymentRepository();
     await _openCashStep(tester, repo);
     await tester.tap(find.byKey(const ValueKey('cash-type-bank')));
@@ -326,6 +342,8 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('copy-cash-code')));
     await tester.pump();
     expect(find.text('Code copied'), findsOneWidget);
+    // The clipboard actually carries the code, not just a snackbar.
+    expect(copiedText, 'CODE1234');
   });
 
   testWidgets('cash confirm without a channel selected shows an error', (

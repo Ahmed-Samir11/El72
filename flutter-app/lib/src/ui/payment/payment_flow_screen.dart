@@ -35,6 +35,16 @@ enum _PaymentStep { package, method, wallet, cash, otp, result }
 
 enum _PaymentMethod { wallet, cash }
 
+/// The normalized result of a confirm call. [paymentCode] and [expiresAt]
+/// are cash-only and null when absent/empty, so the UI never renders a
+/// blank code or an "Expires " line.
+typedef _ConfirmResult = ({
+  String paymentId,
+  String status,
+  String? paymentCode,
+  String? expiresAt,
+});
+
 class _PaymentFlowScreenState extends State<PaymentFlowScreen> {
   late _PaymentStep _step;
   late CreditPackage _package;
@@ -154,11 +164,17 @@ class _PaymentFlowScreenState extends State<PaymentFlowScreen> {
 
     await _submitPayment(() async {
       final start = await _repo.startPayment();
-      return _repo.confirmWalletPayment(
+      final r = await _repo.confirmWalletPayment(
         stagingToken: start['staging_token'] ?? '',
         walletType: type,
         walletNumber: number,
         packageId: _package.id,
+      );
+      return (
+        paymentId: r.paymentId,
+        status: r.status,
+        paymentCode: null,
+        expiresAt: null,
       );
     });
   }
@@ -171,18 +187,29 @@ class _PaymentFlowScreenState extends State<PaymentFlowScreen> {
     }
     await _submitPayment(() async {
       final start = await _repo.startPayment();
-      return _repo.confirmCashPayment(
+      final r = await _repo.confirmCashPayment(
         stagingToken: start['staging_token'] ?? '',
         cashType: type,
         packageId: _package.id,
       );
+      return (
+        paymentId: r.paymentId,
+        status: r.status,
+        paymentCode: _nonEmpty(r.paymentCode),
+        expiresAt: r.expiresAt,
+      );
     });
   }
+
+  /// Normalizes a possibly-empty string to null so the UI never renders a
+  /// blank code or an "Expires " line.
+  String? _nonEmpty(String? s) =>
+      (s == null || s.trim().isEmpty) ? null : s.trim();
 
   /// Shared submit path for wallet and cash: starts the payment, confirms
   /// it, and moves to the result step (or the OTP step for wallets that
   /// need it).
-  Future<void> _submitPayment(Future<dynamic> Function() confirm) async {
+  Future<void> _submitPayment(Future<_ConfirmResult> Function() confirm) async {
     setState(() {
       _submitting = true;
       _fieldError = null;
@@ -285,9 +312,10 @@ class _PaymentFlowScreenState extends State<PaymentFlowScreen> {
       setState(() {
         _pollFailed = false;
         _resultStatus = status;
-        // Keep the code/expiry visible if the server echoes them.
-        _cashCode = info.paymentCode ?? _cashCode;
-        _cashExpiresAt = info.expiresAt ?? _cashExpiresAt;
+        // Keep the code/expiry visible if the server echoes them; an empty
+        // echo must not overwrite a valid value (or render a blank line).
+        _cashCode = _nonEmpty(info.paymentCode) ?? _cashCode;
+        _cashExpiresAt = _nonEmpty(info.expiresAt) ?? _cashExpiresAt;
       });
       _startPollingIfNeeded();
     } on DioException {
@@ -695,7 +723,7 @@ class _PaymentFlowScreenState extends State<PaymentFlowScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            if (_isCash && _cashCode != null && !terminal)
+            if (_isCash && _nonEmpty(_cashCode) != null && !terminal)
               _buildCodeCard(scheme),
             if (!terminal)
               const SizedBox(
@@ -742,13 +770,20 @@ class _PaymentFlowScreenState extends State<PaymentFlowScreen> {
 
   /// Formats the raw ISO expiry for display (plan 3.3). Returns null when
   /// the timestamp is missing/unparseable so the UI hides the line.
+  // Cached formatter: a DateFormat is created once per locale instead of
+  // on every expiry render.
+  DateFormat? _expiryFormatter;
+  String? _expiryFormatterLocale;
+
   String? _formatExpiry(String raw) {
     final dt = DateTime.tryParse(raw);
     if (dt == null) return null;
-    return DateFormat(
-      'yMMMMdEEE',
-      Localizations.localeOf(context).toString(),
-    ).format(dt.toLocal());
+    final locale = Localizations.localeOf(context).toString();
+    if (_expiryFormatter == null || _expiryFormatterLocale != locale) {
+      _expiryFormatter = DateFormat('yMMMMdEEE', locale);
+      _expiryFormatterLocale = locale;
+    }
+    return _expiryFormatter!.format(dt.toLocal());
   }
 
   /// Cash code display (plan 3.1/3.3): the single-use code is shown
