@@ -9,7 +9,16 @@ manual DB insert); there is no self-service registration endpoint.
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import (
+    CheckConstraint,
+    Column,
+    DateTime,
+    ForeignKey,
+    Integer,
+    Numeric,
+    String,
+    Text,
+)
 
 from services.api.models import Base
 
@@ -45,6 +54,17 @@ class Refund(Base):
     """
 
     __tablename__ = "refunds"
+    __table_args__ = (
+        CheckConstraint(
+            "method IN ('manual', 'card', 'wallet', 'cash')",
+            name="refunds_method_check",
+        ),
+        CheckConstraint(
+            "package IN ('standard', 'premium')",
+            name="refunds_package_check",
+        ),
+        CheckConstraint("amount_egp > 0", name="refunds_amount_check"),
+    )
 
     id = Column(
         String(36), primary_key=True, default=lambda: str(uuid.uuid4()), nullable=False
