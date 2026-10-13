@@ -191,3 +191,39 @@ def extract_cash_code(payment_resp: Dict[str, Any]) -> str:
     if isinstance(code, (str, int)) and str(code).strip():
         return str(code).strip()
     return ""
+
+
+def create_subscription(
+    payment_method_id: str,
+    amount_paisa: int,
+    currency: str,
+    reference_id: str,
+    interval: str = "month",
+) -> Dict[str, Any]:
+    """Create a Paymob recurring subscription (first charge + mandate).
+
+    Returns the subscription object including its ``id`` and the first
+    payment's ``authentication_token``. ``amount_paisa`` is the fixed
+    server-determined monthly amount (plan 7.1). ``reference_id`` carries
+    our ``elhaq-sub-{user_id}-{package}`` marker so the renewal webhook can
+    resolve user + package.
+    """
+    return _post(
+        "subscription",
+        {
+            "payment_method_id": payment_method_id,
+            "amount": amount_paisa,
+            "currency": currency,
+            "reference_id": reference_id,
+            "billing_interval": interval,
+        },
+    )
+
+
+def cancel_subscription(subscription_id: str) -> Dict[str, Any]:
+    """Cancel a Paymob subscription. Returns the subscription object.
+
+    Cancellation is effective at the end of the current billing period
+    (plan 7.4).
+    """
+    return _post(f"subscription/{subscription_id}/cancel", {})

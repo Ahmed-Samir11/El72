@@ -178,6 +178,11 @@ PAYMENT_EVENT_TYPES = frozenset(
         "wallet_payment_created",
         "cash_payment_created",
         "cash_expired",
+        "subscription_created",
+        "subscription_canceled",
+        "subscription_renewal_succeeded",
+        "subscription_renewal_failed",
+        "subscription_auto_canceled",
     }
 )
 

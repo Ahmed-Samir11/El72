@@ -1,6 +1,8 @@
 import json
 import logging
 import os
+import uuid
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -18,6 +20,7 @@ from services.api.payment_security import (
     sanitize_for_log,
     security_monitor,
 )
+from services.api.subscription_models import Subscription, SubscriptionRenewal
 from services.billing.models import PaymentLog
 from services.common.paymob import verify_paymob_hmac
 
@@ -504,3 +507,187 @@ def get_dynamic_pricing():
             "premium": {"credits": 30, "price_egp": 90},
         },
     }
+
+
+# Dunning: after this many consecutive failed renewals the subscription is
+# auto-canceled (plan 7.2).
+MAX_FAILED_RENEWALS = 3
+
+
+@app.post("/webhook/paymob/subscription-renewal")
+@limiter.limit("100/hour")
+async def paymob_subscription_renewal_webhook(
+    request: Request, db: Session = Depends(get_db)
+):
+    """Paymob subscription renewal webhook (Feature 7).
+
+    Fired by Paymob each month when it charges the subscriber's card.
+    Security gates mirror the one-time payment webhook (plan 7.5/7.6):
+      - HMAC-SHA512 signature on the raw body -> 401
+      - idempotency: unique paymob_renewal_id, duplicate -> no side effect
+      - status whitelist (succeeded / failed)
+
+    On success: credits are granted, ``next_charge`` advances a month, and
+    the dunning counter resets. On failure: the dunning counter increments;
+    after :data:`MAX_FAILED_RENEWALS` consecutive failures the subscription
+    is auto-canceled (plan 7.2).
+    """
+    body = await request.body()
+    ip = _client_ip(request)
+
+    if not verify_paymob_webhook(request, body):
+        record_payment_event(
+            db,
+            event_type="webhook_signature_failed",
+            payment_ref="",
+            detail=sanitize_for_log("signature verification failed"),
+            ip_address=ip,
+        )
+        db.commit()
+        raise HTTPException(status_code=401, detail="Invalid signature")
+
+    try:
+        data = json.loads(body.decode("utf-8"))
+        tx = data.get("obj", data) if isinstance(data, dict) else None
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        _reject_webhook(db, ip, "invalid_payload: unparseable body", None, "")
+        raise HTTPException(status_code=400, detail="Invalid webhook payload") from exc
+    if not isinstance(tx, dict):
+        _reject_webhook(db, ip, "invalid_payload: not an object", None, "")
+        raise HTTPException(status_code=400, detail="Invalid webhook payload")
+
+    renewal_id = tx.get("id")
+    paymob_subscription_id = tx.get("paymob_subscription_id")
+    status_value = tx.get("status")
+    if (
+        not isinstance(renewal_id, str)
+        or not renewal_id
+        or not isinstance(paymob_subscription_id, str)
+        or not paymob_subscription_id
+        or not isinstance(status_value, str)
+        or not status_value
+    ):
+        _reject_webhook(
+            db, ip, "invalid_payload: missing/typed fields", None, str(renewal_id)
+        )
+        raise HTTPException(status_code=400, detail="Invalid webhook payload")
+    if status_value not in ("succeeded", "failed"):
+        _reject_webhook(db, ip, f"unknown_status: {status_value}", None, renewal_id)
+        raise HTTPException(status_code=400, detail="Invalid status")
+
+    # 7.6: idempotency FIRST — a duplicate delivery short-circuits.
+    existing = (
+        db.query(SubscriptionRenewal)
+        .filter(SubscriptionRenewal.paymob_renewal_id == renewal_id)
+        .first()
+    )
+    if existing is not None:
+        record_payment_event(
+            db,
+            event_type="webhook_duplicate",
+            payment_ref=renewal_id,
+            detail=sanitize_for_log("duplicate renewal delivery"),
+            ip_address=ip,
+        )
+        db.commit()
+        return {"status": "duplicate"}
+
+    subscription = (
+        db.query(Subscription)
+        .filter(Subscription.paymob_subscription_id == paymob_subscription_id)
+        .first()
+    )
+    if subscription is None:
+        _reject_webhook(
+            db,
+            ip,
+            f"unknown_subscription: {paymob_subscription_id}",
+            None,
+            renewal_id,
+        )
+        raise HTTPException(status_code=404, detail="Subscription not found")
+
+    if subscription.status != "active":
+        # A renewal for an already-canceled/failed subscription is a no-op
+        # (idempotent; audited).
+        record_payment_event(
+            db,
+            event_type="webhook_duplicate",
+            payment_ref=renewal_id,
+            detail=sanitize_for_log("renewal for inactive subscription"),
+            ip_address=ip,
+        )
+        db.commit()
+        return {"status": "inactive"}
+
+    user = db.query(User).filter(User.id == subscription.user_id).first()
+    now = datetime.now(timezone.utc)
+
+    if status_value == "succeeded":
+        renewal = SubscriptionRenewal(
+            id=str(uuid.uuid4()),
+            subscription_id=subscription.id,
+            paymob_renewal_id=renewal_id,
+            amount_egp=subscription.amount_egp,
+            status="succeeded",
+            charged_at=now,
+        )
+        db.add(renewal)
+        if user is not None:
+            grant(
+                db,
+                user,
+                PACKAGE_CREDITS[subscription.package],
+                reason=f"subscription_renewal_{subscription.package}",
+            )
+        # Advance the next charge and reset the dunning counter.
+        subscription.failed_renewals = 0
+        subscription.next_charge = now + timedelta(days=30)
+        record_payment_event(
+            db,
+            event_type="subscription_renewal_succeeded",
+            user_id=str(subscription.user_id),
+            payment_ref=renewal_id,
+            detail=sanitize_for_log(f"package={subscription.package}"),
+            ip_address=ip,
+        )
+    else:
+        # Failed renewal: increment the dunning counter.
+        renewal = SubscriptionRenewal(
+            id=str(uuid.uuid4()),
+            subscription_id=subscription.id,
+            paymob_renewal_id=renewal_id,
+            amount_egp=subscription.amount_egp,
+            status="failed",
+            charged_at=None,
+        )
+        db.add(renewal)
+        subscription.failed_renewals += 1
+        if subscription.failed_renewals >= MAX_FAILED_RENEWALS:
+            # Auto-cancel after 3 consecutive failures (plan 7.2).
+            subscription.status = "failed"
+            subscription.canceled_at = now
+            record_payment_event(
+                db,
+                event_type="subscription_auto_canceled",
+                user_id=str(subscription.user_id),
+                payment_ref=renewal_id,
+                detail=sanitize_for_log(
+                    f"failed_renewals={subscription.failed_renewals}"
+                ),
+                ip_address=ip,
+            )
+        else:
+            record_payment_event(
+                db,
+                event_type="subscription_renewal_failed",
+                user_id=str(subscription.user_id),
+                payment_ref=renewal_id,
+                detail=sanitize_for_log(
+                    f"failed_renewals={subscription.failed_renewals}"
+                ),
+                ip_address=ip,
+            )
+
+    db.commit()
+    return {"status": status_value}
