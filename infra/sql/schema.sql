@@ -315,6 +315,19 @@ CREATE TABLE IF NOT EXISTS refunds (
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
 
+-- Append-only: a refund is irreversible (plan 6.4). No UPDATE or DELETE.
+CREATE OR REPLACE FUNCTION prevent_refund_modification() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION 'refunds is append-only';
+END;
+$$;
+
+DROP TRIGGER IF EXISTS refunds_append_only ON refunds;
+CREATE TRIGGER refunds_append_only
+    BEFORE UPDATE OR DELETE ON refunds
+    FOR EACH ROW EXECUTE FUNCTION prevent_refund_modification();
+
 -- Affiliate clicks for merchant revenue attribution
 CREATE TABLE IF NOT EXISTS affiliate_clicks (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
