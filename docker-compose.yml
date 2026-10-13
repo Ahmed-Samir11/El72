@@ -88,8 +88,6 @@ services:
     ports:
       - "3000:3000"
     environment:
-      # Review finding: Grafana is deployed without an admin password.
-      # Set GRAFANA_ADMIN_PASSWORD in .env for production.
       GF_SECURITY_ADMIN_USER: "${GRAFANA_ADMIN_USER:-admin}"
       GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD in .env}"
     volumes:
@@ -174,9 +172,7 @@ services:
     depends_on:
       - postgres
     environment:
-      DATA_SOURCE_URI: "postgres:5432/elhaq?sslmode=disable"
-      DATA_SOURCE_USER: "el72_monitor"
-      DATA_SOURCE_PASS: "${DB_MONITOR_PASSWORD:?Set DB_MONITOR_PASSWORD in .env}"
+      DATA_SOURCE_URI: "postgresql://el72_monitor:${DB_MONITOR_PASSWORD:?Set DB_MONITOR_PASSWORD in .env}@postgres:5432/elhaq?sslmode=disable"
     networks:
       - default
 
@@ -186,9 +182,7 @@ services:
     depends_on:
       - timescaledb
     environment:
-      DATA_SOURCE_URI: "timescaledb:5432/elhaq_ts?sslmode=disable"
-      DATA_SOURCE_USER: "el72_monitor"
-      DATA_SOURCE_PASS: "${DB_MONITOR_PASSWORD:?Set DB_MONITOR_PASSWORD in .env}"
+      DATA_SOURCE_URI: "postgresql://el72_monitor:${DB_MONITOR_PASSWORD:?Set DB_MONITOR_PASSWORD in .env}@timescaledb:5432/elhaq_ts?sslmode=disable"
     networks:
       - default
 
