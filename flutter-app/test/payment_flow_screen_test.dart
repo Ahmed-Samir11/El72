@@ -25,6 +25,11 @@ class _FakePaymentRepository implements PaymentRepository {
   int statusCalls = 0;
   bool statusThrows = false;
 
+  // Optional code/expiry echoed by the status endpoint (the server is the
+  // source of truth for the cash code and its expiry).
+  String? statusPaymentCode;
+  String? statusExpiresAt;
+
   @override
   Future<Map<String, String>> startPayment() async => {
     'staging_token': 'stg_test',
@@ -92,6 +97,8 @@ class _FakePaymentRepository implements PaymentRepository {
         amountEgp: 30,
         status: s,
         createdAt: 'now',
+        paymentCode: statusPaymentCode,
+        expiresAt: statusExpiresAt,
       ),
     );
   }
@@ -313,6 +320,140 @@ void main() {
     expect(repo.statusCalls, 1);
   });
 
+  testWidgets('malformed cash confirm (empty payment id) surfaces an error', (
+    tester,
+  ) async {
+    final repo = _FakePaymentRepository();
+    repo.cashConfirmResults.add(
+      const CashPaymentResult(
+        paymentId: '',
+        paymentCode: 'CODE1234',
+        expiresAt: '2025-01-02T12:00:00Z',
+        status: 'pending',
+      ),
+    );
+    await _openCashStep(tester, repo);
+    await tester.tap(find.byKey(const ValueKey('cash-type-fawry')));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('confirm-cash-payment')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    // The error is surfaced; the result step (code card) is not entered.
+    expect(
+      find.text('Something went wrong. Please try again.'),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('cash-code')), findsNothing);
+  });
+
+  testWidgets('missing/unparseable expiry hides the expiry line', (
+    tester,
+  ) async {
+    final repo = _FakePaymentRepository();
+    repo.cashConfirmResults.add(
+      const CashPaymentResult(
+        paymentId: 'cpay_noexp',
+        paymentCode: 'CODE1234',
+        expiresAt: null,
+        status: 'pending',
+      ),
+    );
+    await _openCashStep(tester, repo);
+    await tester.tap(find.byKey(const ValueKey('cash-type-fawry')));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('confirm-cash-payment')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    // The code is shown but the expiry line is hidden (no "Expires ").
+    expect(find.byKey(const ValueKey('cash-code')), findsOneWidget);
+    expect(find.textContaining('Expires'), findsNothing);
+  });
+
+  testWidgets('empty payment code hides the code card', (tester) async {
+    final repo = _FakePaymentRepository();
+    repo.cashConfirmResults.add(
+      const CashPaymentResult(
+        paymentId: 'cpay_nocode',
+        paymentCode: '',
+        expiresAt: '2025-01-02T12:00:00Z',
+        status: 'pending',
+      ),
+    );
+    await _openCashStep(tester, repo);
+    await tester.tap(find.byKey(const ValueKey('cash-type-fawry')));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('confirm-cash-payment')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    // No code card; the pending state is shown.
+    expect(find.byKey(const ValueKey('cash-code')), findsNothing);
+    expect(find.byKey(const ValueKey('copy-cash-code')), findsNothing);
+    expect(find.text('Waiting for payment confirmation…'), findsOneWidget);
+  });
+
+  testWidgets('status polling updates the cash code and expiry', (
+    tester,
+  ) async {
+    final repo = _FakePaymentRepository();
+    repo.cashConfirmResults.add(
+      const CashPaymentResult(
+        paymentId: 'cpay_poll',
+        paymentCode: 'CODE1234',
+        expiresAt: '2025-01-02T12:00:00Z',
+        status: 'pending',
+      ),
+    );
+    repo.statusResults.add('pending');
+    repo.statusPaymentCode = 'CODE5678';
+    repo.statusExpiresAt = '2025-01-03T00:00:00Z';
+    await _openCashStep(tester, repo);
+    await tester.tap(find.byKey(const ValueKey('cash-type-fawry')));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('confirm-cash-payment')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    // The initial code is shown.
+    expect(find.text('CODE1234'), findsOneWidget);
+    // Advance the 60 s poll; the server echoes a new code/expiry.
+    await tester.pump(const Duration(seconds: 60));
+    await tester.pump();
+    expect(repo.statusCalls, 1);
+    // The UI now shows the server-echoed code.
+    expect(find.text('CODE5678'), findsOneWidget);
+  });
+
+  testWidgets('cash poll failure is surfaced while the code stays visible', (
+    tester,
+  ) async {
+    final repo = _FakePaymentRepository();
+    repo.cashConfirmResults.add(
+      const CashPaymentResult(
+        paymentId: 'cpay_fail',
+        paymentCode: 'CODE1234',
+        expiresAt: '2025-01-02T12:00:00Z',
+        status: 'pending',
+      ),
+    );
+    repo.statusThrows = true;
+    await _openCashStep(tester, repo);
+    await tester.tap(find.byKey(const ValueKey('cash-type-fawry')));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('confirm-cash-payment')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    // The code is visible while pending.
+    expect(find.text('CODE1234'), findsOneWidget);
+    // Advance the 60 s poll; the status call throws.
+    await tester.pump(const Duration(seconds: 60));
+    await tester.pump();
+    // The failure is surfaced and the code stays visible.
+    expect(
+      find.text('Something went wrong. Please try again.'),
+      findsOneWidget,
+    );
+    expect(find.text('CODE1234'), findsOneWidget);
+  });
+
   testWidgets('copying the cash code puts it on the clipboard', (tester) async {
     // Capture the Clipboard.setData platform call: reading the clipboard
     // back (Clipboard.getData) would hang in a widget test with no
@@ -354,7 +495,9 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('confirm-cash-payment')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Choose your cash channel'), findsOneWidget);
+    // The validation error is surfaced (it matches the step title, so two
+    // widgets carry the same text).
+    expect(find.text('Choose your cash channel'), findsWidgets);
     // No backend call was made.
     expect(repo.cashConfirmCalls, 0);
   });

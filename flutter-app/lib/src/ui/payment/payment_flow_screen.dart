@@ -669,6 +669,10 @@ class _PaymentFlowScreenState extends State<PaymentFlowScreen> {
         ),
         const SizedBox(height: 8),
         Text(_packageSummary, style: TextStyle(color: scheme.outline)),
+        if (_fieldError != null) ...[
+          const SizedBox(height: 8),
+          Text(_fieldError!, style: TextStyle(color: scheme.error)),
+        ],
       ],
     );
   }
