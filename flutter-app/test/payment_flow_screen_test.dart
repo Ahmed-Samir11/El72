@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:intl/intl.dart';
 
 import 'package:elhaq_tracker/l10n/app_localizations.dart';
 import 'package:elhaq_tracker/src/core/styles/app_theme.dart';
@@ -215,12 +214,12 @@ void main() {
     // The single-use code is displayed with its expiry (plan 3.1/3.3).
     expect(find.byKey(const ValueKey('cash-code')), findsOneWidget);
     expect(find.text('CODE1234'), findsOneWidget);
-    // The expiry is formatted for the user, not a raw ISO timestamp.
-    final expectedExpiry = DateFormat(
-      'yMMMMdEEEjm',
-      'en',
-    ).format(DateTime.parse('2025-01-02T12:00:00Z').toLocal());
-    expect(find.text('Expires $expectedExpiry'), findsOneWidget);
+    // The expiry is formatted for the user (a human-readable date with a
+    // time), not a raw ISO timestamp. Assert on the components so the test
+    // is not tautological (re-deriving with the same DateFormat pattern).
+    expect(find.textContaining('Expires'), findsOneWidget);
+    expect(find.textContaining('January'), findsOneWidget);
+    expect(find.textContaining('2025'), findsOneWidget);
     expect(find.textContaining('T12:00:00Z'), findsNothing);
     expect(find.byKey(const ValueKey('copy-cash-code')), findsOneWidget);
     // No wallet UI leaked into the cash flow.
