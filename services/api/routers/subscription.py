@@ -145,7 +145,7 @@ def create_subscription_endpoint(
         card_payment_method_id=method["id"],
         package=body.package,
         amount_egp=PACKAGE_PRICING[body.package],
-        interval=body.interval,
+        billing_interval=body.interval,
         status="active",
         failed_renewals=0,
         next_charge=next_charge,

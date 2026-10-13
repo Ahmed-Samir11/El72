@@ -63,7 +63,7 @@ class Subscription(Base):
     package = Column(String(20), nullable=False)
     # Fixed server-determined monthly amount (plan 7.1).
     amount_egp = Column(Numeric(10, 2), nullable=False)
-    interval = Column(String(10), nullable=False, default="month")
+    billing_interval = Column(String(10), nullable=False, default="month")
     # active -> canceled/failed (failed = auto-canceled after 3 dunning
     # failures; plan 7.2).
     status = Column(String(20), nullable=False, default="active")
@@ -87,8 +87,8 @@ class Subscription(Base):
             name="subscriptions_amount_check",
         ),
         CheckConstraint(
-            "interval IN ('month')",
-            name="subscriptions_interval_check",
+            "billing_interval IN ('month')",
+            name="subscriptions_billing_interval_check",
         ),
         Index("ix_subscriptions_user_status", "user_id", "status"),
         # One active subscription per user, enforced at the database level

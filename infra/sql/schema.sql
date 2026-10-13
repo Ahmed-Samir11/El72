@@ -341,8 +341,8 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     package VARCHAR(20) NOT NULL
         CHECK (package IN ('standard', 'premium')),
     amount_egp NUMERIC(10, 2) NOT NULL CHECK (amount_egp > 0),
-    interval VARCHAR(10) NOT NULL DEFAULT 'month'
-        CHECK (interval IN ('month')),
+    billing_interval VARCHAR(10) NOT NULL DEFAULT 'month'
+        CHECK (billing_interval IN ('month')),
     status VARCHAR(20) NOT NULL DEFAULT 'active'
         CHECK (status IN ('active', 'canceled', 'failed')),
     failed_renewals INTEGER NOT NULL DEFAULT 0,

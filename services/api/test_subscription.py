@@ -480,7 +480,7 @@ def billing_client(monkeypatch):
             card_payment_method_id="pm_sub_1",
             package="standard",
             amount_egp=30.0,
-            interval="month",
+            billing_interval="month",
             status="active",
             failed_renewals=0,
             next_charge=datetime.now(timezone.utc) + timedelta(days=30),
@@ -557,10 +557,12 @@ class TestRenewalWebhook:
         assert sub.failed_renewals == 0
         # standard package grants exactly 10 credits on renewal.
         assert balance_after - balance_before == 10
-        # next_charge advanced ~30 days from now. (SQLite returns naive
-        # datetimes, so compare against a naive UTC datetime.)
+        # next_charge advanced ~30 days from now (review finding: weak
+        # next_charge assertion). (SQLite returns naive datetimes, so
+        # compare against a naive UTC datetime.)
         now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
-        assert sub.next_charge > now_naive
+        delta = sub.next_charge - now_naive
+        assert timedelta(days=29) <= delta <= timedelta(days=31)
 
     def test_failed_increments_dunning(self, billing_client):
         resp = _renewal_webhook(billing_client, "renewal_f1", "failed")
