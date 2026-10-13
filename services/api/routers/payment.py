@@ -1805,7 +1805,12 @@ def list_audit_log(
     user_id: Optional[str] = Query(default=None),
     date_from: Optional[date] = None,
 ):
-    """Read the append-only audit trail with optional filters (plan 6.5)."""
+    """Read the append-only audit trail with optional filters (plan 6.5).
+
+    Returns the most recent 500 entries (bounded; no pagination — the
+    audit trail is a forensic record, and 500 recent entries cover the
+    admin's working set).
+    """
     q = db.query(PaymentAuditLog)
     if event_type is not None:
         q = q.filter(PaymentAuditLog.action == event_type)

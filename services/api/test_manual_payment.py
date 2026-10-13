@@ -1082,6 +1082,42 @@ class TestAuditLog:
         assert all(r["event_type"] == "adjust_credits" for r in rows)
         assert len(rows) >= 1
 
+    def test_audit_log_filter_by_user_id(self, client):
+        admin_token = _admin_token(client)
+        user_id, _ = _seed_user(client, USER_PHONE)
+        client.post(
+            f"/admin/users/{user_id}/adjust-credits",
+            headers=_auth_headers(admin_token),
+            json={"amount": 5, "reason": "goodwill credit"},
+        )
+        resp = client.get(
+            "/admin/audit-log",
+            headers=_auth_headers(admin_token),
+            params={"user_id": user_id},
+        )
+        assert resp.status_code == 200
+        rows = resp.json()
+        # target_user_id is stored as a string; compare as strings.
+        assert all(r["user_id"] == str(user_id) for r in rows)
+        assert len(rows) >= 1
+
+    def test_audit_log_filter_by_date_from(self, client):
+        admin_token = _admin_token(client)
+        user_id, _ = _seed_user(client, USER_PHONE)
+        client.post(
+            f"/admin/users/{user_id}/adjust-credits",
+            headers=_auth_headers(admin_token),
+            json={"amount": 5, "reason": "goodwill credit"},
+        )
+        # A date_from in the future should exclude the just-created entry.
+        resp = client.get(
+            "/admin/audit-log",
+            headers=_auth_headers(admin_token),
+            params={"date_from": "2999-01-01"},
+        )
+        assert resp.status_code == 200
+        assert resp.json() == []
+
     def test_audit_log_requires_admin(self, client):
         # No admin token -> 401/403.
         resp = client.get("/admin/audit-log")
