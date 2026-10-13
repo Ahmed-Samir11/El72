@@ -153,22 +153,26 @@ class CashPaymentResult {
   const CashPaymentResult({
     required this.paymentId,
     required this.paymentCode,
-    required this.expiresAt,
+    this.expiresAt,
     required this.status,
   });
 
   factory CashPaymentResult.fromJson(Map<String, dynamic> json) {
+    // Nullable: a missing/empty expiry must not render as "Expires ".
+    final rawExpires = json['expires_at']?.toString().trim() ?? '';
     return CashPaymentResult(
       paymentId: json['payment_id']?.toString() ?? '',
       paymentCode: json['payment_code']?.toString() ?? '',
-      expiresAt: json['expires_at']?.toString() ?? '',
+      expiresAt: rawExpires.isEmpty ? null : rawExpires,
       status: json['status']?.toString() ?? 'pending',
     );
   }
 
   final String paymentId;
   final String paymentCode;
-  final String expiresAt;
+
+  /// The 24 h expiry (plan 3.3); null when the server did not provide one.
+  final String? expiresAt;
   final String status;
 }
 

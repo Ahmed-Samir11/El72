@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:intl/intl.dart';
 
 import 'package:elhaq_tracker/l10n/app_localizations.dart';
 import 'package:elhaq_tracker/src/core/styles/app_theme.dart';
@@ -206,10 +207,109 @@ void main() {
     // The single-use code is displayed with its expiry (plan 3.1/3.3).
     expect(find.byKey(const ValueKey('cash-code')), findsOneWidget);
     expect(find.text('CODE1234'), findsOneWidget);
-    expect(find.text('Expires 2025-01-02T12:00:00Z'), findsOneWidget);
+    // The expiry is formatted for the user, not a raw ISO timestamp.
+    final expectedExpiry = DateFormat(
+      'yMMMMdEEE',
+      'en',
+    ).format(DateTime.parse('2025-01-02T12:00:00Z').toLocal());
+    expect(find.text('Expires $expectedExpiry'), findsOneWidget);
+    expect(find.textContaining('T12:00:00Z'), findsNothing);
     expect(find.byKey(const ValueKey('copy-cash-code')), findsOneWidget);
     // No wallet UI leaked into the cash flow.
     expect(find.byKey(const ValueKey('wallet-number')), findsNothing);
+  });
+
+  testWidgets('cash step shows the selected package label and price', (
+    tester,
+  ) async {
+    final repo = _FakePaymentRepository();
+    await tester.pumpWidget(
+      _wrap(
+        PaymentFlowScreen(
+          repository: repo,
+          initialPackage: CreditPackage.premium,
+        ),
+      ),
+    );
+    await tester.tap(find.byKey(const ValueKey('method-cash')));
+    await tester.pump();
+    // The premium package label and its price — not the hardcoded
+    // Standard label.
+    expect(find.textContaining('Premium'), findsOneWidget);
+    expect(find.textContaining('90'), findsOneWidget);
+    expect(find.textContaining('30'), findsNothing);
+  });
+
+  testWidgets('terminal cash result hides the code card', (tester) async {
+    final repo = _FakePaymentRepository();
+    repo.cashConfirmResults.add(
+      const CashPaymentResult(
+        paymentId: 'cpay_done',
+        paymentCode: 'CODEDONE',
+        expiresAt: '2025-01-02T12:00:00Z',
+        status: 'succeeded',
+      ),
+    );
+    await _openCashStep(tester, repo);
+    await tester.tap(find.byKey(const ValueKey('cash-type-fawry')));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('confirm-cash-payment')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    // Succeeded: the code card is gone, the success title is shown.
+    expect(find.byKey(const ValueKey('cash-code')), findsNothing);
+    expect(find.byKey(const ValueKey('copy-cash-code')), findsNothing);
+    expect(find.text('Payment successful!'), findsOneWidget);
+  });
+
+  testWidgets('retry after a failed cash payment resets the poll counter', (
+    tester,
+  ) async {
+    final repo = _FakePaymentRepository();
+    // First cash attempt fails outright (terminal -> retry button).
+    repo.cashConfirmResults.add(
+      const CashPaymentResult(
+        paymentId: 'cpay_fail',
+        paymentCode: 'CODEFAIL',
+        expiresAt: '2025-01-02T12:00:00Z',
+        status: 'failed',
+      ),
+    );
+    // Second attempt is pending; polling must work from a fresh budget.
+    repo.cashConfirmResults.add(
+      const CashPaymentResult(
+        paymentId: 'cpay_ok',
+        paymentCode: 'CODEOK',
+        expiresAt: '2025-01-02T12:00:00Z',
+        status: 'pending',
+      ),
+    );
+    await _openCashStep(tester, repo);
+    await tester.tap(find.byKey(const ValueKey('cash-type-fawry')));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('confirm-cash-payment')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    // Failed result: retry is offered.
+    expect(find.text('Payment failed'), findsOneWidget);
+    await tester.tap(find.text('Try again'));
+    await tester.pump();
+
+    // Retry returns to the method step; confirm the cash payment again.
+    await tester.tap(find.byKey(const ValueKey('method-cash')));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('cash-type-fawry')));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('confirm-cash-payment')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    // Polling must have been reset to zero: the first 60 s poll fires.
+    expect(repo.statusCalls, 0);
+    await tester.pump(const Duration(seconds: 60));
+    expect(repo.statusCalls, 1);
   });
 
   testWidgets('copying the cash code puts it on the clipboard', (tester) async {

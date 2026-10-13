@@ -155,6 +155,23 @@ void main() {
     });
 
     test(
+      'a missing/empty expiry parses to null (not an empty string)',
+      () async {
+        final repo = repoWith(
+          200,
+          '{"payment_id": "cpay_2", "payment_code": "CODE9999", '
+          '"status": "pending"}',
+        );
+        final result = await repo.confirmCashPayment(
+          stagingToken: 'stg_123',
+          cashType: CashType.fawry,
+          packageId: 'standard',
+        );
+        expect(result.expiresAt, isNull);
+      },
+    );
+
+    test(
       'demo mode simulates a pending cash code on network failure',
       () async {
         AppConfig.demoMode = true;
@@ -167,6 +184,10 @@ void main() {
         expect(result.status, 'pending');
         expect(result.paymentId, isNotEmpty);
         expect(result.paymentCode, isNotEmpty);
+        // Demo mode renders the same UI as live mode: a realistic 24 h
+        // expiry, never an empty string.
+        expect(result.expiresAt, isNotNull);
+        expect(result.expiresAt!.isNotEmpty, isTrue);
       },
     );
   });

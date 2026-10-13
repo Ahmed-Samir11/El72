@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:intl/intl.dart';
 
 import '../../data/models/payment_models.dart';
 import '../../data/repositories/payment_repository.dart';
@@ -88,6 +89,13 @@ class _PaymentFlowScreenState extends State<PaymentFlowScreen> {
   AppLocalizations get l10n => AppLocalizations.of(context);
 
   bool get _isCash => _method == _PaymentMethod.cash;
+
+  /// The selected package's label and one-time price, used by the wallet
+  /// and cash steps (the price is server-determined; this mirrors the
+  /// server allowlist, plan 2.4/3.4).
+  String get _packageSummary =>
+      '${_package == CreditPackage.premium ? l10n.premiumPackage : l10n.standardPackage}'
+      ': ${l10n.egpOnce('${_package.priceEgp}')}';
 
   // ---------------------------------------------------------------------
   // Flow actions
@@ -579,10 +587,7 @@ class _PaymentFlowScreenState extends State<PaymentFlowScreen> {
           onChanged: (_) => setState(() => _fieldError = null),
         ),
         const SizedBox(height: 8),
-        Text(
-          '${l10n.standardPackage}: ${l10n.egpOnce('${_package.priceEgp}')}',
-          style: TextStyle(color: scheme.outline),
-        ),
+        Text(_packageSummary, style: TextStyle(color: scheme.outline)),
       ],
     );
   }
@@ -618,10 +623,7 @@ class _PaymentFlowScreenState extends State<PaymentFlowScreen> {
         const SizedBox(height: 16),
         Text(l10n.cashCodeDesc, style: TextStyle(color: scheme.outline)),
         const SizedBox(height: 8),
-        Text(
-          '${l10n.standardPackage}: ${l10n.egpOnce('${_package.priceEgp}')}',
-          style: TextStyle(color: scheme.outline),
-        ),
+        Text(_packageSummary, style: TextStyle(color: scheme.outline)),
       ],
     );
   }
@@ -738,10 +740,22 @@ class _PaymentFlowScreenState extends State<PaymentFlowScreen> {
     );
   }
 
+  /// Formats the raw ISO expiry for display (plan 3.3). Returns null when
+  /// the timestamp is missing/unparseable so the UI hides the line.
+  String? _formatExpiry(String raw) {
+    final dt = DateTime.tryParse(raw);
+    if (dt == null) return null;
+    return DateFormat(
+      'yMMMMdEEE',
+      Localizations.localeOf(context).toString(),
+    ).format(dt.toLocal());
+  }
+
   /// Cash code display (plan 3.1/3.3): the single-use code is shown
   /// prominently with a copy button and its 24 h expiry.
   Widget _buildCodeCard(ColorScheme scheme) {
     final code = _cashCode!;
+    final expires = _formatExpiry(_cashExpiresAt ?? '');
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -762,10 +776,10 @@ class _PaymentFlowScreenState extends State<PaymentFlowScreen> {
                 fontFeatures: [FontFeature.tabularFigures()],
               ),
             ),
-            if (_cashExpiresAt != null) ...[
+            if (expires != null) ...[
               const SizedBox(height: 8),
               Text(
-                l10n.cashExpiresAt(_cashExpiresAt!),
+                l10n.cashExpiresAt(expires),
                 style: TextStyle(color: scheme.outline),
               ),
             ],

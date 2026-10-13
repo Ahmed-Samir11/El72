@@ -137,7 +137,12 @@ class PaymentRepository {
       demo: () => CashPaymentResult(
         paymentId: 'demo_cash_${cashType.apiValue}',
         paymentCode: 'DEMO2345',
-        expiresAt: '',
+        // A realistic 24 h expiry so demo mode renders the same UI as
+        // live mode (an empty string would show "Expires ").
+        expiresAt: DateTime.now()
+            .toUtc()
+            .add(const Duration(hours: 24))
+            .toIso8601String(),
         status: 'pending',
       ),
     );
