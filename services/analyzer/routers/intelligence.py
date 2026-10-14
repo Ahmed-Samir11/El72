@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import date, datetime
 from typing import Dict, List, Optional
 
@@ -19,6 +20,7 @@ from services.analyzer.fake_discount import detect_fake_discount
 from services.analyzer.platform_metrics import platform_metrics
 
 router = APIRouter(tags=["intelligence"])
+logger = logging.getLogger(__name__)
 
 
 class DealScoreRequest(BaseModel):
@@ -128,11 +130,14 @@ async def fake_discount_for_sku(
             return await analyze_discount_for_sku(conn, sku, store_id)
     except HTTPException:
         raise
-    except Exception as exc:  # noqa: BLE001 - surface a clean 500, not a stack trace
+    except Exception:  # noqa: BLE001 - surface a clean 500, not a stack trace
+        # Log the full error server-side; return a generic detail so internal
+        # exception text (SQL, connection strings) never reaches the client.
+        logger.exception("Failed to analyze discount for %s", sku)
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to analyze discount for {sku}: {exc}",
-        ) from exc
+            detail="Failed to analyze discount for this product.",
+        ) from None
 
 
 @router.post("/intelligence/cross-store/{product_id}")

@@ -12,18 +12,10 @@ from typing import Dict, List, Optional, Tuple
 
 import asyncpg
 
+from services.common.currency import EXCHANGE_RATES
 from services.scraper.store_scrapers import ScrapeResult
 
 logger = logging.getLogger(__name__)
-
-
-# Exchange rates (should be fetched from API in production)
-EXCHANGE_RATES = {
-    "EGP": 0.032,  # 1 EGP = 0.032 USD (approximate)
-    "USD": 1.0,
-    "AED": 0.27,  # UAE Dirham
-    "SAR": 0.27,  # Saudi Riyal
-}
 
 
 class PriceProcessor:

@@ -25,6 +25,12 @@ DEFAULT_MIN_POINTS = 14
 DEFAULT_HISTORY_DAYS = 90
 DEFAULT_RECENT_DAYS = 30
 
+# Hard cap on rows pulled for one SKU in the window (review finding: the
+# 90-day window loaded all rows into Python without a cap). A heavily
+# scraped SKU can accumulate more observations than a baseline needs;
+# the most recent rows are the ones that matter.
+DEFAULT_MAX_ROWS = 5000
+
 
 @dataclass
 class DiscountInputs:
@@ -133,18 +139,27 @@ async def load_discount_inputs(
     history_days: int = DEFAULT_HISTORY_DAYS,
     recent_days: int = DEFAULT_RECENT_DAYS,
     min_points: int = DEFAULT_MIN_POINTS,
+    max_rows: int = DEFAULT_MAX_ROWS,
 ) -> DiscountInputs:
     """Fetch the 90-day window for ``sku`` and build :class:`DiscountInputs`.
 
     ``conn`` is an asyncpg connection (or a mock exposing ``fetch``).
+
+    The window is capped at ``max_rows`` most-recent observations so a
+    heavily scraped SKU cannot blow up memory; the outer query restores
+    time-ascending order expected by :func:`build_discount_inputs`.
     """
     now = now or datetime.now(timezone.utc)
     cutoff = now - timedelta(days=history_days)
     rows = await conn.fetch(
+        "SELECT time, store_id, price_local, advertised_price FROM ("
         "SELECT time, store_id, price_local, advertised_price "
-        "FROM price_history WHERE sku = $1 AND time >= $2 ORDER BY time",
+        "FROM price_history WHERE sku = $1 AND time >= $2 "
+        "ORDER BY time DESC LIMIT $3"
+        ") recent ORDER BY time",
         sku,
         cutoff,
+        max_rows,
     )
     return build_discount_inputs(
         rows,

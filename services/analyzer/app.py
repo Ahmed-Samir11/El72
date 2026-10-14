@@ -21,9 +21,10 @@ from services.common.redis_client import RedisStreamClient
 
 settings = AnalyzerSettings()
 
-# 1 EGP = 0.032 USD (approximate). Used to populate the NOT NULL price_usd
-# column from the EGP ingest price. Mirrors seed_data.EGP_TO_USD.
-EGP_TO_USD = 0.032
+# 1 EGP = 0.032 USD (approximate). Shared with the scraper via
+# services/common/currency.py. Used to populate the NOT NULL price_usd
+# column from the EGP ingest price when no explicit USD price is supplied.
+from services.common.currency import EGP_TO_USD  # noqa: E402
 
 # Structured JSON logging
 trace_id_var: contextvars.ContextVar = contextvars.ContextVar("trace_id", default=None)
@@ -405,13 +406,20 @@ async def insert_price_history(conn: asyncpg.Connection, event: Dict[str, Any]) 
     - `conn`: an active asyncpg connection
     - `event`: mapping with keys `timestamp`, `sku`, `store`, `price`,
       `in_stock`, and optionally `original_price` (the advertised "was"
-      price; 0/None means no advertised price).
+      price; 0/None means no advertised price). Optional `price_usd` /
+      `price_local` override the EGP-assumed conversion when the producer
+      knows both values.
     """
     original_price = event.get("original_price")
     advertised = float(original_price) if original_price not in (None, 0, 0.0) else None
-    price_local = float(event.get("price"))
-    # price_usd is NOT NULL in the schema; the ingest price is EGP, so convert.
-    price_usd = round(price_local * EGP_TO_USD, 4)
+    # Honor explicit USD/local fields when the producer supplies them;
+    # otherwise the ingest price is local currency (EGP).
+    price_local = float(event.get("price_local", event.get("price")))
+    if event.get("price_usd") is not None:
+        price_usd = float(event["price_usd"])
+    else:
+        # price_usd is NOT NULL in the schema; derive it from the EGP price.
+        price_usd = round(price_local * EGP_TO_USD, 4)
     try:
         await conn.execute(
             """
@@ -428,7 +436,12 @@ async def insert_price_history(conn: asyncpg.Connection, event: Dict[str, Any]) 
             bool(event.get("in_stock", True)),
             advertised,
         )
-    except Exception:
+    except Exception as exc:
+        # Only fall back when the failure is the missing advertised_price
+        # column (older schemas); re-raise anything else so real insert
+        # failures (connection drops, constraint violations) are not masked.
+        if "advertised_price" not in str(exc):
+            raise
         # Fallback for DBs without the advertised_price column: still record
         # the price row rather than losing it (keeps the ingest path alive).
         await conn.execute(

@@ -14,11 +14,15 @@ from typing import Sequence
 
 import asyncpg
 
+from services.common.currency import EGP_TO_USD as _EGP_TO_USD_FLOAT
+
 DEMO_PREFIX = "demo-el72-"
 DEFAULT_SEED = 7242
 DEFAULT_START_DATE = date(2025, 9, 1)
 DEFAULT_DAYS = 90
-EGP_TO_USD = Decimal("0.032")
+# Decimal form of the shared rate (services/common/currency.py) for exact
+# seeding arithmetic.
+EGP_TO_USD = Decimal(str(_EGP_TO_USD_FLOAT))
 STORES = ("amazon_eg", "noon", "jumia_eg", "btech_eg")
 STORE_MULTIPLIERS = {
     "amazon_eg": Decimal("1.00"),
