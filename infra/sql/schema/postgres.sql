@@ -1,15 +1,22 @@
 -- El72 PostgreSQL Schema
 -- Canonical operational/payment database schema.
 --
--- identifier strategy (reconciled): operational tables (users, alerts,
+-- Fresh-install model: this file is the BASELINE. Feature migrations add
+-- the remaining tables on top of it — 0007 (cash payments), 0009
+-- (admin dispute/refund) and 0010 (subscriptions/renewals). A complete
+-- fresh install is scripts/db-bootstrap.sh (canonical schema + every
+-- migration, in order). The legacy merged artifact infra/sql/schema.sql
+-- is reference-only and is not applied by the bootstrap.
+--
+-- User identifier strategy (reconciled): operational tables (users, alerts,
 -- tracked_items, ...) use INTEGER primary keys matching the operational ORM
 -- models (OperationalIdType). Payment/audit rows keep UUID or SERIAL primary
 -- keys as historically issued. This is a schema RECONCILIATION, not an
 -- in-place migration: an existing database whose users.id is still UUID is
 -- not converted by any migration. To move such a database to this schema,
--- rebuild it from a dump (pg_dump/pg_restore) with a scripted id remap, or
--- repair it interactively; scripts/audit-db-and-bootstrap.sh reports drift
--- from this canonical schema (read-only) to verify the end state.
+-- follow docs/user-id-reconciliation.md (rebuild from a dump with a scripted
+-- id remap); scripts/audit-db-and-bootstrap.sh reports drift from this
+-- canonical schema (read-only) to verify the end state.
 -- Do not ALTER a live UUID column to SERIAL.
 
 -- Canonical PostgreSQL Schema (v1.0)

@@ -52,11 +52,14 @@ END
 $$;
 
 -- The canonical schema declares alerts.active_status NOT NULL DEFAULT TRUE.
--- Repair any legacy NULLs so the column can be trusted (and so a later
--- NOT NULL backfill would not fail).
+-- Repair any legacy NULLs, then enforce the constraint so existing
+-- databases converge on the canonical definition.
 UPDATE public.alerts
     SET active_status = TRUE
     WHERE active_status IS NULL;
+
+ALTER TABLE public.alerts
+    ALTER COLUMN active_status SET NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_users_status
     ON public.users(status);

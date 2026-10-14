@@ -1,4 +1,17 @@
--- El72 Unified Schema (v1.0)
+-- El72 Unified Schema (v1.0) — LEGACY MERGED ARTIFACT.
+--
+-- Relationship to the canonical schemas (important):
+-- * infra/sql/schema/postgres.sql is the CANONICAL baseline for a fresh
+--   operational install; scripts/db-bootstrap.sh applies it plus the
+--   numbered migrations (feature migrations 0007-0010 add the remaining
+--   tables: cash payments, dispute/refund, subscriptions).
+-- * This file is a historical merged artifact kept for reference; it is
+--   NOT applied by the bootstrap. It intentionally still contains the
+--   feature tables (refunds, subscriptions, ...) inline, so do not treat
+--   table-presence differences between this file and schema/postgres.sql
+--   as drift — treat schema/postgres.sql + migrations as the source of
+--   truth.
+--
 -- Operational tables use INTEGER primary keys (matching the operational
 -- ORM models); payment/audit rows keep UUID primary keys for compatibility.
 -- Merges ddl.sql and alerts.sql into a single canonical schema
