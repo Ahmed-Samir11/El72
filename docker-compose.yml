@@ -11,7 +11,7 @@ services:
       retries: 5
 
   timescaledb:
-    image: timescale/timescaledb:latest-pg15
+    image: timescale/timescaledb:2.14.2-pg15
     # TLS is intentionally not enabled in the compose stack: it would require
     # provisioning server certificates into ./secrets/db-tls (not committed).
     # All service ports are bound to 127.0.0.1 on the host; enable TLS at the
@@ -24,6 +24,11 @@ services:
       - "127.0.0.1:5433:5432"
     volumes:
       - timescale-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-elhaq} -d ${TIMESCALE_DB:-elhaq_ts}" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   postgres:
     image: postgres:15
@@ -36,6 +41,11 @@ services:
       - "127.0.0.1:5434:5432"
     volumes:
       - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-elhaq} -d ${POSTGRES_DB:-elhaq}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   analyzer:
     build:
@@ -175,7 +185,8 @@ services:
     image: prometheuscommunity/postgres-exporter:v0.17.1
     restart: unless-stopped
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     environment:
       # Internal Docker-network connection (127.0.0.1-only host ports); no
       # TLS between compose services. The exporter connects as the restricted
@@ -190,7 +201,8 @@ services:
     image: prometheuscommunity/postgres-exporter:v0.17.1
     restart: unless-stopped
     depends_on:
-      - timescaledb
+      timescaledb:
+        condition: service_healthy
     environment:
       DATA_SOURCE_URI: "timescaledb:5432/elhaq_ts?sslmode=disable"
       DATA_SOURCE_USER: "el72_monitor"

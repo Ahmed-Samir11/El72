@@ -3,10 +3,12 @@
 -- wrapper.
 --
 -- Idempotency: the constraint is only widened when it is still the original
--- narrow baseline. If it already includes card_payment_created it was created
--- by this migration or by a later widening (0008 cash events, 0010
--- subscription events) and is left untouched — replacing it unconditionally
--- would fail on databases whose audit rows already use the wider action set.
+-- narrow baseline. The check matches the quoted action literal as it appears
+-- in the constraint definition, so a later widening (0008 cash events, 0010
+-- subscription events) is detected precisely. If the constraint already
+-- includes 'card_payment_created' it was created by this migration or by a
+-- later widening and is left untouched — replacing it unconditionally would
+-- fail on databases whose audit rows already use the wider action set.
 DO $$
 DECLARE
     current_def text;
@@ -37,7 +39,7 @@ BEGIN
                 'staging_rejected',
                 'wallet_payment_created'
             ));
-    ELSIF current_def NOT LIKE '%card_payment_created%' THEN
+    ELSIF position('''card_payment_created''' IN current_def) = 0 THEN
         -- Original narrow baseline (approve / reject / reveal_contact):
         -- widen it to the current event set.
         ALTER TABLE public.payment_audit_log

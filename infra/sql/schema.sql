@@ -189,7 +189,8 @@ CREATE INDEX IF NOT EXISTS idx_manual_payments_status_created
 -- amounts (PCI-DSS: card data is tokenized on-device and never reaches us).
 CREATE TABLE IF NOT EXISTS card_payments (
     id SERIAL PRIMARY KEY,
-    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    -- SET NULL (not CASCADE): payment records survive user deletion.
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
     -- Set at /payment/confirm; unique — one Paymob payment per record.
     paymob_payment_id VARCHAR(255) UNIQUE,
     package VARCHAR(20) NOT NULL
@@ -208,7 +209,8 @@ CREATE INDEX IF NOT EXISTS idx_card_payments_user_created
 -- only the wallet TYPE is kept for audit/ledger purposes (plan 2.8).
 CREATE TABLE IF NOT EXISTS wallet_payments (
     id SERIAL PRIMARY KEY,
-    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    -- SET NULL (not CASCADE): payment records survive user deletion.
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
     -- Set at /payment/confirm; unique — one Paymob payment per record.
     paymob_payment_id VARCHAR(255) UNIQUE,
     wallet_type VARCHAR(30) NOT NULL,
