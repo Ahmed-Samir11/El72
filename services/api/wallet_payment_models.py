@@ -56,7 +56,7 @@ class WalletPayment(Base):
     __table_args__ = (
         CheckConstraint(
             "status IN ('pending_otp', 'processing', 'succeeded', "
-            "'failed', 'canceled')",
+            "'failed', 'canceled', 'refunded')",
             name="wallet_payments_status_check",
         ),
         # Mirror the SQL DDL CHECK constraints so ORM-created schemas

@@ -2,6 +2,8 @@ import json
 import logging
 import os
 import time
+import uuid
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -20,8 +22,10 @@ from services.api.payment_security import (
     sanitize_for_log,
     security_monitor,
 )
+from services.api.subscription_models import Subscription, SubscriptionRenewal
 from services.billing.models import PaymentLog
 from services.common.paymob import verify_paymob_hmac
+from services.common.paymob_client import PaymobApiError, cancel_subscription
 
 logger = logging.getLogger(__name__)
 
@@ -377,6 +381,7 @@ async def paymob_webhook(request: Request, db: Session = Depends(get_db)):
         # -> user sees error, no credits granted").
         _update_card_payment_status(db, order_id, status_value)
         _update_wallet_payment_status(db, order_id, status_value)
+        _update_cash_payment_status(db, order_id, status_value)
         return {"status": "ignored"}
 
     # 4.5: atomic credit grant — payment log + credits + audit in ONE
@@ -433,6 +438,8 @@ async def paymob_webhook(request: Request, db: Session = Depends(get_db)):
     # Same for wallet payments (Feature 2): the webhook is the source of
     # truth for the payment's fate.
     _update_wallet_payment_status(db, order_id, status_value)
+    # Same for cash payments (Feature 3).
+    _update_cash_payment_status(db, order_id, status_value)
 
     return {"status": "processed"}
 
@@ -502,6 +509,35 @@ def _update_wallet_payment_status(
         logger.warning("Could not update wallet_payments status for %s", order_id)
 
 
+def _update_cash_payment_status(db: Session, order_id: str, status_value: str) -> None:
+    """Transition the CashPayment row to the webhook-confirmed terminal
+    state (Feature 3).
+
+    Same semantics as :func:`_update_wallet_payment_status`: the webhook is
+    the source of truth, prior terminal states are transitioned (a later
+    ``succeeded`` delivery of the same order wins), and the UPDATE is
+    committed explicitly (the get_db teardown closes without committing).
+    """
+    from sqlalchemy import text as _text
+
+    try:
+        db.execute(
+            _text(
+                "UPDATE cash_payments SET status = :status "
+                "WHERE paymob_payment_id = :order_id "
+                "AND status IN ('pending', 'failed', 'canceled')"
+            ),
+            {"status": status_value, "order_id": order_id},
+        )
+        db.commit()
+    except Exception:
+        # Non-fatal: the CashPayment row may not exist (card, wallet or
+        # manual payment) or the table may be absent in a billing-only
+        # deployment.
+        db.rollback()
+        logger.warning("Could not update cash_payments status for %s", order_id)
+
+
 @app.get("/pricing")
 def get_dynamic_pricing():
     return {
@@ -512,3 +548,240 @@ def get_dynamic_pricing():
             "premium": {"credits": 30, "price_egp": 90},
         },
     }
+
+
+# Dunning: after this many consecutive failed renewals the subscription is
+# auto-canceled (plan 7.2).
+MAX_FAILED_RENEWALS = 3
+
+
+@app.post("/webhook/paymob/subscription-renewal")
+@limiter.limit("100/hour")
+async def paymob_subscription_renewal_webhook(
+    request: Request, db: Session = Depends(get_db)
+):
+    """Paymob subscription renewal webhook (Feature 7).
+
+    Fired by Paymob for every subscription charge: the **first charge**
+    (made when the subscription is created) and each subsequent **monthly
+    renewal**. The first charge is confirmed here, not at creation —
+    credits are granted only when a charge succeeds (review finding:
+    premature credit granting at creation).
+
+    Security gates mirror the one-time payment webhook (plan 7.5/7.6):
+      - HMAC-SHA512 signature on the raw body -> 401
+      - idempotency: unique paymob_renewal_id, duplicate -> no side effect
+      - status whitelist (succeeded / failed)
+      - amount validation: the charged amount (paisa) must match the
+        server-determined subscription amount
+
+    On success: credits are granted, ``next_charge`` advances a month, and
+    the dunning counter resets. On failure: the dunning counter increments;
+    after :data:`MAX_FAILED_RENEWALS` consecutive failures the subscription
+    is auto-canceled and the Paymob mandate is canceled (plan 7.2).
+    """
+    body = await request.body()
+    ip = _client_ip(request)
+
+    if not verify_paymob_webhook(request, body):
+        record_payment_event(
+            db,
+            event_type="webhook_signature_failed",
+            payment_ref="",
+            detail=sanitize_for_log("signature verification failed"),
+            ip_address=ip,
+        )
+        db.commit()
+        raise HTTPException(status_code=401, detail="Invalid signature")
+
+    try:
+        data = json.loads(body.decode("utf-8"))
+        tx = data.get("obj", data) if isinstance(data, dict) else None
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        _reject_webhook(db, ip, "invalid_payload: unparseable body", None, "")
+        raise HTTPException(status_code=400, detail="Invalid webhook payload") from exc
+    if not isinstance(tx, dict):
+        _reject_webhook(db, ip, "invalid_payload: not an object", None, "")
+        raise HTTPException(status_code=400, detail="Invalid webhook payload")
+
+    renewal_id = tx.get("id")
+    paymob_subscription_id = tx.get("paymob_subscription_id")
+    status_value = tx.get("status")
+    if (
+        not isinstance(renewal_id, str)
+        or not renewal_id
+        or not isinstance(paymob_subscription_id, str)
+        or not paymob_subscription_id
+        or not isinstance(status_value, str)
+        or not status_value
+    ):
+        _reject_webhook(
+            db, ip, "invalid_payload: missing/typed fields", None, str(renewal_id)
+        )
+        raise HTTPException(status_code=400, detail="Invalid webhook payload")
+    if status_value not in ("succeeded", "failed"):
+        _reject_webhook(db, ip, f"unknown_status: {status_value}", None, renewal_id)
+        raise HTTPException(status_code=400, detail="Invalid status")
+
+    # 7.6: idempotency FIRST — a duplicate delivery short-circuits.
+    existing = (
+        db.query(SubscriptionRenewal)
+        .filter(SubscriptionRenewal.paymob_renewal_id == renewal_id)
+        .first()
+    )
+    if existing is not None:
+        record_payment_event(
+            db,
+            event_type="webhook_duplicate",
+            payment_ref=renewal_id,
+            detail=sanitize_for_log("duplicate renewal delivery"),
+            ip_address=ip,
+        )
+        db.commit()
+        return {"status": "duplicate"}
+
+    subscription = (
+        db.query(Subscription)
+        .filter(Subscription.paymob_subscription_id == paymob_subscription_id)
+        .first()
+    )
+    if subscription is None:
+        _reject_webhook(
+            db,
+            ip,
+            f"unknown_subscription: {paymob_subscription_id}",
+            None,
+            renewal_id,
+        )
+        raise HTTPException(status_code=404, detail="Subscription not found")
+
+    if subscription.status != "active":
+        # A renewal for an already-canceled/failed subscription is a no-op
+        # (idempotent; audited).
+        record_payment_event(
+            db,
+            event_type="webhook_duplicate",
+            payment_ref=renewal_id,
+            detail=sanitize_for_log("renewal for inactive subscription"),
+            ip_address=ip,
+        )
+        db.commit()
+        return {"status": "inactive"}
+
+    # Validate the charged amount against the server-determined
+    # subscription amount (review finding: webhook does not validate the
+    # charged amount). The amount is in paisa. If the payload omits it,
+    # we trust the stored amount (the client never sets it, plan 7.1).
+    charged_amount_paisa = tx.get("amount")
+    if charged_amount_paisa is not None:
+        expected_paisa = round(subscription.amount_egp * 100)
+        if charged_amount_paisa != expected_paisa:
+            _reject_webhook(
+                db,
+                ip,
+                (
+                    f"amount_mismatch: charged={charged_amount_paisa}"
+                    f" expected={expected_paisa}"
+                ),
+                None,
+                renewal_id,
+            )
+            raise HTTPException(status_code=400, detail="Amount mismatch")
+
+    user = db.query(User).filter(User.id == subscription.user_id).first()
+    now = datetime.now(timezone.utc)
+
+    try:
+        if status_value == "succeeded":
+            renewal = SubscriptionRenewal(
+                id=str(uuid.uuid4()),
+                subscription_id=subscription.id,
+                paymob_renewal_id=renewal_id,
+                amount_egp=subscription.amount_egp,
+                status="succeeded",
+                charged_at=now,
+            )
+            db.add(renewal)
+            if user is not None:
+                grant(
+                    db,
+                    user,
+                    PACKAGE_CREDITS[subscription.package],
+                    reason=f"subscription_renewal_{subscription.package}",
+                )
+            # Advance the next charge and reset the dunning counter.
+            subscription.failed_renewals = 0
+            subscription.next_charge = now + timedelta(days=30)
+            record_payment_event(
+                db,
+                event_type="subscription_renewal_succeeded",
+                user_id=str(subscription.user_id),
+                payment_ref=renewal_id,
+                detail=sanitize_for_log(f"package={subscription.package}"),
+                ip_address=ip,
+            )
+        else:
+            # Failed renewal: increment the dunning counter.
+            renewal = SubscriptionRenewal(
+                id=str(uuid.uuid4()),
+                subscription_id=subscription.id,
+                paymob_renewal_id=renewal_id,
+                amount_egp=subscription.amount_egp,
+                status="failed",
+                charged_at=None,
+            )
+            db.add(renewal)
+            subscription.failed_renewals += 1
+            if subscription.failed_renewals >= MAX_FAILED_RENEWALS:
+                # Auto-cancel after 3 consecutive failures (plan 7.2). Also
+                # cancel the Paymob subscription so it stops charging the
+                # card. A provider failure here is non-fatal: the local
+                # subscription is marked failed regardless (the webhook is
+                # the source of truth for the final state).
+                try:
+                    cancel_subscription(subscription.paymob_subscription_id)
+                except PaymobApiError:
+                    logger.warning(
+                        "Could not cancel Paymob subscription %s after dunning",
+                        subscription.paymob_subscription_id,
+                    )
+                subscription.status = "failed"
+                subscription.canceled_at = now
+                record_payment_event(
+                    db,
+                    event_type="subscription_auto_canceled",
+                    user_id=str(subscription.user_id),
+                    payment_ref=renewal_id,
+                    detail=sanitize_for_log(
+                        f"failed_renewals={subscription.failed_renewals}"
+                    ),
+                    ip_address=ip,
+                )
+            else:
+                record_payment_event(
+                    db,
+                    event_type="subscription_renewal_failed",
+                    user_id=str(subscription.user_id),
+                    payment_ref=renewal_id,
+                    detail=sanitize_for_log(
+                        f"failed_renewals={subscription.failed_renewals}"
+                    ),
+                    ip_address=ip,
+                )
+        db.commit()
+    except IntegrityError:
+        # Lost a race to a concurrent duplicate delivery: the unique
+        # paymob_renewal_id was just inserted by the other request. Roll
+        # back and return an idempotent "duplicate" (no 500).
+        db.rollback()
+        record_payment_event(
+            db,
+            event_type="webhook_duplicate",
+            payment_ref=renewal_id,
+            detail=sanitize_for_log("concurrent duplicate renewal"),
+            ip_address=ip,
+        )
+        db.commit()
+        return {"status": "duplicate"}
+
+    return {"status": status_value}

@@ -2,40 +2,63 @@ import 'dart:async';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:intl/intl.dart';
 
 import '../../data/models/payment_models.dart';
 import '../../data/repositories/payment_repository.dart';
 import '../../../l10n/app_localizations.dart';
 
-/// Step-based Paymob wallet payment flow (Feature 2).
+/// Step-based Paymob payment flow (Features 2 + 3).
 ///
-/// Package selection → wallet type + number (with confirmation, plan 2.3) →
-/// OTP entry → result with status polling. The price is server-determined
-/// (plan 2.4); the app only sends the package id and the wallet choice.
-class WalletPaymentScreen extends StatefulWidget {
-  const WalletPaymentScreen({super.key, this.repository, this.initialPackage});
+/// Package selection → method selection (wallet | cash) →
+///   wallet: type + number (with confirmation, plan 2.3) → OTP entry
+///   cash: channel (fawry | bank) → code display with copy + 24 h expiry
+/// → result with status polling. The price is server-determined
+/// (plans 2.4/3.4); the app only sends the package id and the method
+/// choice. Cash results poll at 60 s intervals — matching the server's
+/// 1/minute-per-payment poll limit (plan 3.2) — for up to 5 minutes.
+class PaymentFlowScreen extends StatefulWidget {
+  const PaymentFlowScreen({super.key, this.repository, this.initialPackage});
 
   /// Injectable for tests; defaults to a shared [PaymentRepository].
   final PaymentRepository? repository;
 
-  /// When set, the flow starts at the wallet step with this package.
+  /// When set, the flow starts at the method step with this package.
   final CreditPackage? initialPackage;
 
   @override
-  State<WalletPaymentScreen> createState() => _WalletPaymentScreenState();
+  State<PaymentFlowScreen> createState() => _PaymentFlowScreenState();
 }
 
-enum _PaymentStep { package, wallet, otp, result }
+enum _PaymentStep { package, method, wallet, cash, otp, result }
 
-class _WalletPaymentScreenState extends State<WalletPaymentScreen> {
+enum _PaymentMethod { wallet, cash }
+
+/// The normalized result of a confirm call. [paymentCode] and [expiresAt]
+/// are cash-only and null when absent/empty, so the UI never renders a
+/// blank code or an "Expires " line.
+typedef _ConfirmResult = ({
+  String paymentId,
+  String status,
+  String? paymentCode,
+  String? expiresAt,
+});
+
+class _PaymentFlowScreenState extends State<PaymentFlowScreen> {
   late _PaymentStep _step;
   late CreditPackage _package;
+  _PaymentMethod? _method;
 
   WalletType? _walletType;
   late final TextEditingController _walletController = TextEditingController();
   late final TextEditingController _otpController = TextEditingController();
+  CashType? _cashType;
 
   String? _paymentId;
+  // Cash only: the single-use code + its 24 h expiry (plan 3.1/3.3).
+  String? _cashCode;
+  String? _cashExpiresAt;
 
   bool _submitting = false;
   String? _fieldError;
@@ -47,6 +70,10 @@ class _WalletPaymentScreenState extends State<WalletPaymentScreen> {
   Timer? _pollTimer;
   static const int _maxPolls = 6;
   static const Duration _pollInterval = Duration(seconds: 5);
+  // Cash: 60 s intervals, 5 polls (5 minutes) — the server limits cash
+  // status lookups to 1/minute per payment (plan 3.2).
+  static const int _maxCashPolls = 5;
+  static const Duration _cashPollInterval = Duration(seconds: 60);
 
   // Cached in state so the repository is not re-created on every build
   // (review finding #6).
@@ -57,7 +84,7 @@ class _WalletPaymentScreenState extends State<WalletPaymentScreen> {
     super.initState();
     _package = widget.initialPackage ?? CreditPackage.standard;
     _step = widget.initialPackage != null
-        ? _PaymentStep.wallet
+        ? _PaymentStep.method
         : _PaymentStep.package;
   }
 
@@ -71,6 +98,19 @@ class _WalletPaymentScreenState extends State<WalletPaymentScreen> {
 
   AppLocalizations get l10n => AppLocalizations.of(context);
 
+  bool get _isCash => _method == _PaymentMethod.cash;
+
+  /// The selected package's label and one-time price, used by the wallet
+  /// and cash steps (the price is server-determined; this mirrors the
+  /// server allowlist, plan 2.4/3.4).
+  String get _packageSummary {
+    final label = switch (_package) {
+      CreditPackage.premium => l10n.premiumPackage,
+      _ => l10n.standardPackage,
+    };
+    return '$label: ${l10n.egpOnce('${_package.priceEgp}')}';
+  }
+
   // ---------------------------------------------------------------------
   // Flow actions
   // ---------------------------------------------------------------------
@@ -78,7 +118,17 @@ class _WalletPaymentScreenState extends State<WalletPaymentScreen> {
   void _selectPackage(CreditPackage package) {
     setState(() {
       _package = package;
-      _step = _PaymentStep.wallet;
+      _step = _PaymentStep.method;
+    });
+  }
+
+  void _selectMethod(_PaymentMethod method) {
+    setState(() {
+      _method = method;
+      _fieldError = null;
+      _step = method == _PaymentMethod.wallet
+          ? _PaymentStep.wallet
+          : _PaymentStep.cash;
     });
   }
 
@@ -116,27 +166,85 @@ class _WalletPaymentScreenState extends State<WalletPaymentScreen> {
     );
     if (confirmed != true || !mounted) return;
 
-    setState(() {
-      _submitting = true;
-      _fieldError = null;
-    });
-    try {
+    await _submitPayment(() async {
       final start = await _repo.startPayment();
-      final result = await _repo.confirmWalletPayment(
+      final r = await _repo.confirmWalletPayment(
         stagingToken: start['staging_token'] ?? '',
         walletType: type,
         walletNumber: number,
         packageId: _package.id,
       );
+      return (
+        paymentId: r.paymentId,
+        status: r.status,
+        paymentCode: null,
+        expiresAt: null,
+      );
+    });
+  }
+
+  Future<void> _submitCash() async {
+    final type = _cashType;
+    if (type == null) {
+      setState(() => _fieldError = l10n.selectCashChannel);
+      return;
+    }
+    await _submitPayment(() async {
+      final start = await _repo.startPayment();
+      final r = await _repo.confirmCashPayment(
+        stagingToken: start['staging_token'] ?? '',
+        cashType: type,
+        packageId: _package.id,
+      );
+      return (
+        paymentId: r.paymentId,
+        status: r.status,
+        paymentCode: _nonEmpty(r.paymentCode),
+        expiresAt: r.expiresAt,
+      );
+    });
+  }
+
+  /// Normalizes a possibly-empty string to null so the UI never renders a
+  /// blank code or an "Expires " line.
+  String? _nonEmpty(String? s) =>
+      (s == null || s.trim().isEmpty) ? null : s.trim();
+
+  /// Shared submit path for wallet and cash: starts the payment, confirms
+  /// it, and moves to the result step (or the OTP step for wallets that
+  /// need it).
+  Future<void> _submitPayment(Future<_ConfirmResult> Function() confirm) async {
+    setState(() {
+      _submitting = true;
+      _fieldError = null;
+    });
+    try {
+      final result = await confirm();
       if (!mounted) return;
+      // An empty payment id is a malformed confirm response; surface an
+      // error instead of entering the result step with invalid polling.
+      if (result.paymentId.isEmpty) {
+        setState(() {
+          _submitting = false;
+          _fieldError = l10n.paymentError;
+        });
+        return;
+      }
+      final status = PaymentStatus.parse(result.status);
       setState(() {
         _paymentId = result.paymentId;
         _submitting = false;
-        if (PaymentStatus.parse(result.status) == PaymentStatus.pendingOtp) {
+        if (_isCash) {
+          _cashCode = result.paymentCode;
+          _cashExpiresAt = result.expiresAt;
+          _resultStatus = status;
+          _step = _PaymentStep.result;
+          _startPollingIfNeeded();
+        } else if (status == PaymentStatus.pendingOtp) {
           _step = _PaymentStep.otp;
           _otpError = null;
         } else {
-          _resultStatus = PaymentStatus.parse(result.status);
+          _resultStatus = status;
           _step = _PaymentStep.result;
           _startPollingIfNeeded();
         }
@@ -198,14 +306,17 @@ class _WalletPaymentScreenState extends State<WalletPaymentScreen> {
   void _startPollingIfNeeded() {
     _pollTimer?.cancel();
     final status = _resultStatus;
-    if (status == null || status.isTerminal || _pollsDone >= _maxPolls) return;
-    _pollTimer = Timer(_pollInterval, _pollStatus);
+    final maxPolls = _isCash ? _maxCashPolls : _maxPolls;
+    final interval = _isCash ? _cashPollInterval : _pollInterval;
+    if (status == null || status.isTerminal || _pollsDone >= maxPolls) return;
+    _pollTimer = Timer(interval, _pollStatus);
   }
 
   Future<void> _pollStatus() async {
     _pollTimer = null;
     final paymentId = _paymentId;
-    if (!mounted || paymentId == null || _pollsDone >= _maxPolls) return;
+    final maxPolls = _isCash ? _maxCashPolls : _maxPolls;
+    if (!mounted || paymentId == null || _pollsDone >= maxPolls) return;
     _pollsDone += 1;
     try {
       final info = await _repo.getPaymentStatus(paymentId);
@@ -214,6 +325,10 @@ class _WalletPaymentScreenState extends State<WalletPaymentScreen> {
       setState(() {
         _pollFailed = false;
         _resultStatus = status;
+        // Keep the code/expiry visible if the server echoes them; an empty
+        // echo must not overwrite a valid value (or render a blank line).
+        _cashCode = _nonEmpty(info.paymentCode) ?? _cashCode;
+        _cashExpiresAt = _nonEmpty(info.expiresAt) ?? _cashExpiresAt;
       });
       _startPollingIfNeeded();
     } on DioException {
@@ -230,9 +345,15 @@ class _WalletPaymentScreenState extends State<WalletPaymentScreen> {
     _pollTimer?.cancel();
     _pollTimer = null;
     setState(() {
-      _step = _PaymentStep.wallet;
+      _step = _PaymentStep.method;
+      _method = null;
       _paymentId = null;
       _resultStatus = null;
+      _cashCode = null;
+      _cashExpiresAt = null;
+      _walletType = null;
+      _cashType = null;
+      _walletController.clear();
       _otpController.clear();
       _otpError = null;
       _fieldError = null;
@@ -257,7 +378,9 @@ class _WalletPaymentScreenState extends State<WalletPaymentScreen> {
             Expanded(
               child: switch (_step) {
                 _PaymentStep.package => _buildPackages(scheme),
+                _PaymentStep.method => _buildMethodStep(scheme),
                 _PaymentStep.wallet => _buildWalletStep(scheme),
+                _PaymentStep.cash => _buildCashStep(scheme),
                 _PaymentStep.otp => _buildOtpStep(scheme),
                 _PaymentStep.result => _buildResult(scheme),
               },
@@ -268,6 +391,21 @@ class _WalletPaymentScreenState extends State<WalletPaymentScreen> {
                 child: FilledButton(
                   key: const ValueKey('confirm-wallet-payment'),
                   onPressed: _submitting ? null : _submitWallet,
+                  child: _submitting
+                      ? const SizedBox(
+                          height: 20,
+                          width: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : Text(l10n.confirmPaymentButton),
+                ),
+              ),
+            if (_step == _PaymentStep.cash)
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: FilledButton(
+                  key: const ValueKey('confirm-cash-payment'),
+                  onPressed: _submitting ? null : _submitCash,
                   child: _submitting
                       ? const SizedBox(
                           height: 20,
@@ -376,6 +514,79 @@ class _WalletPaymentScreenState extends State<WalletPaymentScreen> {
     );
   }
 
+  Widget _buildMethodStep(ColorScheme scheme) {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        Text(
+          l10n.selectPaymentMethod,
+          style: Theme.of(context).textTheme.titleMedium,
+        ),
+        const SizedBox(height: 12),
+        for (final method in _PaymentMethod.values)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Card(
+              child: InkWell(
+                key: ValueKey(
+                  method == _PaymentMethod.wallet
+                      ? 'method-wallet'
+                      : 'method-cash',
+                ),
+                borderRadius: BorderRadius.circular(12),
+                onTap: () => _selectMethod(method),
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Row(
+                    children: [
+                      Icon(
+                        method == _PaymentMethod.wallet
+                            ? Icons.account_balance_wallet
+                            : Icons.payments,
+                        color: scheme.primary,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              method == _PaymentMethod.wallet
+                                  ? l10n.paymentMethodWallet
+                                  : l10n.paymentMethodCash,
+                              style: const TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            Text(
+                              method == _PaymentMethod.wallet
+                                  ? l10n.paymentMethodWalletDesc
+                                  : l10n.paymentMethodCashDesc,
+                            ),
+                          ],
+                        ),
+                      ),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text(
+                            l10n.creditsLabel(_package.credits),
+                            style: TextStyle(color: scheme.primary),
+                          ),
+                          Text(l10n.egpOnce('${_package.priceEgp}')),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
   Widget _buildWalletStep(ColorScheme scheme) {
     return ListView(
       padding: const EdgeInsets.all(16),
@@ -417,10 +628,51 @@ class _WalletPaymentScreenState extends State<WalletPaymentScreen> {
           onChanged: (_) => setState(() => _fieldError = null),
         ),
         const SizedBox(height: 8),
+        Text(_packageSummary, style: TextStyle(color: scheme.outline)),
+      ],
+    );
+  }
+
+  Widget _buildCashStep(ColorScheme scheme) {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
         Text(
-          '${l10n.standardPackage}: ${l10n.egpOnce('${_package.priceEgp}')}',
+          l10n.selectCashChannel,
+          style: Theme.of(context).textTheme.titleMedium,
+        ),
+        const SizedBox(height: 12),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final type in CashType.values)
+              ChoiceChip(
+                key: ValueKey('cash-type-${type.apiValue}'),
+                label: Text(switch (type) {
+                  CashType.fawry => l10n.cashChannelFawry,
+                  CashType.bank => l10n.cashChannelBank,
+                }),
+                selected: _cashType == type,
+                onSelected: (_) => setState(() {
+                  _cashType = type;
+                  _fieldError = null;
+                }),
+              ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        // Describe the method (not the code, which does not exist yet).
+        Text(
+          l10n.paymentMethodCashDesc,
           style: TextStyle(color: scheme.outline),
         ),
+        const SizedBox(height: 8),
+        Text(_packageSummary, style: TextStyle(color: scheme.outline)),
+        if (_fieldError != null) ...[
+          const SizedBox(height: 8),
+          Text(_fieldError!, style: TextStyle(color: scheme.error)),
+        ],
       ],
     );
   }
@@ -492,6 +744,8 @@ class _WalletPaymentScreenState extends State<WalletPaymentScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
+            if (_isCash && _nonEmpty(_cashCode) != null && !terminal)
+              _buildCodeCard(scheme),
             if (!terminal)
               const SizedBox(
                 height: 48,
@@ -529,6 +783,81 @@ class _WalletPaymentScreenState extends State<WalletPaymentScreen> {
                   child: Text(l10n.retryPayment),
                 ),
             ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Formats the raw ISO expiry for display (plan 3.3). Returns null when
+  /// the timestamp is missing/unparseable so the UI hides the line.
+  // Cached formatter: a DateFormat is created once per locale instead of
+  // on every expiry render.
+  DateFormat? _expiryFormatter;
+  String? _expiryFormatterLocale;
+
+  String? _formatExpiry(String raw) {
+    final dt = DateTime.tryParse(raw);
+    if (dt == null) return null;
+    final locale = Localizations.localeOf(context).toString();
+    if (_expiryFormatter == null || _expiryFormatterLocale != locale) {
+      // Include the time: a 24 h expiry is date+time, not just a day.
+      _expiryFormatter = DateFormat('yMMMMdEEEjm', locale);
+      _expiryFormatterLocale = locale;
+    }
+    return _expiryFormatter!.format(dt.toLocal());
+  }
+
+  /// Cash code display (plan 3.1/3.3): the single-use code is shown
+  /// prominently with a copy button and its 24 h expiry.
+  Widget _buildCodeCard(ColorScheme scheme) {
+    final code = _cashCode!;
+    final expires = _formatExpiry(_cashExpiresAt ?? '');
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            Text(
+              l10n.cashCodeTitle,
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              code,
+              key: const ValueKey('cash-code'),
+              style: const TextStyle(
+                fontSize: 28,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 4,
+                fontFeatures: [FontFeature.tabularFigures()],
+              ),
+            ),
+            if (expires != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                l10n.cashExpiresAt(expires),
+                style: TextStyle(color: scheme.outline),
+              ),
+            ],
+            const SizedBox(height: 12),
+            FilledButton.tonal(
+              key: const ValueKey('copy-cash-code'),
+              onPressed: () {
+                Clipboard.setData(ClipboardData(text: code));
+                ScaffoldMessenger.of(
+                  context,
+                ).showSnackBar(SnackBar(content: Text(l10n.codeCopied)));
+              },
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.copy, size: 18),
+                  const SizedBox(width: 8),
+                  Text(l10n.copyCode),
+                ],
+              ),
+            ),
           ],
         ),
       ),

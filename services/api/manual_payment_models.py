@@ -43,7 +43,7 @@ class ManualPayment(Base):
         Index("idx_manual_payments_status_created", "status", "created_at"),
         CheckConstraint("package IN ('standard', 'premium')"),
         CheckConstraint("amount_egp > 0"),
-        CheckConstraint("status IN ('pending', 'approved', 'rejected')"),
+        CheckConstraint("status IN ('pending', 'approved', 'rejected', 'refunded')"),
     )
 
     id = Column(
@@ -97,10 +97,15 @@ class PaymentAuditLog(Base):
     __table_args__ = (
         CheckConstraint(
             "action IN ('approve', 'reject', 'reveal_contact', "
+            "'refund', 'adjust_credits', "
             "'webhook_received', 'webhook_signature_failed', "
             "'webhook_duplicate', 'validation_rejected', 'otp_failed', "
             "'token_expired', 'amount_mismatch', 'card_payment_created', "
-            "'staging_rejected', 'wallet_payment_created')",
+            "'staging_rejected', 'wallet_payment_created', "
+            "'cash_payment_created', 'cash_expired', "
+            "'subscription_created', 'subscription_canceled', "
+            "'subscription_renewal_succeeded', 'subscription_renewal_failed', "
+            "'subscription_auto_canceled')",
         ),
     )
 

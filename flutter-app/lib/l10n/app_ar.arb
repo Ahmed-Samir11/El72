@@ -163,6 +163,25 @@
   "paymentError": "حدث خطأ. يرجى المحاولة مرة أخرى.",
   "retryPayment": "إعادة المحاولة",
 
+  "selectPaymentMethod": "اختر طريقة الدفع",
+  "paymentMethodWallet": "محفظة جوال",
+  "paymentMethodWalletDesc": "ادفع بمحفظة جوال (فودافون كاش أو أورنج موني أو اتصالات كاش)",
+  "paymentMethodCash": "نقدي (فوري / بنك)",
+  "paymentMethodCashDesc": "احصل على رمز دفع وادفع في نقطة فوري أو فرع بنك",
+  "selectCashChannel": "اختر قناة الدفع النقدي",
+  "cashChannelFawry": "فوري",
+  "cashChannelBank": "فرع بنك",
+  "cashCodeTitle": "رمز الدفع الخاص بك",
+  "cashCodeDesc": "اعرض هذا الرمز في نقطة الدفع أو فرع البنك. ينتهي خلال 24 ساعة.",
+  "cashExpiresAt": "ينتهي في {time}",
+  "@cashExpiresAt": {
+    "placeholders": {
+      "time": { "type": "String" }
+    }
+  },
+  "copyCode": "نسخ",
+  "codeCopied": "تم نسخ الرمز",
+
   "statCurrent": "الحالي",
   "statLow90d": "أدنى 90 يوم",
   "statHigh90d": "أعلى 90 يوم",

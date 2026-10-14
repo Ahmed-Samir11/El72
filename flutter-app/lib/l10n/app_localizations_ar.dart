@@ -308,6 +308,50 @@ class AppLocalizationsAr extends AppLocalizations {
   String get retryPayment => 'إعادة المحاولة';
 
   @override
+  String get selectPaymentMethod => 'اختر طريقة الدفع';
+
+  @override
+  String get paymentMethodWallet => 'محفظة جوال';
+
+  @override
+  String get paymentMethodWalletDesc =>
+      'ادفع بمحفظة جوال (فودافون كاش أو أورنج موني أو اتصالات كاش)';
+
+  @override
+  String get paymentMethodCash => 'نقدي (فوري / بنك)';
+
+  @override
+  String get paymentMethodCashDesc =>
+      'احصل على رمز دفع وادفع في نقطة فوري أو فرع بنك';
+
+  @override
+  String get selectCashChannel => 'اختر قناة الدفع النقدي';
+
+  @override
+  String get cashChannelFawry => 'فوري';
+
+  @override
+  String get cashChannelBank => 'فرع بنك';
+
+  @override
+  String get cashCodeTitle => 'رمز الدفع الخاص بك';
+
+  @override
+  String get cashCodeDesc =>
+      'اعرض هذا الرمز في نقطة الدفع أو فرع البنك. ينتهي خلال 24 ساعة.';
+
+  @override
+  String cashExpiresAt(String time) {
+    return 'ينتهي في $time';
+  }
+
+  @override
+  String get copyCode => 'نسخ';
+
+  @override
+  String get codeCopied => 'تم نسخ الرمز';
+
+  @override
   String get statCurrent => 'الحالي';
 
   @override

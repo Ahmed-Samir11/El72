@@ -164,6 +164,8 @@ PAYMENT_EVENT_TYPES = frozenset(
         "approve",
         "reject",
         "reveal_contact",
+        "refund",
+        "adjust_credits",
         "webhook_received",
         "webhook_signature_failed",
         "webhook_duplicate",
@@ -174,6 +176,13 @@ PAYMENT_EVENT_TYPES = frozenset(
         "card_payment_created",
         "staging_rejected",
         "wallet_payment_created",
+        "cash_payment_created",
+        "cash_expired",
+        "subscription_created",
+        "subscription_canceled",
+        "subscription_renewal_succeeded",
+        "subscription_renewal_failed",
+        "subscription_auto_canceled",
     }
 )
 
