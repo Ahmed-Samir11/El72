@@ -12,14 +12,10 @@ services:
 
   timescaledb:
     image: timescale/timescaledb:latest-pg15
-    command:
-      - postgres
-      - -c
-      - ssl=on
-      - -c
-      - ssl_cert_file=/var/lib/postgresql/server.crt
-      - -c
-      - ssl_key_file=/var/lib/postgresql/server.key
+    # TLS is intentionally not enabled in the compose stack: it would require
+    # provisioning server certificates into ./secrets/db-tls (not committed).
+    # All service ports are bound to 127.0.0.1 on the host; enable TLS at the
+    # network/proxy layer for production deployments.
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-elhaq}
       POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}"
@@ -28,19 +24,9 @@ services:
       - "127.0.0.1:5433:5432"
     volumes:
       - timescale-data:/var/lib/postgresql/data
-      - ./secrets/db-tls/timescaledb-server.crt:/var/lib/postgresql/server.crt:ro
-      - ./secrets/db-tls/timescaledb-server.key:/var/lib/postgresql/server.key:ro
 
   postgres:
     image: postgres:15
-    command:
-      - postgres
-      - -c
-      - ssl=on
-      - -c
-      - ssl_cert_file=/var/lib/postgresql/server.crt
-      - -c
-      - ssl_key_file=/var/lib/postgresql/server.key
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-elhaq}
       POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}"
@@ -50,8 +36,6 @@ services:
       - "127.0.0.1:5434:5432"
     volumes:
       - pg-data:/var/lib/postgresql/data
-      - ./secrets/db-tls/postgres-server.crt:/var/lib/postgresql/server.crt:ro
-      - ./secrets/db-tls/postgres-server.key:/var/lib/postgresql/server.key:ro
 
   analyzer:
     build:
@@ -193,11 +177,12 @@ services:
     depends_on:
       - postgres
     environment:
-      DATA_SOURCE_URI: "postgres:5432/elhaq?sslmode=verify-full&sslrootcert=/etc/ssl/certs/el72-db-ca.crt"
+      # Internal Docker-network connection (127.0.0.1-only host ports); no
+      # TLS between compose services. The exporter connects as the restricted
+      # el72_monitor role (pg_monitor) — never the app superuser.
+      DATA_SOURCE_URI: "postgres:5432/elhaq?sslmode=disable"
       DATA_SOURCE_USER: "el72_monitor"
       DATA_SOURCE_PASS: "${DB_MONITOR_PASSWORD:?Set DB_MONITOR_PASSWORD}"
-    volumes:
-      - ./secrets/db-tls/db-ca.crt:/etc/ssl/certs/el72-db-ca.crt:ro
     networks:
       - default
 
@@ -207,11 +192,9 @@ services:
     depends_on:
       - timescaledb
     environment:
-      DATA_SOURCE_URI: "timescaledb:5432/elhaq_ts?sslmode=verify-full&sslrootcert=/etc/ssl/certs/el72-db-ca.crt"
+      DATA_SOURCE_URI: "timescaledb:5432/elhaq_ts?sslmode=disable"
       DATA_SOURCE_USER: "el72_monitor"
       DATA_SOURCE_PASS: "${DB_MONITOR_PASSWORD:?Set DB_MONITOR_PASSWORD}"
-    volumes:
-      - ./secrets/db-tls/db-ca.crt:/etc/ssl/certs/el72-db-ca.crt:ro
     networks:
       - default
 

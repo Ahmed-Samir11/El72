@@ -1,5 +1,16 @@
 -- El72 PostgreSQL Schema
 -- Canonical operational/payment database schema.
+--
+-- identifier strategy (reconciled): operational tables (users, alerts,
+-- tracked_items, ...) use INTEGER primary keys matching the operational ORM
+-- models (OperationalIdType). Payment/audit rows keep UUID or SERIAL primary
+-- keys as historically issued. This is a schema RECONCILIATION, not an
+-- in-place migration: an existing database whose users.id is still UUID is
+-- not converted by any migration. To move such a database to this schema,
+-- rebuild it from a dump (pg_dump/pg_restore) with a scripted id remap, or
+-- repair it interactively; scripts/audit-db-and-bootstrap.sh reports drift
+-- from this canonical schema (read-only) to verify the end state.
+-- Do not ALTER a live UUID column to SERIAL.
 
 -- Canonical PostgreSQL Schema (v1.0)
 -- Operational, authentication, payment, and application data
@@ -211,11 +222,48 @@ CREATE TABLE IF NOT EXISTS wallet_payments (
 CREATE INDEX IF NOT EXISTS idx_wallet_payments_user_created
     ON wallet_payments(user_id, created_at);
 
+-- Cash payments (Paymob cash flow): the user pays at a Fawry cash point or
+-- a bank branch using a random single-use code. The code is not PII (it
+-- identifies the payment, not the user) and expires after 24 h.
+-- Defined here (in addition to legacy migration 0007) so a canonical fresh
+-- install has the table with the reconciled INTEGER user FK; on databases
+-- where 0007 already created it, this is a no-op.
+CREATE TABLE IF NOT EXISTS cash_payments (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    -- Set at /payment/confirm; unique — one Paymob payment per record.
+    paymob_payment_id VARCHAR(255) UNIQUE,
+    -- Random single-use code shown to the user (8 unambiguous chars,
+    -- non-sequential; never contains user data — plan 3.1/3.2).
+    payment_code VARCHAR(32) UNIQUE NOT NULL,
+    cash_type VARCHAR(20) NOT NULL CHECK (cash_type IN ('fawry', 'bank')),
+    package VARCHAR(20) NOT NULL
+        CHECK (package IN ('standard', 'premium')),
+    amount_egp NUMERIC(10, 2) NOT NULL CHECK (amount_egp > 0),
+    status VARCHAR(20) NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'succeeded', 'failed', 'canceled',
+            'refunded')),
+    -- Code/order expiry: 24 h from creation (plan 3.3).
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_cash_payments_user_created
+    ON cash_payments(user_id, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_cash_payments_code
+    ON cash_payments(payment_code);
+
 -- Append-only audit trail of ALL payment events: admin actions
 -- (approve / reject / reveal_contact) and system security events (webhook
 -- signature failures, OTP failures, token expiry, amount mismatches).
 -- `detail` is sanitized free-form text — never raw card data, gateway
 -- tokens or OTPs. No UPDATE/DELETE path exists in the application.
+--
+-- The action list below is the BASELINE set. Migrations 0003 (reconcile),
+-- 0008 (cash events) and 0010 (subscription events) widen it in order on
+-- existing databases; the widest set wins because each widening is a full
+-- drop/re-add.
 CREATE TABLE IF NOT EXISTS payment_audit_log (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     action VARCHAR(50) NOT NULL

@@ -1,5 +1,12 @@
 -- Repair schema compatibility gaps without replaying obsolete legacy migrations.
 
+-- Normalize unknown/NULL status values before adding the check: VALIDATE
+-- CONSTRAINT would otherwise fail on rows with legacy values. Mapping them
+-- to ACTIVE is the least destructive option (keeps the account usable).
+UPDATE public.users
+    SET status = 'ACTIVE'
+    WHERE status IS NULL OR status NOT IN ('ACTIVE', 'DELETED');
+
 -- Add the user status constraint only when it is absent.
 DO $$
 BEGIN

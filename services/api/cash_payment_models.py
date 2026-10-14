@@ -24,7 +24,7 @@ from sqlalchemy import (
     String,
 )
 
-from services.api.models import Base
+from services.api.models import Base, OperationalIdType
 
 
 def _utcnow() -> datetime:
@@ -36,8 +36,13 @@ class CashPayment(Base):
     __tablename__ = "cash_payments"
 
     id = Column(Integer, primary_key=True)
+    # Reconciled with the operational schema: user ids are integers and the
+    # payment record survives user deletion (SET NULL, not CASCADE).
     user_id = Column(
-        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+        OperationalIdType(),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
     )
     # Set at /payment/confirm. Unique — one Paymob payment per record.
     paymob_payment_id = Column(String(255), unique=True, nullable=True)

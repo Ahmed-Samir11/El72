@@ -134,7 +134,7 @@ CREATE TABLE IF NOT EXISTS user_credits (
 );
 
 CREATE TABLE IF NOT EXISTS credit_transactions (
-    id SERIAL PRIMARY KEY,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     amount INTEGER NOT NULL,
     reason VARCHAR(50) NOT NULL,
@@ -233,7 +233,8 @@ CREATE INDEX IF NOT EXISTS idx_wallet_payments_user_created
 -- identifies the payment, not the user) and expires after 24 h.
 CREATE TABLE IF NOT EXISTS cash_payments (
     id SERIAL PRIMARY KEY,
-    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    -- SET NULL (not CASCADE): cash payment records survive user deletion.
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
     -- Set at /payment/confirm; unique — one Paymob payment per record.
     paymob_payment_id VARCHAR(255) UNIQUE,
     -- Random single-use code shown to the user (8 unambiguous chars,

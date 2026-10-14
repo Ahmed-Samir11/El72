@@ -279,7 +279,7 @@ class TestCashConfirm:
         token = _user_token(client)
         db = _session(client)
         try:
-            user_id = str(db.query(User).filter_by(phone=USER_PHONE).first().id)
+            user_id = db.query(User).filter_by(phone=USER_PHONE).first().id
             for i in range(5):
                 db.add(
                     CashPayment(
@@ -399,7 +399,7 @@ class TestCashStatus:
         )
         db = _session(client)
         try:
-            user_id = str(
+            user_id = (
                 db.query(CashPayment)
                 .filter(CashPayment.paymob_payment_id == data["payment_id"])
                 .first()

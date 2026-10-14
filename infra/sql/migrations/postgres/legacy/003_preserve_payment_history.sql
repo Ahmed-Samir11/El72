@@ -17,6 +17,8 @@ ALTER TABLE payment_logs
     ON DELETE SET NULL;
 
 ALTER TABLE payment_audit_log
+    DROP CONSTRAINT IF EXISTS payment_audit_log_target_user_id_fkey;
+ALTER TABLE payment_audit_log
     ADD CONSTRAINT payment_audit_log_target_user_id_fkey
     FOREIGN KEY (target_user_id)
     REFERENCES users(id)
