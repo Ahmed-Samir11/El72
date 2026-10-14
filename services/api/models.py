@@ -86,7 +86,7 @@ def _new_affiliate_click_id(context):
 class User(Base):
     __tablename__ = "users"
 
-    id = Column(UserIdType(), primary_key=True, default=_new_user_id)
+    id = Column(OperationalIdType(), primary_key=True, default=_new_user_id)
     phone = Column(String(20), unique=True, nullable=False)
     name = Column(String(100), nullable=False, default="Customer")
     preferred_language = Column(String(10), nullable=False, default="en")

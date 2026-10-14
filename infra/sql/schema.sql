@@ -8,7 +8,7 @@ CREATE EXTENSION IF NOT EXISTS timescaledb;
 
 -- Users table (UUID-based)
 CREATE TABLE IF NOT EXISTS users (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id SERIAL PRIMARY KEY,
     phone VARCHAR(20) UNIQUE NOT NULL,
     name VARCHAR(100) NOT NULL DEFAULT 'Customer',
     preferred_language VARCHAR(10) NOT NULL DEFAULT 'en',
@@ -25,14 +25,14 @@ CREATE TABLE IF NOT EXISTS users (
 
 -- Alerts table (merged from ddl.sql and alerts.sql)
 CREATE TABLE IF NOT EXISTS alerts (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id SERIAL PRIMARY KEY,
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    
+
     -- Original ddl.sql columns
     target_url TEXT,
     target_price NUMERIC(10, 2),
     active_status BOOLEAN DEFAULT TRUE,
-    
+
     -- alerts.sql columns (more granular tracking)
     sku TEXT,
     store_id TEXT,
@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS alerts (
 
 -- Tracked Items (UUID-based)
 CREATE TABLE IF NOT EXISTS tracked_items (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id SERIAL PRIMARY KEY,
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     canonical_product_id TEXT NOT NULL,
     specs JSONB,
@@ -60,7 +60,7 @@ CREATE TABLE IF NOT EXISTS tracked_items (
 
 -- Tracked Item Store Mappings
 CREATE TABLE IF NOT EXISTS tracked_item_stores (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id SERIAL PRIMARY KEY,
     tracked_item_id UUID NOT NULL REFERENCES tracked_items(id) ON DELETE CASCADE,
     store_id TEXT NOT NULL,
     store_sku TEXT NOT NULL,
@@ -116,14 +116,14 @@ WHERE NOT EXISTS (
 -- Payment Logs (UUID-based)
 CREATE TABLE IF NOT EXISTS payment_logs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
     paymob_order_id VARCHAR(255) UNIQUE NOT NULL,
     amount NUMERIC(10, 2) NOT NULL,
     currency VARCHAR(10) NOT NULL DEFAULT 'EGP',
-    status VARCHAR(20) NOT NULL DEFAULT 'pending',
+    status VARCHAR(50) NOT NULL DEFAULT 'pending',
     tier VARCHAR(20) NOT NULL,
     metadata JSONB,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS user_credits (
@@ -133,7 +133,7 @@ CREATE TABLE IF NOT EXISTS user_credits (
 );
 
 CREATE TABLE IF NOT EXISTS credit_transactions (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id SERIAL PRIMARY KEY,
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     amount INTEGER NOT NULL,
     reason VARCHAR(50) NOT NULL,
@@ -156,7 +156,7 @@ CREATE TABLE IF NOT EXISTS admins (
 -- Manual payments (bridge flow, pre-Paymob): user submits "I've paid",
 -- admin verifies the transfer and approves/rejects. Approval grants credits.
 CREATE TABLE IF NOT EXISTS manual_payments (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id SERIAL PRIMARY KEY,
     order_ref VARCHAR(32) UNIQUE NOT NULL,
     -- SET NULL (not CASCADE): payment history is a financial record and
     -- must survive user deletion for auditing.
@@ -259,7 +259,7 @@ CREATE INDEX IF NOT EXISTS idx_cash_payments_user_created
 -- `detail` is sanitized free-form text — never raw card data, gateway
 -- tokens or OTPs. No UPDATE/DELETE path exists in the application.
 CREATE TABLE IF NOT EXISTS payment_audit_log (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id SERIAL PRIMARY KEY,
     action VARCHAR(50) NOT NULL
         CHECK (action IN ('approve', 'reject', 'reveal_contact',
             'refund', 'adjust_credits',
@@ -395,7 +395,7 @@ CREATE TRIGGER subscription_renewals_append_only
 
 -- Affiliate clicks for merchant revenue attribution
 CREATE TABLE IF NOT EXISTS affiliate_clicks (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id SERIAL PRIMARY KEY,
     store_id VARCHAR(32) NOT NULL,
     sku VARCHAR(255),
     deal_id VARCHAR(255),
@@ -406,7 +406,7 @@ CREATE TABLE IF NOT EXISTS affiliate_clicks (
 
 -- Retailer Analytics (Aggregated B2B metrics, no PII)
 CREATE TABLE IF NOT EXISTS retailer_analytics (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id SERIAL PRIMARY KEY,
     store_id TEXT NOT NULL,
     metric_name VARCHAR(100) NOT NULL,
     metric_value NUMERIC(15, 4) NOT NULL,

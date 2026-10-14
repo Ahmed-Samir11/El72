@@ -68,6 +68,7 @@ WHERE NOT EXISTS (
       AND f.product_key = dp.product_key
       AND f.retailer_key = dr.retailer_key
       AND f.source_sku = ph.sku
-);
+)
+ON CONFLICT (observed_at, price_history_key) DO NOTHING;
 
 COMMIT;

@@ -8,9 +8,9 @@
 -- Enable required extensions
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
--- Users table (UUID-based)
+-- Users table (integer primary key; matches the operational ORM models)
 CREATE TABLE IF NOT EXISTS users (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id SERIAL PRIMARY KEY,
     phone VARCHAR(20) UNIQUE NOT NULL,
     name VARCHAR(100) NOT NULL DEFAULT 'Customer',
     preferred_language VARCHAR(10) NOT NULL DEFAULT 'en',
@@ -27,14 +27,14 @@ CREATE TABLE IF NOT EXISTS users (
 
 -- Alerts table (merged from ddl.sql and alerts.sql)
 CREATE TABLE IF NOT EXISTS alerts (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+
     -- Original ddl.sql columns
     target_url TEXT,
     target_price NUMERIC(10, 2),
-    active_status BOOLEAN DEFAULT TRUE,
-    
+    active_status BOOLEAN NOT NULL DEFAULT TRUE,
+
     -- alerts.sql columns (more granular tracking)
     sku TEXT,
     store_id TEXT,
@@ -42,16 +42,16 @@ CREATE TABLE IF NOT EXISTS alerts (
     desired_price_egp NUMERIC(10, 2),
     target_price_bucket TEXT,
     notify_channel TEXT DEFAULT 'whatsapp',
-    
+
     -- Metadata
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Tracked Items (UUID-based)
+-- Tracked Items (integer primary key; references users.id as INTEGER)
 CREATE TABLE IF NOT EXISTS tracked_items (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     canonical_product_id TEXT NOT NULL,
     specs JSONB,
     target_price NUMERIC(10, 2),
@@ -62,71 +62,73 @@ CREATE TABLE IF NOT EXISTS tracked_items (
 
 -- Tracked Item Store Mappings
 CREATE TABLE IF NOT EXISTS tracked_item_stores (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tracked_item_id UUID NOT NULL REFERENCES tracked_items(id) ON DELETE CASCADE,
+    id SERIAL PRIMARY KEY,
+    tracked_item_id INTEGER NOT NULL REFERENCES tracked_items(id) ON DELETE CASCADE,
     store_id TEXT NOT NULL,
     store_sku TEXT NOT NULL,
     store_url TEXT NOT NULL,
     is_active BOOLEAN DEFAULT TRUE,
+    last_fetch_status TEXT,
+    last_fetch_error TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
 -- Current Prices (Materialized snapshots)
 CREATE TABLE IF NOT EXISTS current_prices (
-    tracked_item_id UUID NOT NULL REFERENCES tracked_items(id) ON DELETE CASCADE,
+    tracked_item_id INTEGER NOT NULL REFERENCES tracked_items(id) ON DELETE CASCADE,
     store_id TEXT NOT NULL,
     price_usd NUMERIC(10, 4) NOT NULL,
     price_local NUMERIC(10, 2) NOT NULL,
     currency VARCHAR(10) NOT NULL DEFAULT 'USD',
     in_stock BOOLEAN DEFAULT TRUE,
+    image_url TEXT,
     last_updated TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     PRIMARY KEY (tracked_item_id, store_id)
 );
 
 -- Lowest Prices Cache
 CREATE TABLE IF NOT EXISTS lowest_prices (
-    tracked_item_id UUID PRIMARY KEY REFERENCES tracked_items(id) ON DELETE CASCADE,
+    tracked_item_id INTEGER PRIMARY KEY REFERENCES tracked_items(id) ON DELETE CASCADE,
     store_id TEXT NOT NULL,
     price_usd NUMERIC(10, 4) NOT NULL,
     price_local NUMERIC(10, 2) NOT NULL,
     currency VARCHAR(10) NOT NULL DEFAULT 'USD',
     url TEXT NOT NULL,
+    image_url TEXT,
     last_updated TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
 -- Payment Logs (UUID-based)
 CREATE TABLE IF NOT EXISTS payment_logs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
     paymob_order_id VARCHAR(255) UNIQUE NOT NULL,
     amount NUMERIC(10, 2) NOT NULL,
     currency VARCHAR(10) NOT NULL DEFAULT 'EGP',
-    status VARCHAR(20) NOT NULL DEFAULT 'pending',
+    status VARCHAR(50) NOT NULL DEFAULT 'pending',
     tier VARCHAR(20) NOT NULL,
     metadata JSONB,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS user_credits (
-    user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
     balance INTEGER NOT NULL DEFAULT 0 CHECK (balance >= 0),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS credit_transactions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     amount INTEGER NOT NULL,
     reason VARCHAR(50) NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
 
 -- Separate admin credentials (not user tiers). Provisioned out-of-band.
--- id is VARCHAR(36) (dashed UUID string) to match the SQLAlchemy models
--- and allow FKs from payment_audit_log / manual_payments on both engines.
--- NOTE: users.id is UUID in this canonical DDL, while the SQLAlchemy
--- models map user ids as VARCHAR(36) dashed-UUID strings (pre-existing
--- convention); Postgres accepts dashed UUID literals for the uuid type.
+-- Admin IDs remain VARCHAR(36) dashed UUID strings for compatibility with
+-- SQLAlchemy models and foreign keys from payment_audit_log/manual_payments.
+-- User IDs are INTEGER, generated by users.id SERIAL.
 CREATE TABLE IF NOT EXISTS admins (
     id VARCHAR(36) PRIMARY KEY,
     username VARCHAR(50) UNIQUE NOT NULL,
@@ -141,7 +143,7 @@ CREATE TABLE IF NOT EXISTS manual_payments (
     order_ref VARCHAR(32) UNIQUE NOT NULL,
     -- SET NULL (not CASCADE): payment history is a financial record and
     -- must survive user deletion for auditing.
-    user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
     -- Snapshot of the payer's phone at creation time so the row keeps
     -- forensic attribution even if the user account is later deleted.
     user_phone VARCHAR(20),
@@ -170,7 +172,7 @@ CREATE INDEX IF NOT EXISTS idx_manual_payments_status_created
 -- amounts (PCI-DSS: card data is tokenized on-device and never reaches us).
 CREATE TABLE IF NOT EXISTS card_payments (
     id SERIAL PRIMARY KEY,
-    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
     -- Set at /payment/confirm; unique — one Paymob payment per record.
     paymob_payment_id VARCHAR(255) UNIQUE,
     package VARCHAR(20) NOT NULL
@@ -189,7 +191,7 @@ CREATE INDEX IF NOT EXISTS idx_card_payments_user_created
 -- only the wallet TYPE is kept for audit/ledger purposes (plan 2.8).
 CREATE TABLE IF NOT EXISTS wallet_payments (
     id SERIAL PRIMARY KEY,
-    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
     -- Set at /payment/confirm; unique — one Paymob payment per record.
     paymob_payment_id VARCHAR(255) UNIQUE,
     wallet_type VARCHAR(30) NOT NULL,
@@ -228,7 +230,7 @@ CREATE TABLE IF NOT EXISTS payment_audit_log (
     actor_username VARCHAR(50),
     -- SET NULL (not CASCADE): audit rows are forensic records and must
     -- survive user deletion.
-    target_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    target_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
     -- Snapshot of the target user's phone at action time.
     target_user_phone VARCHAR(20),
     order_ref VARCHAR(32) NOT NULL,
@@ -265,7 +267,7 @@ CREATE TABLE IF NOT EXISTS affiliate_clicks (
 
 -- Retailer Analytics (Aggregated B2B metrics, no PII)
 CREATE TABLE IF NOT EXISTS retailer_analytics (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id SERIAL PRIMARY KEY,
     store_id TEXT NOT NULL,
     metric_name VARCHAR(100) NOT NULL,
     metric_value NUMERIC(15, 4) NOT NULL,

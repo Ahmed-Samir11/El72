@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import CHAR, Column, DateTime, Numeric, String, Text
+from sqlalchemy import CHAR, Column, DateTime, Numeric, String, Text, Integer
 from sqlalchemy.dialects.postgresql import UUID as postgres_UUID
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.types import TypeDecorator
@@ -48,8 +48,8 @@ class PaymentLog(Base):
     __tablename__ = "payment_logs"
 
     id = Column(GUID(), primary_key=True, default=uuid.uuid4)
-    user_id = Column(GUID(), nullable=False)
-    paymob_order_id = Column(Text, nullable=False)
+    user_id = Column(Integer, nullable=True, index=True)
+    paymob_order_id = Column(String(255), nullable=False, unique=True)
     amount = Column(Numeric(10, 2), nullable=False)
     currency = Column(String(10), nullable=False, default="EGP")
     status = Column(String(50), nullable=False)

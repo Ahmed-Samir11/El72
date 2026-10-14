@@ -18,7 +18,7 @@ from sqlalchemy import (
     Numeric,
     String,
 )
-
+from .models import OperationalIdType
 from services.api.models import Base
 
 
@@ -32,7 +32,10 @@ class CardPayment(Base):
 
     id = Column(Integer, primary_key=True)
     user_id = Column(
-        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+        OperationalIdType(),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
     )
     # Set at /payment/confirm (None until then). Unique — one Paymob payment
     # per card payment record.
