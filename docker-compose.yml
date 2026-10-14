@@ -2,7 +2,7 @@ services:
   redis:
     image: redis:7
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis-data:/data
     healthcheck:
@@ -11,27 +11,41 @@ services:
       retries: 5
 
   timescaledb:
-    image: timescale/timescaledb:latest-pg15
+    image: timescale/timescaledb:2.14.2-pg15
+    # TLS is intentionally not enabled in the compose stack: it would require
+    # provisioning server certificates into ./secrets/db-tls (not committed).
+    # All service ports are bound to 127.0.0.1 on the host; enable TLS at the
+    # network/proxy layer for production deployments.
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-elhaq}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-elhaq_pass}
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}"
       POSTGRES_DB: ${TIMESCALE_DB:-elhaq_ts}
     ports:
-      - "5433:5432"
+      - "127.0.0.1:5433:5432"
     volumes:
       - timescale-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-elhaq} -d ${TIMESCALE_DB:-elhaq_ts}" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   postgres:
     image: postgres:15
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-elhaq}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-elhaq_pass}
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}"
       POSTGRES_DB: ${POSTGRES_DB:-elhaq}
     ports:
       # Host 5432 is often occupied by a local Postgres; use 5434 externally.
-      - "5434:5432"
+      - "127.0.0.1:5434:5432"
     volumes:
       - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-elhaq} -d ${POSTGRES_DB:-elhaq}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   analyzer:
     build:
@@ -43,8 +57,8 @@ services:
       - postgres
     environment:
       REDIS_URL: "redis://redis:6379"
-      DATABASE_URL: "${DATABASE_URL_DOCKER:-postgresql://elhaq:elhaq_pass@postgres:5432/elhaq}"
-      TIMESCALE_URL: "${TIMESCALE_URL_DOCKER:-postgresql://elhaq:elhaq_pass@timescaledb:5432/elhaq_ts}"
+      DATABASE_URL: "${DATABASE_URL_DOCKER:?Set DATABASE_URL_DOCKER in .env}"
+      TIMESCALE_URL: "${TIMESCALE_URL_DOCKER:?Set TIMESCALE_URL_DOCKER in .env}"
       DEMO_MODE: "${DEMO_MODE:-false}"
     ports:
       - "8001:8000"
@@ -59,8 +73,8 @@ services:
       - timescaledb
     environment:
       REDIS_URL: "redis://redis:6379"
-      DATABASE_URL: "${DATABASE_URL_DOCKER:-postgresql://elhaq:elhaq_pass@postgres:5432/elhaq}"
-      TIMESCALE_URL: "${TIMESCALE_URL_DOCKER:-postgresql://elhaq:elhaq_pass@timescaledb:5432/elhaq_ts}"
+      DATABASE_URL: "${DATABASE_URL_DOCKER:?Set DATABASE_URL_DOCKER in .env}"
+      TIMESCALE_URL: "${TIMESCALE_URL_DOCKER:?Set TIMESCALE_URL_DOCKER in .env}"
     ports:
       - "8000:8000"
 
@@ -70,7 +84,7 @@ services:
     depends_on:
       - api
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     volumes:
       - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
@@ -86,7 +100,7 @@ services:
     depends_on:
       - prometheus
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     environment:
       GF_SECURITY_ADMIN_USER: "${GRAFANA_ADMIN_USER:-admin}"
       GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD in .env}"
@@ -118,8 +132,8 @@ services:
       - postgres
       - timescaledb
     environment:
-      DATABASE_URL: "${DATABASE_URL_DOCKER:-postgresql://elhaq:elhaq_pass@postgres:5432/elhaq}"
-      TIMESCALE_URL: "${TIMESCALE_URL_DOCKER:-postgresql://elhaq:elhaq_pass@timescaledb:5432/elhaq_ts}"
+      DATABASE_URL: "${DATABASE_URL_DOCKER:?Set DATABASE_URL_DOCKER in .env}"
+      TIMESCALE_URL: "${TIMESCALE_URL_DOCKER:?Set TIMESCALE_URL_DOCKER in .env}"
       REDIS_URL: "redis://redis:6379"
       SCRAPE_INTERVAL: "30"
       MAX_CONCURRENT_SCRAPES: "10"
@@ -136,7 +150,7 @@ services:
       - redis
       - postgres
     environment:
-      DATABASE_URL: "${DATABASE_URL_DOCKER:-postgresql://elhaq:elhaq_pass@postgres:5432/elhaq}"
+      DATABASE_URL: "${DATABASE_URL_DOCKER:?Set DATABASE_URL_DOCKER in .env}"
       REDIS_URL: "redis://redis:6379"
       SCRAPER_TARGETS_SOURCE: "redis_stream"
       SCRAPER_TARGETS_STREAM: "stream:targets"
@@ -154,7 +168,7 @@ services:
       - postgres
     environment:
       REDIS_URL: "redis://redis:6379"
-      DATABASE_URL: "postgresql://elhaq:elhaq_pass@postgres:5432/elhaq"
+      DATABASE_URL: "${DATABASE_URL_DOCKER:?Set DATABASE_URL_DOCKER in .env}"
       STREAM_NAME: "stream:confirmed_deals"
       CONSUMER_GROUP: "cg_whatsapp"
       CONSUMER_NAME: "whatsapp-1"
@@ -165,14 +179,24 @@ services:
       WHATSAPP_TEMPLATE_LANG: "${WHATSAPP_TEMPLATE_LANG:-en}"
       MOCK_WHATSAPP: "${MOCK_WHATSAPP:-true}"
     restart: unless-stopped
-  
+
+
   postgres-exporter:
     image: prometheuscommunity/postgres-exporter:v0.17.1
     restart: unless-stopped
+    # No healthcheck: the exporter image is distroless (no shell/wget).
+    # Startup ordering is handled by the DB healthcheck dependency below,
+    # and Prometheus skips a target that is not yet answering.
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     environment:
-      DATA_SOURCE_URI: "postgresql://el72_monitor:${DB_MONITOR_PASSWORD:?Set DB_MONITOR_PASSWORD in .env}@postgres:5432/elhaq?sslmode=disable"
+      # Internal Docker-network connection (127.0.0.1-only host ports); no
+      # TLS between compose services. The exporter connects as the restricted
+      # el72_monitor role (pg_monitor) — never the app superuser.
+      DATA_SOURCE_URI: "postgres:5432/elhaq?sslmode=disable"
+      DATA_SOURCE_USER: "el72_monitor"
+      DATA_SOURCE_PASS: "${DB_MONITOR_PASSWORD:?Set DB_MONITOR_PASSWORD}"
     networks:
       - default
 
@@ -180,9 +204,12 @@ services:
     image: prometheuscommunity/postgres-exporter:v0.17.1
     restart: unless-stopped
     depends_on:
-      - timescaledb
+      timescaledb:
+        condition: service_healthy
     environment:
-      DATA_SOURCE_URI: "postgresql://el72_monitor:${DB_MONITOR_PASSWORD:?Set DB_MONITOR_PASSWORD in .env}@timescaledb:5432/elhaq_ts?sslmode=disable"
+      DATA_SOURCE_URI: "timescaledb:5432/elhaq_ts?sslmode=disable"
+      DATA_SOURCE_USER: "el72_monitor"
+      DATA_SOURCE_PASS: "${DB_MONITOR_PASSWORD:?Set DB_MONITOR_PASSWORD}"
     networks:
       - default
 

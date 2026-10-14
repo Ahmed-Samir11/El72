@@ -159,11 +159,15 @@ CREATE TABLE IF NOT EXISTS analytics.fact_notification (
 
 -- Convert fact_price_history to a hypertable (review finding: fact_price_history
 -- is not created as a TimescaleDB hypertable).
-SELECT create_hypertable('analytics.fact_price_history', 'observed_at',
-    schema => 'analytics')
+SELECT create_hypertable(
+    'analytics.fact_price_history'::regclass,
+    'observed_at'
+)
 WHERE NOT EXISTS (
-    SELECT 1 FROM timescaledb_information.hypertables
-    WHERE hypertable_name = 'fact_price_history'
+    SELECT 1
+    FROM timescaledb_information.hypertables
+    WHERE hypertable_schema = 'analytics'
+      AND hypertable_name = 'fact_price_history'
 );
 
 -- Prevent multiple current rows for the same source product (review finding:

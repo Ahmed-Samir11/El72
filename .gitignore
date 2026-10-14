@@ -310,3 +310,5 @@ build/
 dist/
 *.tar.gz
 *.zip
+# Local database backups (binary dumps; never commit)
+backups/
