@@ -1182,8 +1182,8 @@ class TestAuditLog:
         )
         assert resp.status_code == 200
         rows = resp.json()
-        # target_user_id is stored as a string; compare as strings.
-        assert all(r["user_id"] == str(user_id) for r in rows)
+        # target_user_id is stored as an integer; compare as integers.
+        assert all(r["user_id"] == user_id for r in rows)
         assert len(rows) >= 1
 
     def test_audit_log_filter_by_date_from(self, client):
