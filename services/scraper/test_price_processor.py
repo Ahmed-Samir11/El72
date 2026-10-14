@@ -41,18 +41,22 @@ async def test_insert_price_history_egp_and_other(mock_db_pool):
     pool, conn = mock_db_pool
     processor = PriceProcessor(pool)
 
+    # execute args: (query, sku, store_id, price_usd, local_price, in_stock,
+    # image_url, advertised_price) -> price_usd is index 3, local_price index 4.
     await processor._insert_price_history(
         conn, 1, "amazon_eg", "SKU", 3.2, 100.0, "EGP", True
     )
     args = conn.execute.await_args[0]
-    assert args[3] == 100.0
+    assert args[3] == 3.2
+    assert args[4] == 100.0
 
     conn.execute.reset_mock()
     await processor._insert_price_history(
         conn, 1, "amazon_eg", "SKU", 10.0, 10.0, "USD", True
     )
     args = conn.execute.await_args[0]
-    assert args[3] == pytest.approx(10.0 / 0.032)
+    assert args[3] == 10.0
+    assert args[4] == pytest.approx(10.0 / 0.032)
 
 
 @pytest.mark.asyncio
@@ -60,12 +64,14 @@ async def test_insert_price_history_passes_image_url(mock_db_pool):
     pool, conn = mock_db_pool
     processor = PriceProcessor(pool)
 
-    # conn.execute is called as (query, sku, store_id, price_egp, in_stock,
-    # image_url); image_url is the 6th positional argument (index 5).
+    # conn.execute is called as (query, sku, store_id, price_usd, price_local,
+    # in_stock, image_url, advertised_price); image_url is index 6,
+    # advertised_price index 7.
     await processor._insert_price_history(
         conn, 1, "amazon_eg", "SKU", 3.2, 100.0, "EGP", True
     )
-    assert conn.execute.await_args[0][5] is None
+    assert conn.execute.await_args[0][6] is None
+    assert conn.execute.await_args[0][7] is None
 
     # Explicit: a populated image_url is passed through to the SQL execute call.
     conn.execute.reset_mock()
@@ -80,7 +86,28 @@ async def test_insert_price_history_passes_image_url(mock_db_pool):
         True,
         image_url="https://img.com/a.jpg",
     )
-    assert conn.execute.await_args[0][5] == "https://img.com/a.jpg"
+    assert conn.execute.await_args[0][6] == "https://img.com/a.jpg"
+
+
+@pytest.mark.asyncio
+async def test_insert_price_history_persists_original_price(mock_db_pool):
+    pool, conn = mock_db_pool
+    processor = PriceProcessor(pool)
+
+    # An advertised "was" price is stored in advertised_price (index 7).
+    await processor._insert_price_history(
+        conn, 1, "amazon_eg", "SKU", 3.2, 100.0, "EGP", True,
+        original_price=120.0,
+    )
+    assert conn.execute.await_args[0][7] == 120.0
+
+    # 0 / None mean "no advertised price" -> NULL.
+    conn.execute.reset_mock()
+    await processor._insert_price_history(
+        conn, 1, "amazon_eg", "SKU", 3.2, 100.0, "EGP", True,
+        original_price=0.0,
+    )
+    assert conn.execute.await_args[0][7] is None
 
 
 @pytest.mark.asyncio

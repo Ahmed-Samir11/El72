@@ -195,7 +195,7 @@ LIMIT 20;
 SELECT 
     sku,
     store_id,
-    price_egp,
+    price_local,
     time
 FROM price_history
 WHERE time >= CURRENT_DATE

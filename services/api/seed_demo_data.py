@@ -183,6 +183,7 @@ CREATE TABLE IF NOT EXISTS price_history (
     in_stock BOOLEAN NOT NULL DEFAULT 1,
     source_url TEXT,
     image_url TEXT,
+    advertised_price NUMERIC,
     PRIMARY KEY (time, sku, store_id)
 )
 """
@@ -229,10 +230,11 @@ def _ensure_price_history_table(engine: Engine) -> None:
     """Create ``price_history`` if it does not already exist (portable)."""
     with engine.begin() as conn:
         conn.execute(text(_PRICE_HISTORY_DDL))
-        try:
-            conn.execute(text("ALTER TABLE price_history ADD COLUMN image_url TEXT"))
-        except Exception:
-            pass
+        for column in ("image_url TEXT", "advertised_price NUMERIC"):
+            try:
+                conn.execute(text(f"ALTER TABLE price_history ADD COLUMN {column}"))
+            except Exception:
+                pass
 
 
 def _seed_price_history(session: Session) -> int:

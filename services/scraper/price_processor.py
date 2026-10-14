@@ -105,6 +105,7 @@ class PriceProcessor:
                     result.currency,
                     result.in_stock,
                     result.image_url,
+                    result.original_price,
                 )
 
             # Recalculate lowest price across stores
@@ -210,6 +211,7 @@ class PriceProcessor:
         currency: str,
         in_stock: bool,
         image_url: Optional[str] = None,
+        original_price: Optional[float] = None,
     ):
         """Insert price into TimescaleDB price_history table.
 
@@ -218,20 +220,35 @@ class PriceProcessor:
         """
         query = """
             INSERT INTO price_history (
-                time, sku, store_id, price_egp, in_stock, image_url
+                time, sku, store_id, price_usd, price_local, in_stock,
+                image_url, advertised_price
             )
-            VALUES (NOW(), $1, $2, $3, $4, $5)
+            VALUES (NOW(), $1, $2, $3, $4, $5, $6, $7)
             ON CONFLICT (time, sku, store_id) DO NOTHING
         """
-        # Note: price_egp column is legacy - storing USD converted to EGP equivalent
-        # In production, you'd want to add a price_usd column to price_history
-        price_egp = (
+        # price_local is the EGP-equivalent price (the schema's local-currency
+        # column); convert from USD when the source currency is not EGP.
+        local_price = (
             price_local
             if currency == "EGP"
             else price_usd / EXCHANGE_RATES.get("EGP", 0.032)
         )
+        advertised = (
+            float(original_price)
+            if original_price not in (None, 0, 0.0)
+            else None
+        )
 
-        await conn.execute(query, sku, store_id, price_egp, in_stock, image_url)
+        await conn.execute(
+            query,
+            sku,
+            store_id,
+            price_usd,
+            local_price,
+            in_stock,
+            image_url,
+            advertised,
+        )
 
     async def _update_lowest_price(
         self, conn: asyncpg.Connection, tracked_item_id: int, current_url: str

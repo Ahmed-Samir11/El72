@@ -100,6 +100,9 @@ CREATE TABLE IF NOT EXISTS price_history (
     in_stock BOOLEAN DEFAULT TRUE,
     source_url TEXT,
     image_url TEXT,
+    -- Advertised "was" (strikethrough) price shown on the product page, if
+    -- any. Nullable: most observations have no advertised price.
+    advertised_price NUMERIC(10, 2),
     PRIMARY KEY (time, sku, store_id)
 );
 
