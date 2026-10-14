@@ -16,6 +16,9 @@ CREATE TABLE IF NOT EXISTS users (
     salt VARCHAR(32) NOT NULL,
     tier VARCHAR(20) NOT NULL DEFAULT 'free',
     valid_until TIMESTAMP WITH TIME ZONE,
+    status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE'
+        CHECK (status IN ('ACTIVE', 'DELETED')),
+    deleted_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -442,6 +445,10 @@ CREATE INDEX IF NOT EXISTS idx_affiliate_clicks_clicked_at ON affiliate_clicks(c
 
 CREATE INDEX IF NOT EXISTS idx_retailer_analytics_store_id ON retailer_analytics(store_id);
 CREATE INDEX IF NOT EXISTS idx_retailer_analytics_period ON retailer_analytics(period_start, period_end);
+
+-- NOTE: The analytical tables (analytics.*) have been moved to the
+-- TimescaleDB canonical schema (infra/sql/schema/timescaledb.sql).
+-- They are no longer part of the operational PostgreSQL schema.
 
 -- Functions for updating timestamps
 CREATE OR REPLACE FUNCTION update_updated_at_column()

@@ -102,7 +102,7 @@ POST /admin/payments/{order_ref}/reject
 
 ### Database
 
-Implemented in `infra/sql/schema.sql` (canonical DDL). Summary:
+Implemented in `infra/sql/schema/postgres.sql` (canonical PostgreSQL DDL). Summary:
 
 - **admins** — separate admin credentials (`id VARCHAR(36)`, `username UNIQUE`,
   `password_hash`, `created_at`). Provisioned out-of-band; the first admin is
@@ -735,9 +735,9 @@ CREATE TABLE payment_audit_log (
   distributed (Redis) counter is a possible hardening for multi-instance
   deployments.
 - Existing deployments are upgraded via
-  `infra/sql/migrations/0001_payment_audit_log_detail.sql` (idempotent:
+  the historical migration `infra/sql/migrations/postgres/legacy/0001_payment_audit_log_detail.sql` (idempotent:
   adds the `detail` column and widens the `action` CHECK). Fresh installs
-  get both directly from `infra/sql/schema.sql`; a test asserts
+  fresh installs get both directly from `infra/sql/schema/postgres.sql`; a test asserts
   `PAYMENT_EVENT_TYPES` matches the schema CHECK.
 - ALL audit writes go through `record_payment_event()` — no direct
   `PaymentAuditLog(...)` construction outside that helper (the Feature 0

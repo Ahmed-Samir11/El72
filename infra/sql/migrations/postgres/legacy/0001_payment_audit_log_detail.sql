@@ -1,10 +1,10 @@
 -- Migration 0001: extend payment_audit_log for Feature 5 (security & audit).
 --
--- New installs get this schema directly from infra/sql/schema.sql; this
+-- New installs get this schema directly from infra/sql/schema/postgres.sql; this
 -- file only upgrades EXISTING deployments that already have the Feature 0
 -- payment_audit_log table. Safe to run multiple times (idempotent).
 --
--- Apply with:  psql "$DATABASE_URL" -f infra/sql/migrations/0001_payment_audit_log_detail.sql
+-- Apply with:  psql "$DATABASE_URL" -f infra/sql/migrations/postgres/legacy/0001_payment_audit_log_detail.sql
 
 BEGIN;
 

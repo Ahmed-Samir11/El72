@@ -14,7 +14,7 @@ wallet payments are pure REST, so the Flutter app side ships in this feature.
 
 ## Backend
 
-### Schema (`infra/sql/schema.sql` + migrations `0005`/`0006`)
+### Schema (`infra/sql/schema/postgres.sql`; historical migrations `0005`/`0006` archived under `infra/sql/migrations/postgres/legacy/`)
 - New table `wallet_payments`: `id SERIAL PK`, `user_id` FK users CASCADE,
   `paymob_payment_id VARCHAR(255) UNIQUE`, `wallet_type` (canonical upper-case
   type, **never the wallet number**), `package` + `amount_egp` + `status`
@@ -96,8 +96,8 @@ wallet payments are pure REST, so the Flutter app side ships in this feature.
   `flutter gen-l10n`.
 
 ## Files touched
-- `infra/sql/schema.sql`, `infra/sql/migrations/0005_wallet_payments.sql`,
-  `infra/sql/migrations/0006_payment_audit_log_wallet_event.sql`
+- `infra/sql/schema/postgres.sql`
+- Historical migrations: `infra/sql/migrations/postgres/legacy/0005_wallet_payments.sql` and `infra/sql/migrations/postgres/legacy/0006_payment_audit_log_wallet_event.sql`
 - `services/api/wallet_payment_models.py` (new)
 - `services/api/routers/payment.py`
 - `services/api/payment_security.py`

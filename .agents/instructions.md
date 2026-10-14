@@ -54,7 +54,8 @@ cp .env.example .env
 docker-compose up -d redis postgres timescaledb
 
 # 3. Apply database schema
-psql -U elhaq -h localhost -p 5434 -d elhaq -f infra/sql/schema.sql
+psql -U elhaq -h localhost -p 5434 -d elhaq -f infra/sql/schema/postgres.sql
+psql -U elhaq -h localhost -p 5435 -d elhaq_ts -f infra/sql/schema/timescaledb.sql
 
 # 4. Run everything
 docker-compose up --build
@@ -279,7 +280,7 @@ python -m playwright install --with-deps chromium
 
 | File | Why It Matters |
 |------|---------------|
-| [schema.sql](file:///e:/repos/El72/infra/sql/schema.sql) | **Source of truth** for all database tables |
+| [schema/postgres.sql](file:///e:/repos/El72/infra/sql/schema/postgres.sql) and [schema/timescaledb.sql](file:///e:/repos/El72/infra/sql/schema/timescaledb.sql) | **Source of truth** for database schemas |
 | [redis_client.py](file:///e:/repos/El72/services/common/redis_client.py) | Shared Redis Streams wrapper used by all Python services |
 | [store_scrapers.py](file:///e:/repos/El72/services/scraper/store_scrapers.py) | BaseScraper + all store implementations + ScraperFactory |
 | [tracked_item_monitor.py](file:///e:/repos/El72/services/scraper/tracked_item_monitor.py) | Main orchestrator — the heart of the scraping pipeline |

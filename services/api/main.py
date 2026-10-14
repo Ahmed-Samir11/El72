@@ -1,8 +1,9 @@
 import json
 import logging
 import os
+import time
 
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, validator
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -10,11 +11,17 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from services.api.card_payment_models import CardPayment  # noqa: F401
 from services.api.dependencies import get_current_user, get_db
 from services.api.manual_payment_models import ManualPayment  # noqa: F401
 from services.api.models import Alert, Base, User
+from services.api.monitoring.metrics import (
+    HTTP_REQUEST_DURATION_SECONDS,
+    HTTP_REQUESTS_TOTAL,
+    metrics_response,
+)
 from services.api.routers import affiliate as affiliate_router
 from services.api.routers import auth, public_api
 from services.api.routers import credits as credits_router
@@ -101,6 +108,36 @@ def bootstrap_admin() -> None:
         session.close()
 
 
+# Prometheus Class
+class PrometheusMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        if request.url.path == "/metrics":
+            return await call_next(request)
+
+        start_time = time.perf_counter()
+
+        response = await call_next(request)
+
+        duration = time.perf_counter() - start_time
+
+        endpoint = request.url.path
+        method = request.method
+        status = str(response.status_code)
+
+        HTTP_REQUESTS_TOTAL.labels(
+            method=method,
+            endpoint=endpoint,
+            status=status,
+        ).inc()
+
+        HTTP_REQUEST_DURATION_SECONDS.labels(
+            method=method,
+            endpoint=endpoint,
+        ).observe(duration)
+
+        return response
+
+
 app = FastAPI(title="Elhaq API")
 limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
@@ -112,6 +149,10 @@ origins = [
     "http://127.0.0.1:8080",
     "*",  # Allows all for development
 ]
+
+app.add_middleware(
+    PrometheusMiddleware,
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -145,7 +186,7 @@ app.include_router(subscription_router.router)
 
 # Demo mode: seed realistic demo data on startup (idempotent).
 # Toggle with DEMO_MODE=True (default) for the investor demo.
-DEMO_MODE = os.getenv("DEMO_MODE", "True").lower() in ("1", "true", "yes", "on")
+DEMO_MODE = os.getenv("DEMO_MODE", "False").lower() in ("1", "true", "yes", "on")
 
 
 @app.on_event("startup")
@@ -158,8 +199,25 @@ def _seed_demo_data_on_startup() -> None:
 
         summary = run_seed(engine=engine)
         logger.info("Demo data seeded on startup", extra={"summary": summary})
-    except Exception as e:  # fail-soft: demo data is non-critical
-        logger.exception("Demo seed failed; continuing", extra={"error": str(e)})
+    except Exception:
+        logger.exception("Demo seed failed; API startup is stopping")
+        raise
+
+
+@app.get("/metrics", include_in_schema=False)
+async def metrics():
+    content, media_type = metrics_response()
+
+    return Response(
+        content=content,
+        media_type=media_type,
+    )
+
+
+# Call for API health
+@app.get("/health", include_in_schema=False)
+async def health():
+    return {"status": "ok"}
 
 
 # Background task function to push new alert targets to scraper stream

@@ -4,7 +4,7 @@
 
 ```bash
 # 1. Setup database
-psql -U elhaq -d elhaq -f infra/sql/ddl.sql
+psql -U elhaq -d elhaq -f infra/sql/schema/postgres.sql
 
 # 2. Install dependencies
 pip install -r services/scraper/requirements.txt
@@ -262,7 +262,7 @@ psql -c "CREATE INDEX CONCURRENTLY idx_current_prices_updated ON current_prices(
 
 - **Main README**: [`services/scraper/TRACKED_ITEMS_README.md`](services/scraper/TRACKED_ITEMS_README.md)
 - **Implementation Summary**: [`IMPLEMENTATION_SUMMARY.md`](IMPLEMENTATION_SUMMARY.md)
-- **Database Schema**: [`infra/sql/ddl.sql`](infra/sql/ddl.sql)
+- **Database Schemas**: `infra/sql/schema/postgres.sql` + `infra/sql/schema/timescaledb.sql`
 - **Demo Script**: [`services/scraper/demo_tracked_items.py`](services/scraper/demo_tracked_items.py)
 
 ## 💡 Pro Tips

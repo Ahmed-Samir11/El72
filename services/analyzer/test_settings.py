@@ -14,7 +14,8 @@ def _make_settings(monkeypatch, timescale_url=None):
         monkeypatch.delenv("TIMESCALE_URL", raising=False)
     else:
         monkeypatch.setenv("TIMESCALE_URL", timescale_url)
-    return AnalyzerSettings()
+    # Keep the unit test independent from the repository-wide shared .env.
+    return AnalyzerSettings(_env_file=None)
 
 
 def test_timescale_url_optional_defaults_to_none(monkeypatch):

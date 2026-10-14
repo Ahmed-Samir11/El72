@@ -29,13 +29,15 @@ EXCHANGE_RATES = {
 class PriceProcessor:
     """Handles price conversion, comparison, and storage."""
 
-    def __init__(self, db_pool: asyncpg.Pool):
+    def __init__(self, db_pool: asyncpg.Pool, timescale_pool: asyncpg.Pool):
         """Initialize processor with database pool.
 
         Args:
-            db_pool: Asyncpg connection pool for database operations
+            db_pool: Asyncpg connection pool for operational database operations
+            timescale_pool: Asyncpg connection pool for price history operations
         """
         self.db_pool = db_pool
+        self.timescale_pool = timescale_pool
 
     @staticmethod
     def convert_to_usd(price: float, currency: str) -> float:
@@ -95,17 +97,18 @@ class PriceProcessor:
 
             # Insert price history only if price changed
             if price_changed:
-                await self._insert_price_history(
-                    conn,
-                    tracked_item_id,
-                    result.store,
-                    result.canonical_product_id,
-                    price_usd,
-                    result.price,
-                    result.currency,
-                    result.in_stock,
-                    result.image_url,
-                )
+                async with self.timescale_pool.acquire() as history_conn:
+                    await self._insert_price_history(
+                        history_conn,
+                        tracked_item_id,
+                        result.store,
+                        result.canonical_product_id,
+                        price_usd,
+                        result.price,
+                        result.currency,
+                        result.in_stock,
+                        result.image_url,
+                    )
 
             # Recalculate lowest price across stores
             is_lowest = await self._update_lowest_price(
@@ -211,27 +214,29 @@ class PriceProcessor:
         in_stock: bool,
         image_url: Optional[str] = None,
     ):
-        """Insert price into TimescaleDB price_history table.
+        """Insert an observed price into the TimescaleDB price_history table.
 
         Note: Uses current timestamp. TimescaleDB will handle deduplication
         if the same price is inserted multiple times at the same timestamp.
         """
         query = """
             INSERT INTO price_history (
-                time, sku, store_id, price_egp, in_stock, image_url
+                time, sku, store_id, price_usd, price_local,
+                currency, in_stock, image_url
             )
-            VALUES (NOW(), $1, $2, $3, $4, $5)
+            VALUES (NOW(), $1, $2, $3, $4, $5, $6, $7)
             ON CONFLICT (time, sku, store_id) DO NOTHING
         """
-        # Note: price_egp column is legacy - storing USD converted to EGP equivalent
-        # In production, you'd want to add a price_usd column to price_history
-        price_egp = (
-            price_local
-            if currency == "EGP"
-            else price_usd / EXCHANGE_RATES.get("EGP", 0.032)
+        await conn.execute(
+            query,
+            sku,
+            store_id,
+            price_usd,
+            price_local,
+            currency,
+            in_stock,
+            image_url,
         )
-
-        await conn.execute(query, sku, store_id, price_egp, in_stock, image_url)
 
     async def _update_lowest_price(
         self, conn: asyncpg.Connection, tracked_item_id: int, current_url: str

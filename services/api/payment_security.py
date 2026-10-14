@@ -157,7 +157,7 @@ security_monitor = SecurityMonitor()
 # ---------------------------------------------------------------------------
 
 # NOTE: must stay in sync with the CHECK constraint on payment_audit_log.action
-# in infra/sql/schema.sql (a test in test_payment_security.py asserts the two
+# in infra/sql/schema/postgres.sql (a test in test_payment_security.py asserts the two
 # match).
 PAYMENT_EVENT_TYPES = frozenset(
     {
