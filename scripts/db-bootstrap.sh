@@ -43,6 +43,22 @@ apply_file "$DATABASE_URL" \
 apply_file "$DATABASE_URL" \
     infra/sql/migrations/postgres/0004_schema_compatibility_repairs.sql
 
+# Legacy operational migrations (flat numbering, pre-subdirectory layout):
+# cash payments, cash audit events, admin dispute/refund, and subscriptions.
+# These must run AFTER 0003/0004: 0008 and 0010 widen the payment_audit_log
+# action CHECK that 0003 establishes, so ordering preserves the widest set.
+apply_file "$DATABASE_URL" \
+    infra/sql/migrations/0007_cash_payments.sql
+
+apply_file "$DATABASE_URL" \
+    infra/sql/migrations/0008_payment_audit_log_cash_events.sql
+
+apply_file "$DATABASE_URL" \
+    infra/sql/migrations/0009_admin_dispute_refunds.sql
+
+apply_file "$DATABASE_URL" \
+    infra/sql/migrations/0010_subscriptions.sql
+
 # Same sequence for the independent TimescaleDB instance.
 apply_file "$TIMESCALE_URL" \
     infra/sql/schema/timescaledb.sql
@@ -50,8 +66,12 @@ apply_file "$TIMESCALE_URL" \
 apply_file "$TIMESCALE_URL" \
     infra/sql/migrations/timescaledb/0000_baseline.sql
 
+# Advertised-price column + (sku, time) index for the fake-discount detector.
 apply_file "$TIMESCALE_URL" \
-    infra/sql/migrations/timescaledb/0001_monitor_role.sql
+    infra/sql/migrations/timescaledb/0001_price_history_advertised_price.sql
+
+apply_file "$TIMESCALE_URL" \
+    infra/sql/migrations/timescaledb/0002_monitor_role.sql
 
 echo "Canonical database bootstrap completed."
 echo "Provision monitoring passwords separately."

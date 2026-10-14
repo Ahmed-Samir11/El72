@@ -41,7 +41,9 @@ class TrackedItem(Base):
     __tablename__ = "tracked_items"
 
     id = Column(OperationalIdType(), primary_key=True, default=_new_id("tracked_items"))
-    user_id = Column(OperationalIdType(), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(
+        OperationalIdType(), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
     canonical_product_id = Column(Text, nullable=False)
     specs = Column(JSON, nullable=True)  # JSONB for spec-based tracking
     target_price = Column(Numeric(10, 2), nullable=True)

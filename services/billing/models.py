@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import CHAR, Column, DateTime, Numeric, String, Text, Integer
+from sqlalchemy import CHAR, Column, DateTime, Integer, Numeric, String
 from sqlalchemy.dialects.postgresql import UUID as postgres_UUID
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.types import TypeDecorator

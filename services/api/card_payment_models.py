@@ -18,8 +18,10 @@ from sqlalchemy import (
     Numeric,
     String,
 )
-from .models import OperationalIdType
+
 from services.api.models import Base
+
+from .models import OperationalIdType
 
 
 def _utcnow() -> datetime:
