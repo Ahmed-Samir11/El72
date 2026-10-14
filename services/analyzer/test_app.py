@@ -102,7 +102,7 @@ async def test_normalize_unexpected_error_dlqs_raw():
 @pytest.mark.asyncio
 async def test_insert_and_fetch_prices():
     conn = AsyncMock()
-    conn.fetch.return_value = [{"price_egp": 10}, {"price_egp": 12}]
+    conn.fetch.return_value = [{"price_local": 10}, {"price_local": 12}]
     await insert_price_history(
         conn,
         {"timestamp": 1, "sku": "S", "store": "amazon", "price": 10, "in_stock": True},
@@ -284,7 +284,7 @@ async def test_consume_loop_anomaly_publishes():
     ]
 
     ts_conn = AsyncMock()
-    ts_conn.fetch.return_value = [{"price_egp": float(x)} for x in range(100, 120)]
+    ts_conn.fetch.return_value = [{"price_local": float(x)} for x in range(100, 120)]
     ts_pool = MagicMock()
     ts_pool.acquire.return_value.__aenter__.return_value = ts_conn
     ts_pool.acquire.return_value.__aexit__.return_value = False

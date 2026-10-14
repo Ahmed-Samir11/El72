@@ -214,6 +214,45 @@ async def extract_price_from_page(page) -> float:
     return 0.0
 
 
+async def extract_original_price_from_page(page) -> float:
+    """Extract the advertised "was" (strikethrough) price, if shown.
+
+    Returns the parsed float or ``0.0`` when no strikethrough price is
+    present. This is best-effort: selectors differ per store, so we try a
+    small set of common "original price" selectors and only accept a value
+    that is plausibly a price (>= 10 EGP).
+    """
+    selectors = [
+        '.a-text-price .a-offscreen',
+        '.a-text-price',
+        'span.price-was',
+        '.was-price',
+        '.original-price',
+        'del',
+        's',
+    ]
+
+    for selector in selectors:
+        try:
+            elements = await page.query_selector_all(selector)
+            for elem in elements:
+                text = await elem.inner_text()
+                if not text:
+                    continue
+                numbers = re.findall(r'([\d,]+(?:\.\d{1,2})?)', text)
+                for num_str in numbers:
+                    try:
+                        price = float(num_str.replace(',', '').strip())
+                        if price >= 10:
+                            return price
+                    except (ValueError, TypeError):
+                        continue
+        except Exception:
+            continue
+
+    return 0.0
+
+
 async def extract_price(html: str) -> float:
     """Extract a price value from raw HTML using regex patterns.
 
@@ -410,13 +449,13 @@ async def fetch_target(  # noqa: C901
             # Check stock status using selectors (more accurate)
             in_stock = await check_in_stock_from_page(page)
 
+            # Best-effort advertised "was" price (strikethrough). 0.0 = none.
+            original_price = await extract_original_price_from_page(page)
+
             # Fallback to HTML regex if selector method fails
+            html = await page.content()
             if price == 0.0:
-                html = await page.content()
                 price = await extract_price(html)
-            else:
-                # Still get HTML for hash
-                html = await page.content()
 
             # Offload CPU-heavy hash to threadpool
             html_hash = await asyncio.to_thread(
@@ -438,6 +477,7 @@ async def fetch_target(  # noqa: C901
                 "product_title": product_title,
                 "url": url,
                 "price": price,
+                "original_price": original_price,
                 "timestamp": int(time.time()),
                 "html_hash": html_hash,
                 "in_stock": in_stock,

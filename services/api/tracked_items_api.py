@@ -765,8 +765,10 @@ def _persist_fetched_price(tracked_item_id, store_id: str, url: str, canonical_i
                 text(
                     "INSERT INTO price_history "
                     "(time, sku, store_id, price_usd, price_local, "
-                    "currency, in_stock, source_url, image_url) "
-                    "VALUES (:t, :sku, :store, :usd, :local, :cur, :stock, :url, :img)"
+                    "currency, in_stock, source_url, image_url, "
+                    "advertised_price) "
+                    "VALUES (:t, :sku, :store, :usd, :local, :cur, :stock, "
+                    ":url, :img, :adv)"
                 ),
                 {
                     "t": now,
@@ -778,11 +780,38 @@ def _persist_fetched_price(tracked_item_id, store_id: str, url: str, canonical_i
                     "stock": 1 if fetched.in_stock else 0,
                     "url": url,
                     "img": fetched.image_url,
+                    "adv": fetched.original_price,
                 },
             )
             db.commit()
         except SQLAlchemyError:
             db.rollback()
+            # Fallback for DBs without the advertised_price column: still
+            # record the price row rather than losing it.
+            try:
+                db.execute(
+                    text(
+                        "INSERT INTO price_history "
+                        "(time, sku, store_id, price_usd, price_local, "
+                        "currency, in_stock, source_url, image_url) "
+                        "VALUES (:t, :sku, :store, :usd, :local, :cur, "
+                        ":stock, :url, :img)"
+                    ),
+                    {
+                        "t": now,
+                        "sku": canonical_id,
+                        "store": store_id,
+                        "usd": price_usd,
+                        "local": fetched.price_local,
+                        "cur": fetched.currency,
+                        "stock": 1 if fetched.in_stock else 0,
+                        "url": url,
+                        "img": fetched.image_url,
+                    },
+                )
+                db.commit()
+            except SQLAlchemyError:
+                db.rollback()
 
         # Record the successful fetch on the store mapping (clears any
         # earlier failure state so the UI stops showing the error).

@@ -400,11 +400,12 @@ async def insert_demo_data(
 
         await history_conn.executemany(
             "INSERT INTO price_history (time, sku, store_id, price_usd, "
-            "price_local, currency, in_stock, source_url) VALUES ($1, $2, $3, "
-            "$4, $5, 'EGP', $6, $7) ON CONFLICT (time, sku, store_id) DO UPDATE "
+            "price_local, currency, in_stock, source_url, advertised_price) "
+            "VALUES ($1, $2, $3, $4, $5, 'EGP', $6, $7, $8) "
+            "ON CONFLICT (time, sku, store_id) DO UPDATE "
             "SET price_usd = EXCLUDED.price_usd, price_local = EXCLUDED."
             "price_local, in_stock = EXCLUDED.in_stock, source_url = "
-            "EXCLUDED.source_url",
+            "EXCLUDED.source_url, advertised_price = EXCLUDED.advertised_price",
             [
                 (
                     observation.timestamp,
@@ -414,6 +415,7 @@ async def insert_demo_data(
                     observation.price_local,
                     observation.in_stock,
                     observation.source_url,
+                    observation.advertised_reference_price,
                 )
                 for observation in dataset.observations
             ],

@@ -32,7 +32,7 @@ def build_windows_from_series(series, window_size=20, step=1):
 async def fetch_price_series(database_url: str):
     conn = await asyncpg.connect(database_url)
     query = (
-        "SELECT sku, store_id, price_egp, extract(epoch from time) as ts "
+        "SELECT sku, store_id, price_local, extract(epoch from time) as ts "
         "FROM price_history ORDER BY sku, store_id, time"
     )
     rows = await conn.fetch(query)
@@ -41,7 +41,7 @@ async def fetch_price_series(database_url: str):
     groups = {}
     for r in rows:
         key = f"{r['sku']}|{r['store_id']}"
-        groups.setdefault(key, []).append(float(r['price_egp']))
+        groups.setdefault(key, []).append(float(r["price_local"]))
     return groups
 
 

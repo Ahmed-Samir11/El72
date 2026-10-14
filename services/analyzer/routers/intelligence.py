@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Dict, List, Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, validator
 
 from services.analyzer.b2b_analytics import (
@@ -14,6 +14,7 @@ from services.analyzer.b2b_analytics import (
 )
 from services.analyzer.cross_store import compare_store_prices
 from services.analyzer.deal_scorer import score_deal
+from services.analyzer.discount_service import analyze_discount_for_sku
 from services.analyzer.fake_discount import detect_fake_discount
 from services.analyzer.platform_metrics import platform_metrics
 
@@ -104,6 +105,34 @@ async def deal_score(request: DealScoreRequest):
 @router.post("/intelligence/fake-discount")
 async def fake_discount(request: FakeDiscountRequest):
     return detect_fake_discount(**request.dict())
+
+
+@router.get("/intelligence/fake-discount/{sku}")
+async def fake_discount_for_sku(
+    sku: str, request: Request, store_id: Optional[str] = None
+):
+    """DB-backed fake-discount verdict for a product.
+
+    Loads the 90-day price history for ``sku`` (optionally scoped to one
+    ``store_id``) and runs the detector. Returns ``status:
+    "insufficient_history"`` (not an error) when there isn't enough data yet.
+    """
+    ts_pool = getattr(request.app.state, "ts_pool", None)
+    if ts_pool is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Price history store is not available.",
+        )
+    try:
+        async with ts_pool.acquire() as conn:
+            return await analyze_discount_for_sku(conn, sku, store_id)
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001 - surface a clean 500, not a stack trace
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to analyze discount for {sku}: {exc}",
+        ) from exc
 
 
 @router.post("/intelligence/cross-store/{product_id}")

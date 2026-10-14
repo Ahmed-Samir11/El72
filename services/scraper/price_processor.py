@@ -108,6 +108,7 @@ class PriceProcessor:
                         result.currency,
                         result.in_stock,
                         result.image_url,
+                        result.original_price,
                     )
 
             # Recalculate lowest price across stores
@@ -213,6 +214,7 @@ class PriceProcessor:
         currency: str,
         in_stock: bool,
         image_url: Optional[str] = None,
+        original_price: Optional[float] = None,
     ):
         """Insert an observed price into the TimescaleDB price_history table.
 
@@ -222,20 +224,32 @@ class PriceProcessor:
         query = """
             INSERT INTO price_history (
                 time, sku, store_id, price_usd, price_local,
-                currency, in_stock, image_url
+                currency, in_stock, image_url, advertised_price
             )
-            VALUES (NOW(), $1, $2, $3, $4, $5, $6, $7)
+            VALUES (NOW(), $1, $2, $3, $4, $5, $6, $7, $8)
             ON CONFLICT (time, sku, store_id) DO NOTHING
         """
+        # price_local is the EGP-equivalent price (the schema's local-currency
+        # column); convert from USD when the source currency is not EGP.
+        local_price = (
+            price_local
+            if currency == "EGP"
+            else price_usd / EXCHANGE_RATES.get("EGP", 0.032)
+        )
+        advertised = (
+            float(original_price) if original_price not in (None, 0, 0.0) else None
+        )
+
         await conn.execute(
             query,
             sku,
             store_id,
             price_usd,
-            price_local,
+            local_price,
             currency,
             in_stock,
             image_url,
+            advertised,
         )
 
     async def _update_lowest_price(
