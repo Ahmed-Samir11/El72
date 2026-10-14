@@ -197,5 +197,12 @@ BEGIN
         CREATE INDEX IF NOT EXISTS idx_cash_payments_user_id
             ON public.cash_payments(user_id);
     END IF;
+
+    IF EXISTS (
+        SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'payment_audit_log'
+    ) THEN
+        CREATE INDEX IF NOT EXISTS idx_payment_audit_log_target_user_id
+            ON public.payment_audit_log(target_user_id);
+    END IF;
 END
 $$;

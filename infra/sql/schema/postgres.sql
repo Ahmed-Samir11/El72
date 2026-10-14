@@ -294,6 +294,7 @@ CREATE TABLE IF NOT EXISTS payment_audit_log (
 );
 
 CREATE INDEX IF NOT EXISTS idx_payment_audit_log_order_ref ON payment_audit_log(order_ref);
+CREATE INDEX IF NOT EXISTS idx_payment_audit_log_target_user_id ON payment_audit_log(target_user_id);
 
 -- DB-level append-only enforcement: no UPDATE or DELETE on the audit log,
 -- independent of application code.
