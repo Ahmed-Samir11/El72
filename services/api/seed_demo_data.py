@@ -184,6 +184,7 @@ CREATE TABLE IF NOT EXISTS price_history (
     in_stock BOOLEAN NOT NULL DEFAULT TRUE,
     source_url TEXT,
     image_url TEXT,
+    advertised_price NUMERIC(10, 2),
     PRIMARY KEY (time, sku, store_id)
 )
 """

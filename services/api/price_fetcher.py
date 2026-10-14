@@ -69,6 +69,7 @@ class FetchedPrice:
     title: Optional[str] = None
     image_url: Optional[str] = None
     in_stock: bool = True
+    original_price: Optional[float] = None
 
 
 @dataclass
@@ -522,6 +523,44 @@ def _jsonld_offer_price(
     return price, currency, title, image_url
 
 
+def _extract_original_price(html: str) -> Optional[float]:
+    """Best-effort extraction of the advertised "was" (strikethrough) price.
+
+    Looks for strikethrough markup (``<del>`` / ``<s>``), the standard way
+    stores render a discounted "was" price. Returns the original price as a
+    float, or ``None`` when no plausible "was" price is present. Only values
+    strictly greater than the current selling price (when it can be
+    determined) are accepted, so a stray number is never mistaken for a
+    discount.
+    """
+    current: Optional[float] = None
+    objs = _parse_jsonld(html)
+    prod = _jsonld_product(html, objs)
+    if prod is not None:
+        current, _currency, _title, _image = _jsonld_offer_price(prod)
+
+    original: Optional[float] = None
+    for tag in ("del", "s"):
+        for m in re.finditer(
+            rf"<{tag}[^>]*>(.*?)</{tag}>", html, re.IGNORECASE | re.DOTALL
+        ):
+            inner = re.sub(r"<[^>]+>", " ", m.group(1))
+            num = re.search(r"(\d+(?:,\d{3})*(?:\.\d{1,2})?)", inner)
+            if num:
+                original = _parse_amount(num.group(1))
+                if original is not None:
+                    break
+        if original is not None:
+            break
+
+    if original is None:
+        return None
+    # A "was" price must be higher than the current selling price.
+    if current is not None and original <= current:
+        return None
+    return original
+
+
 def _extract_from_html(
     html: str, page_url: str = ""
 ) -> Optional[tuple[float, str, Optional[str], Optional[str]]]:
@@ -907,13 +946,16 @@ def _fetch_price_unlocked(url: str) -> FetchResult:
         )
 
     price, currency, title, image_url = found
+    original_price = _extract_original_price(html)
     logger.info(
-        "Price fetch succeeded for %s: price=%s %s, title=%s, image_url=%s",
+        "Price fetch succeeded for %s: price=%s %s, title=%s, image_url=%s, "
+        "original_price=%s",
         url,
         price,
         currency,
         title,
         image_url,
+        original_price,
     )
     return FetchResult(
         FETCH_OK,
@@ -923,6 +965,7 @@ def _fetch_price_unlocked(url: str) -> FetchResult:
             currency=currency,
             title=title,
             image_url=image_url,
+            original_price=original_price,
         ),
     )
 

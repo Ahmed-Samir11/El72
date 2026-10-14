@@ -31,6 +31,7 @@ class ScrapeResult:
         timestamp: Optional[datetime] = None,
         title: Optional[str] = None,
         image_url: Optional[str] = None,
+        original_price: Optional[float] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ):
         self.store = store
@@ -42,6 +43,7 @@ class ScrapeResult:
         self.timestamp = timestamp or datetime.utcnow()
         self.title = title
         self.image_url = image_url
+        self.original_price = original_price
         self.metadata = metadata or {}
 
     def to_dict(self) -> Dict[str, Any]:
@@ -56,6 +58,7 @@ class ScrapeResult:
             "timestamp": self.timestamp.isoformat(),
             "title": self.title,
             "image_url": self.image_url,
+            "original_price": self.original_price,
             "metadata": self.metadata,
         }
 
@@ -112,6 +115,14 @@ class BaseScraper(ABC):
 
     async def extract_image_url(self, page: Page) -> Optional[str]:
         """Extract product image URL (optional)."""
+        return None
+
+    async def extract_original_price(self, page: Page) -> Optional[float]:
+        """Extract the advertised "was" (strikethrough) price (optional).
+
+        Returns the original price as a float, or None if not shown. Stores
+        should override this with store-specific selectors.
+        """
         return None
 
     async def search_product(self, page: Page, product_name: str) -> Optional[str]:
@@ -183,10 +194,26 @@ class BaseScraper(ABC):
             in_stock = await self.extract_stock_status(page)
             title = await self.extract_title(page)
             image_url = await self.extract_image_url(page)
+            original_price = await self.extract_original_price(page)
 
             if price is None:
                 logger.warning(f"Failed to extract price from {actual_url}")
                 return None
+
+            # A strikethrough "was" price must be at least the current price;
+            # a smaller (or non-positive) value is a parsing artifact (wrong
+            # <del> node, currency symbol misread) and is dropped rather than
+            # stored (review findings: original price extraction is not
+            # validated against the current price).
+            if original_price is not None and original_price < price:
+                logger.debug(
+                    "Dropping implausible original_price %.2f < current %.2f "
+                    "from %s",
+                    original_price,
+                    price,
+                    actual_url,
+                )
+                original_price = None
 
             return ScrapeResult(
                 store=self.store_id,
@@ -197,6 +224,7 @@ class BaseScraper(ABC):
                 url=actual_url,
                 title=title,
                 image_url=image_url,
+                original_price=original_price,
             )
 
         except PlaywrightError as e:

@@ -14,11 +14,15 @@ from typing import Sequence
 
 import asyncpg
 
+from services.common.currency import EGP_TO_USD as _EGP_TO_USD_FLOAT
+
 DEMO_PREFIX = "demo-el72-"
 DEFAULT_SEED = 7242
 DEFAULT_START_DATE = date(2025, 9, 1)
 DEFAULT_DAYS = 90
-EGP_TO_USD = Decimal("0.032")
+# Decimal form of the shared rate (services/common/currency.py) for exact
+# seeding arithmetic.
+EGP_TO_USD = Decimal(str(_EGP_TO_USD_FLOAT))
 STORES = ("amazon_eg", "noon", "jumia_eg", "btech_eg")
 STORE_MULTIPLIERS = {
     "amazon_eg": Decimal("1.00"),
@@ -400,11 +404,12 @@ async def insert_demo_data(
 
         await history_conn.executemany(
             "INSERT INTO price_history (time, sku, store_id, price_usd, "
-            "price_local, currency, in_stock, source_url) VALUES ($1, $2, $3, "
-            "$4, $5, 'EGP', $6, $7) ON CONFLICT (time, sku, store_id) DO UPDATE "
+            "price_local, currency, in_stock, source_url, advertised_price) "
+            "VALUES ($1, $2, $3, $4, $5, 'EGP', $6, $7, $8) "
+            "ON CONFLICT (time, sku, store_id) DO UPDATE "
             "SET price_usd = EXCLUDED.price_usd, price_local = EXCLUDED."
             "price_local, in_stock = EXCLUDED.in_stock, source_url = "
-            "EXCLUDED.source_url",
+            "EXCLUDED.source_url, advertised_price = EXCLUDED.advertised_price",
             [
                 (
                     observation.timestamp,
@@ -414,6 +419,7 @@ async def insert_demo_data(
                     observation.price_local,
                     observation.in_stock,
                     observation.source_url,
+                    observation.advertised_reference_price,
                 )
                 for observation in dataset.observations
             ],
