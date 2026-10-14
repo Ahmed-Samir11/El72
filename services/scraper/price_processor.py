@@ -255,10 +255,12 @@ class PriceProcessor:
         except Exception as exc:
             # Only fall back when the failure is the missing advertised_price
             # column (pre-migration schemas); re-raise anything else so real
-            # insert failures are not masked. asyncpg raises
-            # UndefinedColumnError; the message check is a defensive backstop.
-            if type(exc).__name__ != "UndefinedColumnError" and (
-                "advertised_price" not in str(exc)
+            # insert failures are never masked. This pool is asyncpg, so
+            # check the precise exception type; the class-name check covers
+            # drivers that re-wrap the DBAPI error under the same name.
+            if not (
+                isinstance(exc, asyncpg.exceptions.UndefinedColumnError)
+                or type(exc).__name__ == "UndefinedColumnError"
             ):
                 raise
             logger.warning(

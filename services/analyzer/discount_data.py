@@ -88,15 +88,26 @@ def build_discount_inputs(
         except (TypeError, ValueError, KeyError):
             return None
 
-    # Drop rows outside the window or without a usable price (a NULL or
-    # invalid price_local must not 500 the endpoint).
-    focus = [
-        r
-        for r in rows
-        if r["time"] >= history_cutoff
-        and (store_id is None or r.get("store_id") == store_id)
-        and _price(r) is not None
-    ]
+    # Single pass over the rows: collect the focus rows (in-window, target
+    # store or all stores, usable price) and, when a target store is given,
+    # the most recent usable price from each *other* store. rows are
+    # time-ascending, so the last seen per store is its latest. This avoids
+    # a second full scan of the (potentially large) row list.
+    focus = []
+    latest_by_store: dict = {}
+    for r in rows:
+        if r["time"] < history_cutoff:
+            continue
+        p = _price(r)
+        if p is None:
+            # A NULL/invalid price_local must not 500 the endpoint; just
+            # skip the row from both the baseline and the competitor map.
+            continue
+        sid = r.get("store_id")
+        if store_id is None or sid == store_id:
+            focus.append(r)
+        if store_id is not None and sid is not None and sid != store_id:
+            latest_by_store[sid] = p
 
     historical_prices = [_price(r) for r in focus]
     recent_rows = [r for r in focus if r["time"] >= recent_cutoff]
@@ -121,22 +132,10 @@ def build_discount_inputs(
             advertised_reference_price = adv
             break
 
-    # Competitor prices: the most recent usable price from each *other* store.
-    competitor_prices: List[float] = []
-    if store_id is not None:
-        latest_by_store: dict = {}
-        for r in rows:
-            if r["time"] < history_cutoff:
-                continue
-            sid = r.get("store_id")
-            if sid is None or sid == store_id:
-                continue
-            p = _price(r)
-            if p is None:
-                continue
-            # rows are time-ascending, so the last seen per store is latest.
-            latest_by_store[sid] = p
-        competitor_prices = list(latest_by_store.values())
+    # Competitor prices: the most recent usable price from each other store.
+    competitor_prices: List[float] = (
+        list(latest_by_store.values()) if store_id is not None else []
+    )
 
     point_count = len(historical_prices)
     status = "ok" if point_count >= min_points else "insufficient_history"

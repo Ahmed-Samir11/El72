@@ -15,6 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from services.analyzer.app import app
+from services.analyzer.routers.intelligence import clear_fake_discount_cache
 
 
 def _now():
@@ -51,6 +52,18 @@ class _FakePool:
         return _AcquireCtx(self._rows)
 
 
+class _CountingPool(_FakePool):
+    """Fake pool that counts acquire() calls (verifies cache hits)."""
+
+    def __init__(self, rows):
+        super().__init__(rows)
+        self.acquire_calls = 0
+
+    def acquire(self):
+        self.acquire_calls += 1
+        return _AcquireCtx(self._rows)
+
+
 def _rows(prices, store_id="amazon_eg", advertised=None):
     now = _now()
     rows = []
@@ -73,6 +86,15 @@ def client():
     # Deliberately NOT a context manager: that would fire the startup event,
     # which creates real Redis/Postgres pools. We inject a fake pool instead.
     return TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def _clear_fake_discount_cache():
+    # Each test installs a different fake pool for the same SKUs; drop the
+    # endpoint's in-process cache so verdicts are never served stale.
+    clear_fake_discount_cache()
+    yield
+    clear_fake_discount_cache()
 
 
 @pytest.fixture()
@@ -143,6 +165,8 @@ def test_fake_discount_endpoint_store_scope(client, with_pool):
     rows = _rows([1200] * 15, store_id="amazon_eg") + _rows(
         [1150] * 15, store_id="noon"
     )
+    # The loader returns rows ORDER BY time; keep the fixture consistent.
+    rows = sorted(rows, key=lambda r: r["time"])
     previous = install(rows)
     try:
         response = client.get(
@@ -167,3 +191,27 @@ def test_fake_discount_endpoint_503_when_pool_missing(client):
     finally:
         if previous is not None:
             app.state.ts_pool = previous
+
+
+def test_fake_discount_endpoint_caches_verdict_within_ttl(client, with_pool):
+    # The endpoint caches successful verdicts for a short TTL (review
+    # finding: every request hit the DB). A second identical request must
+    # not acquire a new connection.
+    from services.analyzer.routers import intelligence
+
+    rows = _rows([1200] * 19 + [1180], advertised=1800)
+    pool = _CountingPool(rows)
+    previous = getattr(app.state, "ts_pool", None)
+    app.state.ts_pool = pool
+    try:
+        first = client.get("/intelligence/fake-discount/sku-1").json()
+        second = client.get("/intelligence/fake-discount/sku-1").json()
+        assert first == second
+        assert pool.acquire_calls == 1  # second call served from cache
+    finally:
+        if previous is None:
+            if hasattr(app.state, "ts_pool"):
+                del app.state.ts_pool
+        else:
+            app.state.ts_pool = previous
+        intelligence._fake_discount_cache.clear()

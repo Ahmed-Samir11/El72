@@ -17,14 +17,10 @@ from services.analyzer.analytics import record_deal_evaluation, record_price_obs
 from services.analyzer.intent_upsert import upsert_retailer_analytics_batch
 from services.analyzer.routers.intelligence import router as intelligence_router
 from services.analyzer.settings import AnalyzerSettings
+from services.common.currency import EGP_TO_USD, EXCHANGE_RATES
 from services.common.redis_client import RedisStreamClient
 
 settings = AnalyzerSettings()
-
-# 1 EGP = 0.032 USD (approximate). Shared with the scraper via
-# services/common/currency.py. Used to populate the NOT NULL price_usd
-# column from the EGP ingest price when no explicit USD price is supplied.
-from services.common.currency import EGP_TO_USD  # noqa: E402
 
 # Structured JSON logging
 trace_id_var: contextvars.ContextVar = contextvars.ContextVar("trace_id", default=None)
@@ -407,19 +403,35 @@ async def insert_price_history(conn: asyncpg.Connection, event: Dict[str, Any]) 
     - `event`: mapping with keys `timestamp`, `sku`, `store`, `price`,
       `in_stock`, and optionally `original_price` (the advertised "was"
       price; 0/None means no advertised price). Optional `price_usd` /
-      `price_local` override the EGP-assumed conversion when the producer
-      knows both values.
+      `price_local` override the conversion when the producer knows both
+      values. Without explicit values the ingest price is taken as the
+      event's `currency` (default EGP) and `price_usd` is derived via the
+      shared rate table.
     """
     original_price = event.get("original_price")
     advertised = float(original_price) if original_price not in (None, 0, 0.0) else None
     # Honor explicit USD/local fields when the producer supplies them;
-    # otherwise the ingest price is local currency (EGP).
+    # otherwise the ingest price is in the event's currency (EGP by default
+    # for this platform) and is converted with the shared rate table.
     price_local = float(event.get("price_local", event.get("price")))
     if event.get("price_usd") is not None:
         price_usd = float(event["price_usd"])
     else:
-        # price_usd is NOT NULL in the schema; derive it from the EGP price.
-        price_usd = round(price_local * EGP_TO_USD, 4)
+        # price_usd is NOT NULL in the schema; derive it from the local
+        # price. Use the event's currency when provided so non-EGP sources
+        # are not silently converted at the EGP rate; unknown currencies
+        # fall back to EGP (documented platform default).
+        currency = (event.get("currency") or "EGP").upper()
+        rate = EXCHANGE_RATES.get(currency, EGP_TO_USD)
+        if currency not in EXCHANGE_RATES:
+            logger.warning(
+                "No exchange rate for currency %r; assuming EGP to derive "
+                "price_usd (sku=%s store=%s)",
+                currency,
+                event.get("sku"),
+                event.get("store"),
+            )
+        price_usd = round(price_local * rate, 4)
     try:
         await conn.execute(
             """
@@ -438,15 +450,17 @@ async def insert_price_history(conn: asyncpg.Connection, event: Dict[str, Any]) 
         )
     except Exception as exc:
         # Only fall back when the failure is the missing advertised_price
-        # column (older schemas); re-raise anything else so real insert
-        # failures (connection drops, constraint violations) are not masked.
-        # asyncpg raises UndefinedColumnError; the message check is a
-        # defensive backstop for drivers that report it differently.
-        if type(exc).__name__ != "UndefinedColumnError" and (
-            "advertised_price" not in str(exc)
+        # column (pre-migration schemas); re-raise anything else so real
+        # insert failures (connection drops, constraint violations) are
+        # never masked. This pool is asyncpg, so check the precise
+        # exception type; the class-name check covers drivers that re-wrap
+        # the DBAPI error under the same name.
+        if not (
+            isinstance(exc, asyncpg.exceptions.UndefinedColumnError)
+            or type(exc).__name__ == "UndefinedColumnError"
         ):
             raise
-        # Log the original error (not the client) so a masked schema gap is
+        # Log the original error (not the client) so the schema gap is
         # visible in the ingest path, then fall back: still record the price
         # row rather than losing it (keeps the ingest path alive).
         logger.warning(
