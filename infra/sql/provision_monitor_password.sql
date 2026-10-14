@@ -1,18 +1,25 @@
 -- Set the password for the restricted el72_monitor role.
 --
 -- Run once PER DATABASE (the operational Postgres database AND the
--- TimescaleDB database each have their own role), e.g.:
---   PGPASSWORD='<app password>' psql "$DATABASE_URL" \
---       -v monitor_password='<generated>' -f infra/sql/provision_monitor_password.sql
---   PGPASSWORD='<app password>' psql "$TIMESCALE_URL" \
---       -v monitor_password='<generated>' -f infra/sql/provision_monitor_password.sql
+-- TimescaleDB database each have their own role). Pass the secret through
+-- the environment, NOT through psql arguments or -v variables: command-line
+-- arguments are visible to other users via the process list, whereas an
+-- environment variable is not.
+--
+--   PGPASSWORD='<app password>' MONITOR_PASSWORD='<generated>' \
+--       psql "$DATABASE_URL" -f infra/sql/provision_monitor_password.sql
+--   PGPASSWORD='<app password>' MONITOR_PASSWORD='<generated>' \
+--       psql "$TIMESCALE_URL" -f infra/sql/provision_monitor_password.sql
 --
 -- The same password may be used for both databases (it is the value of
 -- DB_MONITOR_PASSWORD in .env).
 --
--- Input validation: psql refuses to run if the variable is unset or empty
--- (undefined/empty :variables error out under -v), and the DO block below
--- rejects short passwords. The variable is quoted as a SQL literal by psql.
+-- Safety: if MONITOR_PASSWORD is unset, env() makes psql abort before any
+-- statement runs; the DO block below additionally rejects short passwords.
+-- The secret is read from the environment into a psql client variable, then
+-- interpolated with :'monitor_password' — it never appears in psql argv.
+\set monitor_password `env('MONITOR_PASSWORD')`
+
 DO $$
 BEGIN
     IF length(:'monitor_password') < 8 THEN

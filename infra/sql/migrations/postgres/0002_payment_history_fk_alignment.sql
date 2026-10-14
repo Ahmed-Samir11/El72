@@ -1,4 +1,35 @@
-BEGIN;
+-- Run under a single transaction (scripts/db-bootstrap.sh applies this file
+-- with psql --single-transaction). Do NOT add explicit BEGIN/COMMIT here:
+-- an inner COMMIT would end the wrapper transaction early and break
+-- file-level atomicity.
+
+-- Precondition guard: fail with an actionable error instead of an opaque
+-- column-type mismatch deeper in the migration.
+DO $$
+DECLARE
+    id_type text;
+BEGIN
+    SELECT format_type(att.atttypid, att.atttypmod)
+    INTO id_type
+    FROM pg_attribute att
+    JOIN pg_class c ON c.oid = att.attrelid
+    WHERE c.relname = 'users'
+      AND c.relnamespace = 'public'::regnamespace
+      AND att.attname = 'id';
+
+    IF id_type IS NULL THEN
+        RAISE EXCEPTION
+            'table public.users not found; apply the canonical schema '
+            '(infra/sql/schema/postgres.sql) before this migration';
+    ELSIF id_type = 'uuid' THEN
+        RAISE EXCEPTION
+            'users.id is UUID; this migration requires the reconciled '
+            'INTEGER users.id (see the header of '
+            'infra/sql/schema/postgres.sql). Rebuild the database from a '
+            'dump with an id remap first.';
+    END IF;
+END
+$$;
 
 -- Fallback table definitions for databases where the canonical schema
 -- (infra/sql/schema/postgres.sql) was never applied. On a canonical fresh
@@ -168,5 +199,3 @@ BEGIN
     END IF;
 END
 $$;
-
-COMMIT;

@@ -29,7 +29,9 @@ BEGIN
 END
 $$;
 
--- Add the user status constraint only when it is absent.
+-- Add the user status constraint only when it is absent; validate in the
+-- same block so an already-present (already-valid) constraint is never
+-- re-validated on every run.
 DO $$
 BEGIN
     IF NOT EXISTS (
@@ -38,16 +40,23 @@ BEGIN
         WHERE conrelid = 'public.users'::regclass
           AND conname = 'users_status_check'
     ) THEN
+        -- NOT VALID so the ADD does not take a heavyweight scan lock; the
+        -- data is normalized above, so the subsequent VALIDATE succeeds.
         ALTER TABLE public.users
             ADD CONSTRAINT users_status_check
             CHECK (status IN ('ACTIVE', 'DELETED')) NOT VALID;
+        ALTER TABLE public.users
+            VALIDATE CONSTRAINT users_status_check;
     END IF;
 END
 $$;
 
--- Validate existing data before relying on the constraint.
-ALTER TABLE public.users
-    VALIDATE CONSTRAINT users_status_check;
+-- The canonical schema declares alerts.active_status NOT NULL DEFAULT TRUE.
+-- Repair any legacy NULLs so the column can be trusted (and so a later
+-- NOT NULL backfill would not fail).
+UPDATE public.alerts
+    SET active_status = TRUE
+    WHERE active_status IS NULL;
 
 CREATE INDEX IF NOT EXISTS idx_users_status
     ON public.users(status);

@@ -184,6 +184,9 @@ services:
   postgres-exporter:
     image: prometheuscommunity/postgres-exporter:v0.17.1
     restart: unless-stopped
+    # No healthcheck: the exporter image is distroless (no shell/wget).
+    # Startup ordering is handled by the DB healthcheck dependency below,
+    # and Prometheus skips a target that is not yet answering.
     depends_on:
       postgres:
         condition: service_healthy
