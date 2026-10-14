@@ -13,6 +13,9 @@ CREATE TABLE IF NOT EXISTS price_history (
     in_stock BOOLEAN DEFAULT TRUE,
     source_url TEXT,
     image_url TEXT,
+    -- Advertised "was" (strikethrough) price shown on the product page, if
+    -- any. Nullable: most observations have no advertised price.
+    advertised_price NUMERIC(10, 2),
     PRIMARY KEY (time, sku, store_id)
 );
 
@@ -22,6 +25,11 @@ WHERE NOT EXISTS (
     SELECT 1 FROM timescaledb_information.hypertables 
     WHERE hypertable_name = 'price_history'
 );
+
+-- Per-SKU time-window access pattern (fake-discount detector):
+-- WHERE sku = $1 AND time >= $2 ORDER BY time.
+CREATE INDEX IF NOT EXISTS idx_price_history_sku_time
+    ON price_history (sku, time);
 CREATE SCHEMA IF NOT EXISTS analytics;
 
 CREATE TABLE IF NOT EXISTS analytics.dim_product (

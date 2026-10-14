@@ -52,7 +52,11 @@ def _build_summary(inputs: DiscountInputs, detection: Dict[str, Any]) -> str:
         return "Insufficient price data to assess this discount."
 
     # Range of "how far below normal" across the 30d and 90d medians.
-    below = [
+    # "How far below normal" across the 30d and 90d medians. Only positive
+    # values mean "below"; a non-positive gap means the current price is at
+    # or above normal, which needs its own wording (review finding: the
+    # summary could render nonsensical negative percentages).
+    below_all = [
         p
         for p in (
             _pct_below(inputs.median_30d, current),
@@ -60,12 +64,20 @@ def _build_summary(inputs: DiscountInputs, detection: Dict[str, Any]) -> str:
         )
         if p is not None
     ]
+    below = [p for p in below_all if p > 0]
+    at_or_above = bool(below_all) and not below
     below_lo = min(below) if below else None
     below_hi = max(below) if below else None
 
     typical = f"~{low:,.0f}–{high:,.0f}" if low != high else f"~{low:,.0f}"
 
     if detection.get("is_suspicious"):
+        if at_or_above:
+            return (
+                f"The product has typically sold for {typical}. The current "
+                f"{current:,.0f} price is at or above its normal price, "
+                "which is not a real deal."
+            )
         if below_lo is not None and below_hi is not None:
             spread = (
                 f"only ~{below_lo:.0f}–{below_hi:.0f}% below its normal price"

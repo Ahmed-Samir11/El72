@@ -16,7 +16,12 @@ from fastapi.testclient import TestClient
 
 from services.analyzer.app import app
 
-NOW = datetime(2025, 9, 1, tzinfo=timezone.utc)
+
+def _now():
+    # Rows must be relative to the real clock: load_discount_inputs windows
+    # the history against datetime.now(utc), and build_discount_inputs
+    # defensively re-filters against that same cutoff.
+    return datetime.now(timezone.utc)
 
 
 class _FakeConn:
@@ -47,13 +52,14 @@ class _FakePool:
 
 
 def _rows(prices, store_id="amazon_eg", advertised=None):
+    now = _now()
     rows = []
     n = len(prices)
     for i, price in enumerate(prices):
         days_ago = 90 - i * (90 // max(n - 1, 1))
         rows.append(
             {
-                "time": NOW - timedelta(days=days_ago),
+                "time": now - timedelta(days=days_ago),
                 "store_id": store_id,
                 "price_local": price,
                 "advertised_price": advertised,

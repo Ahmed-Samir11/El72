@@ -221,6 +221,14 @@ class PriceProcessor:
             VALUES (NOW(), $1, $2, $3, $4, $5, $6, $7, $8)
             ON CONFLICT (time, sku, store_id) DO NOTHING
         """
+        fallback_query = """
+            INSERT INTO price_history (
+                time, sku, store_id, price_usd, price_local,
+                currency, in_stock, image_url
+            )
+            VALUES (NOW(), $1, $2, $3, $4, $5, $6, $7)
+            ON CONFLICT (time, sku, store_id) DO NOTHING
+        """
         # price_local is the EGP-equivalent price (the schema's local-currency
         # column); convert from USD when the source currency is not EGP.
         local_price = (
@@ -232,17 +240,44 @@ class PriceProcessor:
             float(original_price) if original_price not in (None, 0, 0.0) else None
         )
 
-        await conn.execute(
-            query,
-            sku,
-            store_id,
-            price_usd,
-            local_price,
-            currency,
-            in_stock,
-            image_url,
-            advertised,
-        )
+        try:
+            await conn.execute(
+                query,
+                sku,
+                store_id,
+                price_usd,
+                local_price,
+                currency,
+                in_stock,
+                image_url,
+                advertised,
+            )
+        except Exception as exc:
+            # Only fall back when the failure is the missing advertised_price
+            # column (pre-migration schemas); re-raise anything else so real
+            # insert failures are not masked. asyncpg raises
+            # UndefinedColumnError; the message check is a defensive backstop.
+            if type(exc).__name__ != "UndefinedColumnError" and (
+                "advertised_price" not in str(exc)
+            ):
+                raise
+            logger.warning(
+                "price_history missing advertised_price column; inserting "
+                "without it (sku=%s store=%s): %s",
+                sku,
+                store_id,
+                exc,
+            )
+            await conn.execute(
+                fallback_query,
+                sku,
+                store_id,
+                price_usd,
+                local_price,
+                currency,
+                in_stock,
+                image_url,
+            )
 
     async def _update_lowest_price(
         self, conn: asyncpg.Connection, tracked_item_id: int, current_url: str

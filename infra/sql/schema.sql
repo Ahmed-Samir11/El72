@@ -436,6 +436,7 @@ CREATE INDEX IF NOT EXISTS idx_current_prices_last_updated ON current_prices(las
 
 CREATE INDEX IF NOT EXISTS idx_price_history_sku ON price_history(sku);
 CREATE INDEX IF NOT EXISTS idx_price_history_store_id ON price_history(store_id);
+CREATE INDEX IF NOT EXISTS idx_price_history_sku_time ON price_history(sku, time);
 
 CREATE INDEX IF NOT EXISTS idx_payment_logs_user_id ON payment_logs(user_id);
 CREATE INDEX IF NOT EXISTS idx_payment_logs_status ON payment_logs(status);

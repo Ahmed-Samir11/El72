@@ -440,10 +440,22 @@ async def insert_price_history(conn: asyncpg.Connection, event: Dict[str, Any]) 
         # Only fall back when the failure is the missing advertised_price
         # column (older schemas); re-raise anything else so real insert
         # failures (connection drops, constraint violations) are not masked.
-        if "advertised_price" not in str(exc):
+        # asyncpg raises UndefinedColumnError; the message check is a
+        # defensive backstop for drivers that report it differently.
+        if type(exc).__name__ != "UndefinedColumnError" and (
+            "advertised_price" not in str(exc)
+        ):
             raise
-        # Fallback for DBs without the advertised_price column: still record
-        # the price row rather than losing it (keeps the ingest path alive).
+        # Log the original error (not the client) so a masked schema gap is
+        # visible in the ingest path, then fall back: still record the price
+        # row rather than losing it (keeps the ingest path alive).
+        logger.warning(
+            "price_history missing advertised_price column; inserting "
+            "without it (sku=%s store=%s): %s",
+            event.get("sku"),
+            event.get("store"),
+            exc,
+        )
         await conn.execute(
             """
             INSERT INTO price_history

@@ -60,10 +60,37 @@ def test_build_inputs_extracts_latest_advertised_reference():
     assert inputs.advertised_reference_price == 1800
 
 
+def test_build_inputs_skips_rows_without_usable_price():
+    # NULL / invalid price_local rows must be skipped, not raise (review
+    # finding: null or invalid price_local values cause a 500 response).
+    prices = [1200] * 16
+    rows = _rows(prices)
+    rows[3]["price_local"] = None
+    rows[5]["price_local"] = "not-a-number"
+    inputs = build_discount_inputs(rows, "sku-1", now=NOW)
+    assert inputs.status == "ok"
+    assert inputs.point_count == 14  # 16 - 2 unusable rows
+
+
+def test_build_inputs_ignores_invalid_advertised_reference():
+    # Non-positive / malformed advertised prices are skipped (review finding:
+    # advertised reference price is not validated).
+    prices = [1200] * 15
+    rows = _rows(prices, advertised=None)
+    rows[-1]["advertised_price"] = -50
+    rows[-2]["advertised_price"] = "garbage"
+    rows[-3]["advertised_price"] = 1800
+    inputs = build_discount_inputs(rows, "sku-1", now=NOW)
+    assert inputs.advertised_reference_price == 1800
+
+
 def test_build_inputs_scopes_to_store_and_collects_competitors():
     # Target store amazon_eg at 1200; competitor noon at 1150.
     rows = _rows([1200] * 15, store_id="amazon_eg")
     rows += _rows([1150] * 15, store_id="noon")
+    # Interleaved stores must be globally time-ordered (the loader returns
+    # rows ORDER BY time; build_discount_inputs relies on that).
+    rows = sorted(rows, key=lambda r: r["time"])
     inputs = build_discount_inputs(rows, "sku-1", store_id="amazon_eg", now=NOW)
     assert inputs.current_price == 1200
     assert inputs.competitor_prices == [1150]
@@ -115,6 +142,30 @@ def test_analyze_discount_genuine_discount_not_flagged():
     assert result["is_suspicious"] is False
     assert result["confidence"] == 0.0
     assert "genuine discount" in result["summary"]
+
+
+def test_analyze_discount_price_above_normal_not_nonsensical():
+    # Current price above both medians: the summary must not render a
+    # negative "below normal" percentage (review finding: summary can
+    # produce nonsensical negative 'below normal' text).
+    inputs = DiscountInputs(
+        sku="sku-1",
+        store_id="amazon_eg",
+        status="ok",
+        current_price=1400,
+        historical_prices=[1200] * 20,
+        median_30d=1200,
+        median_90d=1200,
+        historical_low=1180,
+        advertised_reference_price=1800,
+        competitor_prices=[],
+        recent_prices=[1200, 1400],
+        point_count=20,
+    )
+    result = analyze_discount(inputs)
+    assert result["is_suspicious"] is True
+    assert "at or above its normal price" in result["summary"]
+    assert "-%" not in result["summary"]
 
 
 def test_analyze_discount_insufficient_history_short_circuits():

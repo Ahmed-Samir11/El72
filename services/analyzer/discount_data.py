@@ -25,10 +25,12 @@ DEFAULT_MIN_POINTS = 14
 DEFAULT_HISTORY_DAYS = 90
 DEFAULT_RECENT_DAYS = 30
 
-# Hard cap on rows pulled for one SKU in the window (review finding: the
-# 90-day window loaded all rows into Python without a cap). A heavily
-# scraped SKU can accumulate more observations than a baseline needs;
-# the most recent rows are the ones that matter.
+# Hard cap on rows pulled per store for one SKU in the window (review
+# finding: the 90-day window loaded all rows into Python without a cap).
+# A heavily scraped SKU can accumulate more observations than a baseline
+# needs; the most recent rows per store are the ones that matter. Capping
+# per store (not globally) guarantees the target store's own history is
+# never evicted by high-volume competitor stores.
 DEFAULT_MAX_ROWS = 5000
 
 
@@ -75,12 +77,26 @@ def build_discount_inputs(
     """
     now = now or datetime.now(timezone.utc)
     recent_cutoff = now - timedelta(days=recent_days)
+    # history_days gives this function a defined window even when the caller
+    # passes unfiltered rows (the DB query already applies the same cutoff).
+    history_cutoff = now - timedelta(days=history_days)
 
     # Focus rows: the target store when given, otherwise all stores pooled.
-    focus = [r for r in rows if store_id is None or r.get("store_id") == store_id]
+    def _price(r: Mapping[str, Any]) -> Optional[float]:
+        try:
+            return float(r["price_local"])
+        except (TypeError, ValueError, KeyError):
+            return None
 
-    def _price(r: Mapping[str, Any]) -> float:
-        return float(r["price_local"])
+    # Drop rows outside the window or without a usable price (a NULL or
+    # invalid price_local must not 500 the endpoint).
+    focus = [
+        r
+        for r in rows
+        if r["time"] >= history_cutoff
+        and (store_id is None or r.get("store_id") == store_id)
+        and _price(r) is not None
+    ]
 
     historical_prices = [_price(r) for r in focus]
     recent_rows = [r for r in focus if r["time"] >= recent_cutoff]
@@ -91,24 +107,35 @@ def build_discount_inputs(
     median_90d = _median_or_none(historical_prices)
     median_30d = _median_or_none(recent_prices)
 
-    # Latest non-null advertised "was" price in the focus window.
+    # Latest non-null advertised "was" price in the focus window. Only
+    # positive values are plausible (review finding: reference price was not
+    # validated); malformed entries are skipped.
     advertised_reference_price: Optional[float] = None
     for r in reversed(focus):
-        adv = r.get("advertised_price")
-        if adv is not None:
-            advertised_reference_price = float(adv)
+        raw = r.get("advertised_price")
+        try:
+            adv = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if adv > 0:
+            advertised_reference_price = adv
             break
 
-    # Competitor prices: the most recent price from each *other* store.
+    # Competitor prices: the most recent usable price from each *other* store.
     competitor_prices: List[float] = []
     if store_id is not None:
         latest_by_store: dict = {}
         for r in rows:
+            if r["time"] < history_cutoff:
+                continue
             sid = r.get("store_id")
             if sid is None or sid == store_id:
                 continue
+            p = _price(r)
+            if p is None:
+                continue
             # rows are time-ascending, so the last seen per store is latest.
-            latest_by_store[sid] = _price(r)
+            latest_by_store[sid] = p
         competitor_prices = list(latest_by_store.values())
 
     point_count = len(historical_prices)
@@ -145,18 +172,20 @@ async def load_discount_inputs(
 
     ``conn`` is an asyncpg connection (or a mock exposing ``fetch``).
 
-    The window is capped at ``max_rows`` most-recent observations so a
-    heavily scraped SKU cannot blow up memory; the outer query restores
+    The window is capped at ``max_rows`` most-recent observations PER STORE
+    so a heavily scraped SKU cannot blow up memory and a high-volume store
+    cannot evict the target store's history; the outer query restores
     time-ascending order expected by :func:`build_discount_inputs`.
     """
     now = now or datetime.now(timezone.utc)
     cutoff = now - timedelta(days=history_days)
     rows = await conn.fetch(
         "SELECT time, store_id, price_local, advertised_price FROM ("
-        "SELECT time, store_id, price_local, advertised_price "
-        "FROM price_history WHERE sku = $1 AND time >= $2 "
-        "ORDER BY time DESC LIMIT $3"
-        ") recent ORDER BY time",
+        "SELECT time, store_id, price_local, advertised_price,"
+        "       ROW_NUMBER() OVER (PARTITION BY store_id"
+        "                            ORDER BY time DESC) AS rn"
+        "FROM price_history WHERE sku = $1 AND time >= $2"
+        ") recent WHERE rn <= $3 ORDER BY time",
         sku,
         cutoff,
         max_rows,
