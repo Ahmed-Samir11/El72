@@ -38,7 +38,7 @@ services:
       ADMIN_USERNAME: "${ADMIN_USERNAME:?Set ADMIN_USERNAME in .env}"
       ADMIN_PASSWORD: "${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}"
       ADMIN_SECRET_KEY: "${ADMIN_SECRET_KEY:?Set ADMIN_SECRET_KEY in .env}"
-      DEMO_MODE: "false"
+      DEMO_MODE: "${DEMO_MODE:-false}"
       TRUSTED_PROXIES: "${TRUSTED_PROXIES:-}"
       ALLOWED_ORIGINS: "${ALLOWED_ORIGINS:-}"
     restart: unless-stopped
@@ -52,13 +52,15 @@ services:
 
   # --- Caddy: automatic HTTPS termination for the two production hosts ---
   caddy:
-    image: caddy:2-alpine
+    image: caddy:latest-alpine
     restart: unless-stopped
     ports:
       - "80:80"
       - "443:443"
     environment:
       ACME_EMAIL: "${ACME_EMAIL:?Set ACME_EMAIL in .env}"
+      PROD_DOMAIN: "${PROD_DOMAIN:?Set PROD_DOMAIN in .env}"
+      API_DOMAIN: "${API_DOMAIN:?Set API_DOMAIN in .env}"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data

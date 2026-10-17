@@ -52,6 +52,12 @@ DEMO_MODE=false
 Caddy. Without it, all requests arrive from Caddy's socket peer and the
 per-IP limit becomes a shared global quota.
 
+To find Caddy's container IP on the Docker network:
+```bash
+docker inspect -f '{{.NetworkSettings.IPAddress}}' el72-caddy
+```
+Set `TRUSTED_PROXIES` to that IP in `.env`.
+
 ## 3. Deploy
 
 ```bash

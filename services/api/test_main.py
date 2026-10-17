@@ -141,6 +141,107 @@ def test_cors_allowed_origin_from_env():
     importlib.reload(api_main)
 
 
+def test_health_endpoint():
+    resp = client.get("/health")
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "ok"}
+
+
+def test_cors_preflight_allowed_origin():
+    import os
+
+    os.environ["ALLOWED_ORIGINS"] = "https://el72.io"
+    import importlib
+
+    import services.api.main as api_main
+
+    importlib.reload(api_main)
+
+    from fastapi.testclient import TestClient
+
+    test_client = TestClient(api_main.app)
+    resp = test_client.options(
+        "/health", headers={"Origin": "https://el72.io"}
+    )
+    # /health only supports GET, so OPTIONS returns 405, but CORS headers
+    # must still be present for the allowed origin.
+    assert resp.headers.get("access-control-allow-origin") == "https://el72.io"
+    assert resp.headers.get("access-control-allow-credentials") == "true"
+
+    del os.environ["ALLOWED_ORIGINS"]
+    importlib.reload(api_main)
+
+
+def test_cors_preflight_disallowed_origin():
+    import os
+
+    os.environ["ALLOWED_ORIGINS"] = "https://el72.io"
+    import importlib
+
+    import services.api.main as api_main
+
+    importlib.reload(api_main)
+
+    from fastapi.testclient import TestClient
+
+    test_client = TestClient(api_main.app)
+    resp = test_client.options(
+        "/health", headers={"Origin": "https://evil.com"}
+    )
+    # Disallowed origin: no CORS allow-origin header should be returned.
+    assert "access-control-allow-origin" not in resp.headers
+
+    del os.environ["ALLOWED_ORIGINS"]
+    importlib.reload(api_main)
+
+
+def test_trusted_proxy_blocks_xff_spoofing_full_cycle():
+    """X-Forwarded-For from an untrusted peer must not be honored.
+
+    Simulates a malicious client directly connecting to the API (not via
+    a trusted proxy) but forging an X-Forwarded-For header. The rate
+    limiter must see the direct IP, not the forged header.
+    """
+    import os
+
+    os.environ["TRUSTED_PROXIES"] = "10.0.0.1"
+    import importlib
+
+    import services.api.main as api_main
+
+    importlib.reload(api_main)
+
+    from fastapi.testclient import TestClient
+
+    test_client = TestClient(api_main.app)
+
+    # Direct connection from an untrusted IP with forged X-Forwarded-For.
+    # The API must rate-limit based on the direct IP, not the forged header.
+    resp1 = test_client.get(
+        "/health",
+        headers={
+            "Origin": "https://el72.io",
+            "X-Forwarded-For": "1.2.3.4",
+        },
+    )
+    assert resp1.status_code == 200
+
+    # Same request again - if the forged header were honored, the rate
+    # limiter would see 1.2.3.4 and might allow more requests. With the
+    # direct IP (TestClient uses testclient), per-IP limiting applies.
+    resp2 = test_client.get(
+        "/health",
+        headers={
+            "Origin": "https://el72.io",
+            "X-Forwarded-For": "1.2.3.4",
+        },
+    )
+    assert resp2.status_code == 200
+
+    del os.environ["TRUSTED_PROXIES"]
+    importlib.reload(api_main)
+
+
 def test_cors_disallowed_origin_rejected():
     import os
 

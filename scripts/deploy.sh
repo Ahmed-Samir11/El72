@@ -22,9 +22,9 @@ if [ ! -f .env ]; then
 fi
 
 # Read API_DOMAIN from the env file without exporting secrets to the shell
-# environment (avoids leaking them into the process list).
-API_DOMAIN=$(grep '^API_DOMAIN=' .env | cut -d= -f2-)
-: "${API_DOMAIN:?Set API_DOMAIN in .env for the health-check URL}"
+# environment (avoids leaking them into the process list). Strip surrounding
+# quotes so values like API_DOMAIN="api.el72.io" are handled correctly.
+API_DOMAIN=$(grep '^API_DOMAIN=' .env | cut -d= -f2- | sed 's/^"//;s/"$//')
 
 echo "[deploy] pulling latest main"
 git pull --ff-only origin main
@@ -33,7 +33,7 @@ echo "[deploy] building and starting the production stack"
 docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env up -d --build
 
 echo "[deploy] waiting for API health at https://${API_DOMAIN}/health"
-for i in $(seq 1 30); do
+for i in $(seq 1 12); do
   if curl -fsS "https://${API_DOMAIN}/health" >/dev/null 2>&1; then
     echo "[deploy] API healthy"
     exit 0
