@@ -1,0 +1,83 @@
+# Production overlay for El72.
+# Merge with the dev stack:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# Required secrets (all via :? so the stack refuses to start without them):
+#   POSTGRES_PASSWORD, DB_MONITOR_PASSWORD, GRAFANA_ADMIN_PASSWORD
+#   SECRET_KEY, ADMIN_USERNAME, ADMIN_PASSWORD, ADMIN_SECRET_KEY
+#   WHATSAPP_ACCESS_TOKEN, WHATSAPP_PHONE_NUMBER_ID
+#   PAYMOB_HMAC_SECRET, PAYMOB_CHECKOUT_URL, PAYMOB_API_KEY
+#   ACME_EMAIL (Caddy automatic HTTPS)
+#   PROD_DOMAIN, API_DOMAIN (Caddy hosts)
+services:
+  # --- Database layer: internal network only, never exposed to the host ---
+  redis:
+    ports: []
+    restart: unless-stopped
+
+  postgres:
+    ports: []
+    restart: unless-stopped
+
+  timescaledb:
+    ports: []
+    restart: unless-stopped
+
+  # --- Analyzer: internal consumer only ---
+  analyzer:
+    ports: []
+    environment:
+      DEMO_MODE: "false"
+    restart: unless-stopped
+
+  # --- API: fronted only by Caddy on the docker network ---
+  api:
+    ports: []
+    environment:
+      SECRET_KEY: "${SECRET_KEY:?Set SECRET_KEY in .env}"
+      ADMIN_USERNAME: "${ADMIN_USERNAME:?Set ADMIN_USERNAME in .env}"
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}"
+      ADMIN_SECRET_KEY: "${ADMIN_SECRET_KEY:?Set ADMIN_SECRET_KEY in .env}"
+      DEMO_MODE: "false"
+      TRUSTED_PROXIES: "${TRUSTED_PROXIES:-}"
+      ALLOWED_ORIGINS: "${ALLOWED_ORIGINS:-}"
+    restart: unless-stopped
+
+  # --- Frontend: static landing page served by nginx ---
+  frontend-web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+
+  # --- Caddy: automatic HTTPS termination for the two production hosts ---
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      ACME_EMAIL: "${ACME_EMAIL:?Set ACME_EMAIL in .env}"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    depends_on:
+      - api
+      - frontend-web
+
+  # --- Legacy notifier (360dialog) disabled in production: use the
+  # whatsapp (Meta Cloud) service instead. Both consumer groups would
+  # otherwise deliver every deal notification twice. ---
+  notifier:
+    image: busybox:1.36
+    command: ["true"]
+    restart: unless-stopped
+
+  whatsapp:
+    environment:
+      MOCK_WHATSAPP: "${MOCK_WHATSAPP:-false}"
+    restart: unless-stopped
+
+volumes:
+  caddy-data:

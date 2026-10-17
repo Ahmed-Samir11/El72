@@ -3,12 +3,11 @@ import logging
 import os
 import time
 
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Response
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, validator
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -138,17 +137,40 @@ class PrometheusMiddleware(BaseHTTPMiddleware):
         return response
 
 
+# Trusted proxies: only a direct peer in this env-configured set may
+# supply X-Forwarded-For for the rate-limit key. Otherwise the direct socket
+# address is used, so a client cannot spoof the header to bypass per-IP
+# limits.
+TRUSTED_PROXIES = {
+    p.strip() for p in os.getenv("TRUSTED_PROXIES", "").split(",") if p.strip()
+}
+
+# CORS origins: explicit allowlist. In production ALLOWED_ORIGINS must be
+# set to the real origin(s); dev fallback keeps the localhost list and never
+# allows "*" with credentials.
+_ALLOWED_ORIGINS = [
+    o.strip() for o in os.getenv("ALLOWED_ORIGINS", "").split(",") if o.strip()
+] or ["http://localhost:8080", "http://127.0.0.1:8080"]
+
+
+def _client_ip(request: Request) -> str:
+    """Best-effort client IP for rate limiting.
+
+    X-Forwarded-For is honored only when the direct peer is a configured
+    trusted proxy; otherwise the direct socket address is used.
+    """
+    peer = request.client.host if request.client else None
+    if peer in TRUSTED_PROXIES:
+        forwarded = request.headers.get("x-forwarded-for")
+        if forwarded:
+            return forwarded.split(",")[0].strip()[:45]
+    return peer or "unknown"
+
+
 app = FastAPI(title="Elhaq API")
-limiter = Limiter(key_func=get_remote_address)
+limiter = Limiter(key_func=_client_ip)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-
-# CORS
-origins = [
-    "http://localhost:8080",
-    "http://127.0.0.1:8080",
-    "*",  # Allows all for development
-]
 
 app.add_middleware(
     PrometheusMiddleware,
@@ -156,7 +178,7 @@ app.add_middleware(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=_ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

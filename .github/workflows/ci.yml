@@ -96,6 +96,58 @@ jobs:
           else
             echo "No notifier package.json"
           fi
+
+  # Validate that both dev and production compose stacks are syntactically
+  # correct and that the production stack refuses to start without secrets.
+  compose-config:
+    name: Validate Docker Compose (dev + prod)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: sudo apt-get install -y shellcheck
+
+      - name: Shellcheck shell scripts
+        run: shellcheck scripts/*.sh
+
+      - name: Validate dev compose with a complete fake env
+        run: |
+          cat > .env <<'EOF'
+          POSTGRES_PASSWORD=dev
+          DATABASE_URL_DOCKER=postgresql://elhaq:dev@postgres:5432/elhaq
+          TIMESCALE_URL_DOCKER=postgresql://elhaq:dev@timescaledb:5432/elhaq_ts
+          DB_MONITOR_PASSWORD=dev
+          GRAFANA_ADMIN_PASSWORD=dev
+          SECRET_KEY=dev-secret
+          ADMIN_USERNAME=admin
+          ADMIN_PASSWORD=dev
+          ADMIN_SECRET_KEY=dev
+          WHATSAPP_ACCESS_TOKEN=dev
+          WHATSAPP_PHONE_NUMBER_ID=dev
+          PAYMOB_HMAC_SECRET=dev
+          PAYMOB_CHECKOUT_URL=https://example.com/checkout
+          PAYMOB_API_KEY=dev
+          ACME_EMAIL=admin@example.com
+          PROD_DOMAIN=el72.io
+          API_DOMAIN=api.el72.io
+          EOF
+          docker compose -f docker-compose.yml config --quiet
+          docker compose -f docker-compose.yml -f docker-compose.prod.yml config --quiet
+
+      - name: Assert prod compose fails without required secrets
+        run: |
+          # Unset every secret that the prod stack requires via :?; the
+          # config must fail loudly instead of starting with empty credentials.
+          unset POSTGRES_PASSWORD DB_MONITOR_PASSWORD GRAFANA_ADMIN_PASSWORD \
+            SECRET_KEY ADMIN_PASSWORD ADMIN_SECRET_KEY \
+            WHATSAPP_ACCESS_TOKEN WHATSAPP_PHONE_NUMBER_ID \
+            PAYMOB_HMAC_SECRET PAYMOB_CHECKOUT_URL PAYMOB_API_KEY ACME_EMAIL
+          if docker compose -f docker-compose.yml -f docker-compose.prod.yml config --quiet; then
+            echo "ERROR: prod compose should fail without secrets" >&2
+            exit 1
+          fi
+
   # MS4: Flutter quality gate + signed App Bundle on PRs to main and v* tags.
   flutter-ci:
     name: Flutter - analyze, test, signed bundle
