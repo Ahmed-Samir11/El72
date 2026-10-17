@@ -159,7 +159,8 @@ def _client_ip(request: Request) -> str:
     X-Forwarded-For is honored only when the direct peer is a configured
     trusted proxy; otherwise the direct socket address is used.
     """
-    peer = request.client.host if request.client else None
+    # request.client is a (host, port) tuple; index 0 is the address.
+    peer = request.client[0] if request.client else None
     if peer in TRUSTED_PROXIES:
         forwarded = request.headers.get("x-forwarded-for")
         if forwarded:

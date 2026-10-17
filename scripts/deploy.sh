@@ -21,18 +21,16 @@ if [ ! -f .env ]; then
   exit 1
 fi
 
-# Load the compose env file (simple KEY=VALUE lines).
-set -a
-. ./.env
-set +a
-
-: "${API_DOMAIN:?Set API_DOMAIN (in .env) for the health-check URL}"
+# Read API_DOMAIN from the env file without exporting secrets to the shell
+# environment (avoids leaking them into the process list).
+API_DOMAIN=$(grep '^API_DOMAIN=' .env | cut -d= -f2-)
+: "${API_DOMAIN:?Set API_DOMAIN in .env for the health-check URL}"
 
 echo "[deploy] pulling latest main"
 git pull --ff-only origin main
 
 echo "[deploy] building and starting the production stack"
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env up -d --build
 
 echo "[deploy] waiting for API health at https://${API_DOMAIN}/health"
 for i in $(seq 1 30); do

@@ -27,7 +27,7 @@ services:
   analyzer:
     ports: []
     environment:
-      DEMO_MODE: "false"
+      DEMO_MODE: "${DEMO_MODE:-false}"
     restart: unless-stopped
 
   # --- API: fronted only by Caddy on the docker network ---
@@ -65,14 +65,6 @@ services:
     depends_on:
       - api
       - frontend-web
-
-  # --- Legacy notifier (360dialog) disabled in production: use the
-  # whatsapp (Meta Cloud) service instead. Both consumer groups would
-  # otherwise deliver every deal notification twice. ---
-  notifier:
-    image: busybox:1.36
-    command: ["true"]
-    restart: unless-stopped
 
   whatsapp:
     environment:

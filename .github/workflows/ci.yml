@@ -113,7 +113,7 @@ jobs:
 
       - name: Validate dev compose with a complete fake env
         run: |
-          cat > .env <<'EOF'
+          cat > /tmp/.env <<'EOF'
           POSTGRES_PASSWORD=dev
           DATABASE_URL_DOCKER=postgresql://elhaq:dev@postgres:5432/elhaq
           TIMESCALE_URL_DOCKER=postgresql://elhaq:dev@timescaledb:5432/elhaq_ts
@@ -132,8 +132,8 @@ jobs:
           PROD_DOMAIN=el72.io
           API_DOMAIN=api.el72.io
           EOF
-          docker compose -f docker-compose.yml config --quiet
-          docker compose -f docker-compose.yml -f docker-compose.prod.yml config --quiet
+          docker compose -f docker-compose.yml --env-file /tmp/.env config --quiet
+          docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file /tmp/.env config --quiet
 
       - name: Assert prod compose fails without required secrets
         run: |
@@ -143,7 +143,7 @@ jobs:
             SECRET_KEY ADMIN_PASSWORD ADMIN_SECRET_KEY \
             WHATSAPP_ACCESS_TOKEN WHATSAPP_PHONE_NUMBER_ID \
             PAYMOB_HMAC_SECRET PAYMOB_CHECKOUT_URL PAYMOB_API_KEY ACME_EMAIL
-          if docker compose -f docker-compose.yml -f docker-compose.prod.yml config --quiet; then
+          if docker compose -f docker-compose.yml -f docker-compose.prod.yml config --quiet 2>/dev/null; then
             echo "ERROR: prod compose should fail without secrets" >&2
             exit 1
           fi

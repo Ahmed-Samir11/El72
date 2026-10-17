@@ -1,13 +1,10 @@
 # Production Caddyfile — automatic HTTPS via ACME.
 # Hosts are injected from environment variables:
-#   PROD_DOMAIN — landing page (static frontend)
+#   PROD_DOMAIN — landing page (proxied to the frontend-web service)
 #   API_DOMAIN  — public API (proxied to the api service)
 
 {env.PROD_DOMAIN} {
-    root /usr/share/html/el72
-    file_server {
-        try_files /index.html /index.html
-    }
+    reverse_proxy frontend-web:80
 }
 
 {env.API_DOMAIN} {
