@@ -69,7 +69,7 @@ def _make_request_scope(client_host: str, headers: dict = None) -> dict:
 
 
 def test_client_ip_trusted_proxy_with_x_forwarded_for():
-    from services.api.main import _client_ip, TRUSTED_PROXIES
+    from services.api.main import TRUSTED_PROXIES, _client_ip
 
     TRUSTED_PROXIES.add("10.0.0.1")
     try:
@@ -83,7 +83,7 @@ def test_client_ip_trusted_proxy_with_x_forwarded_for():
 
 
 def test_client_ip_trusted_proxy_without_x_forwarded_for():
-    from services.api.main import _client_ip, TRUSTED_PROXIES
+    from services.api.main import TRUSTED_PROXIES, _client_ip
 
     TRUSTED_PROXIES.add("10.0.0.1")
     try:
@@ -97,7 +97,7 @@ def test_client_ip_trusted_proxy_without_x_forwarded_for():
 
 
 def test_client_ip_untrusted_proxy_ignores_x_forwarded_for():
-    from services.api.main import _client_ip, TRUSTED_PROXIES
+    from services.api.main import _client_ip
 
     # 10.0.0.1 is NOT trusted; the header must be ignored.
     scope = _make_request_scope("9.9.9.9", {"x-forwarded-for": "1.2.3.4"})
@@ -131,9 +131,7 @@ def test_cors_allowed_origin_from_env():
     from fastapi.testclient import TestClient
 
     test_client = TestClient(api_main.app)
-    resp = test_client.get(
-        "/health", headers={"Origin": "https://el72.io"}
-    )
+    resp = test_client.get("/health", headers={"Origin": "https://el72.io"})
     assert resp.status_code == 200
     assert resp.headers.get("access-control-allow-origin") == "https://el72.io"
 
@@ -160,9 +158,7 @@ def test_cors_preflight_allowed_origin():
     from fastapi.testclient import TestClient
 
     test_client = TestClient(api_main.app)
-    resp = test_client.options(
-        "/health", headers={"Origin": "https://el72.io"}
-    )
+    resp = test_client.options("/health", headers={"Origin": "https://el72.io"})
     # /health only supports GET, so OPTIONS returns 405, but CORS headers
     # must still be present for the allowed origin.
     assert resp.headers.get("access-control-allow-origin") == "https://el72.io"
@@ -185,9 +181,7 @@ def test_cors_preflight_disallowed_origin():
     from fastapi.testclient import TestClient
 
     test_client = TestClient(api_main.app)
-    resp = test_client.options(
-        "/health", headers={"Origin": "https://evil.com"}
-    )
+    resp = test_client.options("/health", headers={"Origin": "https://evil.com"})
     # Disallowed origin: no CORS allow-origin header should be returned.
     assert "access-control-allow-origin" not in resp.headers
 
@@ -255,9 +249,7 @@ def test_cors_disallowed_origin_rejected():
     from fastapi.testclient import TestClient
 
     test_client = TestClient(api_main.app)
-    resp = test_client.get(
-        "/health", headers={"Origin": "https://evil.com"}
-    )
+    resp = test_client.get("/health", headers={"Origin": "https://evil.com"})
     # Preflight/OPTIONS is allowed; a plain GET with a disallowed origin is
     # still served (CORS is a client-side enforcement), but the response
     # must not echo the disallowed origin.

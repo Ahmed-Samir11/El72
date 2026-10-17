@@ -5,8 +5,6 @@ import shutil
 import subprocess
 import tempfile
 
-import pytest
-
 
 def _write_env(path: str, api_domain: str) -> None:
     with open(path, "w") as fh:
@@ -116,10 +114,11 @@ def test_deploy_script_flows_through_pipeline():
 
     # git pull --ff-only origin main
     assert "pull --ff-only origin main" in log
-    # docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env up -d --build
+    # docker compose -f docker-compose.yml -f docker-compose.prod.yml
+    #   --env-file .env up -d --build
     assert (
-        "compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env up -d --build"
-        in log
+        "compose -f docker-compose.yml -f docker-compose.prod.yml"
+        " --env-file .env up -d --build" in log
     )
     # health check curl
     assert "-fsS https://api.el72.io/health" in log
@@ -197,6 +196,8 @@ def test_deploy_script_handles_quoted_env_value():
     assert result.returncode == 0, result.stderr
     log = open(calls_log).read()
     assert "https://api.el72.io/health" in log
+
+
 def test_prod_compose_has_required_secrets():
     """The prod overlay must require all secrets it defines via :? so the
     stack refuses to start without them. Secrets inherited from the dev
