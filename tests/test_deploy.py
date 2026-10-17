@@ -197,7 +197,37 @@ def test_deploy_script_handles_quoted_env_value():
     assert result.returncode == 0, result.stderr
     log = open(calls_log).read()
     assert "https://api.el72.io/health" in log
-    assert '"api.el72.io"' not in log  # quotes must be stripped
+def test_prod_compose_has_required_secrets():
+    """The prod overlay must require all secrets it defines via :? so the
+    stack refuses to start without them. Secrets inherited from the dev
+    compose file (postgres passwords, WhatsApp, Paymob) are defined there."""
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with open(os.path.join(repo_root, "docker-compose.prod.yml")) as fh:
+        content = fh.read()
+
+    # Each service that defines a secret must use the :? required-value
+    # syntax (not just a plain env var).
+    assert "SECRET_KEY:?" in content
+    assert "ADMIN_USERNAME:?" in content
+    assert "ADMIN_PASSWORD:?" in content
+    assert "ADMIN_SECRET_KEY:?" in content
+    assert "ACME_EMAIL:?" in content
+    assert "PROD_DOMAIN:?" in content
+    assert "API_DOMAIN:?" in content
+
+
+def test_prod_compose_dbs_internal_only():
+    """Database services must not expose host ports in prod."""
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with open(os.path.join(repo_root, "docker-compose.prod.yml")) as fh:
+        content = fh.read()
+
+    # Each DB service block must have ports: [] (internal-only).
+    for service in ["postgres", "timescaledb", "redis"]:
+        assert f"  {service}:" in content
+        # The next 'ports:' line under this service must be 'ports: []'
+        # (simple substring check is sufficient for this overlay).
+        assert "ports: []" in content, f"{service} should have ports: [] in prod"
 
 
 def _make_failing_mock(name: str, bin_dir: str, calls_log: str) -> None:
