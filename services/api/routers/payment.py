@@ -574,7 +574,7 @@ def _consume_staging_token(
         record_payment_event(
             db,
             event_type="staging_rejected",
-            user_id=str(user.id),
+            user_id=user.id,
             payment_ref="",
             detail=sanitize_for_log("reason=unknown_or_expired_token"),
             ip_address=_client_ip(request),
@@ -587,7 +587,7 @@ def _consume_staging_token(
         record_payment_event(
             db,
             event_type="staging_rejected",
-            user_id=str(user.id),
+            user_id=user.id,
             payment_ref="",
             detail=sanitize_for_log("reason=token_bound_to_other_user"),
             ip_address=_client_ip(request),
@@ -711,7 +711,7 @@ def _confirm_card_payment(
     record_payment_event(
         db,
         event_type="card_payment_created",
-        user_id=str(user.id),
+        user_id=user.id,
         payment_ref=payment_id,
         detail=sanitize_for_log(f"package={body.package}"),
         ip_address=_client_ip(request),
@@ -828,7 +828,7 @@ def _confirm_wallet_payment(
     record_payment_event(
         db,
         event_type="wallet_payment_created",
-        user_id=str(user.id),
+        user_id=user.id,
         payment_ref=payment_id,
         detail=sanitize_for_log(
             f"package={body.package} wallet_type={wallet_type}"
@@ -934,7 +934,7 @@ def _confirm_cash_payment(
     record_payment_event(
         db,
         event_type="cash_payment_created",
-        user_id=str(user.id),
+        user_id=user.id,
         payment_ref=payment_id,
         detail=sanitize_for_log(
             f"package={body.package} cash_type={cash_type} code={code}"
@@ -1035,7 +1035,7 @@ def submit_wallet_otp(
         record_payment_event(
             db,
             event_type="token_expired",
-            user_id=str(user.id),
+            user_id=user.id,
             payment_ref=payment.paymob_payment_id or "",
             detail=sanitize_for_log("otp_expired"),
             ip_address=_client_ip(request),
@@ -1087,7 +1087,7 @@ def submit_wallet_otp(
     record_payment_event(
         db,
         event_type="otp_failed",
-        user_id=str(user.id),
+        user_id=user.id,
         payment_ref=payment.paymob_payment_id or "",
         detail=sanitize_for_log(f"attempts={payment.otp_attempts}"),
         ip_address=_client_ip(request),
@@ -1237,7 +1237,7 @@ def _resolve_cash_payment(
         record_payment_event(
             db,
             event_type="cash_expired",
-            user_id=str(user.id),
+            user_id=user.id,
             payment_ref=payment_id,
             detail=sanitize_for_log(f"code={cash.payment_code}"),
             ip_address=_client_ip(request),

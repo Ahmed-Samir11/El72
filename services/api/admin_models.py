@@ -20,7 +20,7 @@ from sqlalchemy import (
     Text,
 )
 
-from services.api.models import Base
+from services.api.models import Base, OperationalIdType
 
 
 def _utcnow() -> datetime:
@@ -73,7 +73,9 @@ class Refund(Base):
     method = Column(String(20), nullable=False)  # manual | card | wallet | cash
     order_id = Column(String(255), nullable=False)
     user_id = Column(
-        String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+        OperationalIdType(),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
     )
     package = Column(String(20), nullable=False)
     amount_egp = Column(Numeric(10, 2), nullable=False)
