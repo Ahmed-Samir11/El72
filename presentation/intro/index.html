@@ -1,0 +1,397 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=1920, height=1080" />
+  <title>El72 — intro</title>
+  <script src="gsap.min.js"></script>
+  <style>
+    /* The deck's theme (css/apple-theme.css), restated so the composition
+       renders on its own under HyperFrames. */
+    :root {
+      --bg: #000000;
+      --fg: #f5f5f7;
+      --fg-dim: #a1a1a6;
+      --fg-faint: #6e6e73;
+      --accent: #f7941d;
+      --good: #30d158;
+      --warn: #ffd60a;
+      --bad: #ff453a;
+      --card: rgba(255, 255, 255, 0.05);
+      --card-border: rgba(255, 255, 255, 0.12);
+      --font: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Inter, system-ui, sans-serif;
+      --mono: "SF Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 1920px;
+      height: 1080px;
+      overflow: hidden;
+      background: var(--bg);
+    }
+    #root {
+      position: relative;
+      width: 1920px;
+      height: 1080px;
+      overflow: hidden;
+      color: var(--fg);
+      font-family: var(--font);
+      /* The app intro's backdrop — the same one the deck uses. In the deck
+         the player makes it transparent so only the deck's shows. */
+      background: #0a0703 radial-gradient(1200px 700px at 70% -10%, #3a2408 0%, #140d04 55%, #0a0703 100%);
+    }
+    .clip { position: absolute; inset: 0; }
+    #ambient {
+      position: absolute; inset: -96px; pointer-events: none; opacity: 0.7;
+      background: radial-gradient(600px 400px at 20% 80%, rgba(247, 148, 29, 0.14), transparent 60%), radial-gradient(700px 500px at 85% 20%, rgba(251, 191, 36, 0.20), transparent 60%);
+    }
+
+    .eyebrow {
+      font-size: 22px; font-weight: 700; letter-spacing: 0.18em;
+      text-transform: uppercase; color: var(--accent);
+    }
+    .headline { font-size: 92px; font-weight: 700; letter-spacing: -0.035em; line-height: 1.02; }
+    .sub { font-size: 30px; color: var(--fg-dim); font-weight: 500; }
+    .foot { font-size: 18px; color: var(--fg-faint); letter-spacing: 0.02em; }
+
+    /* ---- Beat 1–2: the queue ---- */
+    #s1-copy { position: absolute; left: 140px; top: 120px; }
+    #s1-copy .headline { margin-top: 18px; }
+    #wait { position: absolute; right: 140px; top: 118px; text-align: right; }
+    #wait .n { font-size: 150px; font-weight: 700; letter-spacing: -0.05em; line-height: 1; color: var(--warn); }
+    #wait .n small { font-size: 46px; letter-spacing: -0.01em; margin-left: 10px; color: var(--fg); }
+    #wait .sub { margin-top: 6px; font-size: 24px; }
+
+    #tiles {
+      position: absolute; left: 140px; top: 440px;
+      display: grid; grid-template-columns: repeat(12, 124px); gap: 12px;
+    }
+    .tile {
+      position: relative; height: 58px; border-radius: 12px;
+      background: var(--card); border: 1px solid var(--card-border);
+      padding: 10px 12px; overflow: hidden;
+    }
+    .tile .id { font-family: var(--mono); font-size: 14px; color: var(--fg-faint); }
+    .tile .bar { margin-top: 8px; height: 5px; border-radius: 3px; background: rgba(255,255,255,0.10); }
+    .tile .v {
+      position: absolute; right: 10px; top: 9px; width: 24px; height: 24px; border-radius: 50%;
+      display: grid; place-items: center; font-size: 15px; font-weight: 800; color: #000; opacity: 0;
+    }
+    .tile.ok .v { background: var(--good); }
+    .tile.chg .v { background: var(--warn); }
+    .tile.blk .v { background: var(--bad); color: #fff; }
+
+    #beam {
+      position: absolute; top: 410px; left: 0; width: 180px; height: 560px; opacity: 0;
+      background: linear-gradient(90deg, transparent, rgba(247,148,29,0.45), transparent);
+      filter: blur(6px);
+    }
+
+    #s2-copy { position: absolute; left: 140px; top: 112px; }
+    #brand { display: flex; align-items: center; gap: 22px; }
+    #brand .word { font-size: 64px; font-weight: 700; letter-spacing: -0.03em; }
+    #brand .word b { font-weight: 700; background: linear-gradient(90deg, #f7941d, #fbd724); -webkit-background-clip: text; background-clip: text; color: transparent; }
+    #s2-copy .headline { margin-top: 26px; font-size: 80px; }
+    #speed { position: absolute; right: 140px; top: 120px; text-align: right; }
+    .stat .n { font-size: 84px; font-weight: 700; letter-spacing: -0.04em; line-height: 1; }
+    .stat .n.good { color: var(--good); }
+    .stat .l { font-size: 22px; color: var(--fg-dim); margin-top: 6px; }
+    .stat + .stat { margin-top: 26px; }
+
+    /* ---- Beat 3: business impact ---- */
+    #s3-copy { position: absolute; left: 0; right: 0; top: 150px; text-align: center; }
+    #impact { position: absolute; left: 140px; right: 140px; top: 400px; display: flex; gap: 36px; }
+    .imp {
+      flex: 1; border-radius: 28px; padding: 44px 40px 40px;
+      background: var(--card); border: 1px solid var(--card-border);
+    }
+    .imp .k { font-size: 20px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--fg-dim); }
+    .imp .arrow { font-size: 120px; font-weight: 700; color: var(--good); line-height: 1.05; margin-top: 12px; display: inline-block; }
+    .imp .t { font-size: 38px; font-weight: 700; letter-spacing: -0.02em; margin-top: 6px; }
+    .imp .d { font-size: 24px; color: var(--fg-dim); margin-top: 14px; line-height: 1.35; }
+    #local {
+      position: absolute; left: 0; right: 0; top: 880px; width: fit-content; margin: 0 auto;
+      padding: 14px 28px; border-radius: 999px; font-size: 24px; font-weight: 600;
+      border: 1px solid rgba(247,148,29,0.6); background: rgba(247,148,29,0.14); color: var(--fg);
+      white-space: nowrap;
+    }
+
+    /* ---- Beat 4: rules ---- */
+    #s4-copy { position: absolute; left: 140px; top: 300px; width: 760px; }
+    #s4-copy .headline { font-size: 86px; margin-top: 18px; }
+    #s4-copy .sub { margin-top: 26px; line-height: 1.35; }
+    #editor {
+      position: absolute; left: 980px; top: 250px; width: 800px;
+      border-radius: 26px; background: #0b0b0d; border: 1px solid var(--card-border);
+      box-shadow: 0 40px 120px -30px rgba(247,148,29,0.35);
+      overflow: hidden;
+    }
+    #editor .bar { display: flex; gap: 10px; padding: 18px 22px; border-bottom: 1px solid var(--card-border); align-items: center; }
+    #editor .bar i { width: 13px; height: 13px; border-radius: 50%; background: #333; display: block; }
+    #editor .bar span { margin-left: 12px; font-family: var(--mono); font-size: 17px; color: var(--fg-faint); }
+    #editor .code { padding: 26px 30px 30px; font-family: var(--mono); font-size: 25px; line-height: 1.75; }
+    .ln { white-space: pre; clip-path: inset(0 100% 0 0); }
+    .ln.dim { color: var(--fg-faint); }
+    .ln.h { color: var(--accent); font-weight: 700; }
+    .ln.add { color: var(--good); background: rgba(48,209,88,0.12); border-radius: 8px; margin: 6px -12px 0; padding: 0 12px; }
+    #assist {
+      position: absolute; left: 1180px; top: 760px; width: 560px;
+      display: flex; gap: 16px; align-items: flex-start;
+      padding: 20px 24px; border-radius: 20px;
+      background: rgba(247,148,29,0.14); border: 1px solid rgba(247,148,29,0.5);
+    }
+    #assist .who { font-size: 16px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); }
+    #assist .say { font-size: 24px; margin-top: 4px; }
+
+    /* ---- Beat 5: lockup — the app's opening scene ---- */
+    #s5 { display: grid; place-items: center; }
+    #logo-scene { display: flex; flex-direction: column; align-items: center; text-align: center; }
+    #mark2 { filter: drop-shadow(0 0 45px rgba(247, 148, 29, 0.55)); overflow: visible; }
+    #lock-word {
+      margin-top: 36px; font-size: 108px; line-height: 1; font-weight: 600; letter-spacing: -0.025em;
+    }
+    #lock-word span {
+      background: linear-gradient(90deg, #f7941d, #fbd724);
+      -webkit-background-clip: text; background-clip: text; color: transparent;
+    }
+    #lock-tag { margin-top: 24px; font-size: 30px; color: rgba(255, 255, 255, 0.75); }
+    #powered { margin-top: 30px; }
+  </style>
+</head>
+<body>
+  <div id="root" data-composition-id="el72-intro" data-start="0" data-duration="13" data-width="1920" data-height="1080">
+
+    <div id="ambient" aria-hidden="true"></div>
+
+    <!-- Logo gradients, outside every clip: a gradient inside a hidden clip
+         stops painting for the marks that reference it. -->
+    <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+      <defs>
+        <linearGradient id="g-top" x1="3" y1="7" x2="19" y2="16" gradientUnits="userSpaceOnUse"><stop stop-color="#f67215"/><stop offset="1" stop-color="#fbd724"/></linearGradient>
+        <linearGradient id="g-bot" x1="3" y1="25" x2="19" y2="16" gradientUnits="userSpaceOnUse"><stop stop-color="#fb9a1d"/><stop offset="1" stop-color="#fbd724"/></linearGradient>
+        <linearGradient id="g-mrg" x1="17" y1="16" x2="29" y2="16" gradientUnits="userSpaceOnUse"><stop stop-color="#f7941d"/><stop offset="1" stop-color="#fbd724"/></linearGradient>
+      </defs>
+    </svg>
+
+    <!-- Beats 1–2 share the tile wall. -->
+    <div id="queue" class="clip" data-start="0" data-duration="5.1" data-track-index="0">
+      <div id="tiles"></div>
+      <div id="beam"></div>
+    </div>
+
+    <div id="s1" class="clip" data-start="0" data-duration="2.8" data-track-index="1">
+      <div id="s1-copy">
+        <div class="eyebrow">The wall, before El72</div>
+        <div class="headline">It takes <span id="months">0</span> seconds.</div>
+      </div>
+      <div id="wait">
+        <div class="n"><span>30</span><small>seconds</small></div>
+        <div class="sub">a price verified, end to end</div>
+        <div class="foot" style="margin-top:6px">Amazon · Noon · Jumia</div>
+      </div>
+    </div>
+
+    <div id="s2" class="clip" data-start="2.6" data-duration="2.5" data-track-index="1">
+      <div id="s2-copy">
+        <div id="brand">
+          <svg id="mark" width="104" height="104" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+            <path class="stroke" d="M5 8 C 12 8, 13 16, 19 16" stroke="url(#g-top)" stroke-width="3.4" stroke-linecap="round"/>
+            <path class="stroke" d="M5 24 C 12 24, 13 16, 19 16" stroke="url(#g-bot)" stroke-width="3.4" stroke-linecap="round"/>
+            <circle class="dot" cx="5" cy="8" r="2.6" fill="url(#g-top)"/>
+            <circle class="dot" cx="5" cy="24" r="2.6" fill="url(#g-bot)"/>
+            <path class="stroke" d="M18 16 H26" stroke="url(#g-mrg)" stroke-width="3.4" stroke-linecap="round"/>
+            <path class="stroke" d="M22.5 10.8 L28 16 L22.5 21.2" stroke="url(#g-mrg)" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <div class="word">El<b>72</b></div>
+        </div>
+        <div class="headline">Verified in seconds,<br />not weeks.</div>
+      </div>
+      <div id="speed">
+        <div class="stat"><div class="n good">1,240 products</div><div class="l">4 stores tracked · placeholder</div></div>
+        <div class="stat"><div class="n">30 s</div><div class="l">scrape interval, end to end</div></div>
+      </div>
+    </div>
+
+    <div id="s3" class="clip" data-start="5" data-duration="2.5" data-track-index="1">
+      <div id="s3-copy">
+        <div class="eyebrow">The business impact</div>
+        <div class="headline" style="margin-top:18px">Find real deals. Filter fake ones.</div>
+      </div>
+      <div id="impact">
+        <div class="imp"><div class="k">Deals</div><div class="arrow">↑</div><div class="t">Real deals found</div><div class="d">A genuine drop, caught and graded in seconds.</div></div>
+        <div class="imp"><div class="k">Trust</div><div class="arrow">↓</div><div class="t">Fake alerts filtered</div><div class="d">The bait-and-switch is flagged before you buy.</div></div>
+        <div class="imp"><div class="k">Cost</div><div class="arrow">↓</div><div class="t">Near-zero per alert</div><div class="d">WhatsApp utility rate, ~$0.0036 per message.</div></div>
+      </div>
+      <div id="local">Runs on your infra · your data never leaves your network</div>
+    </div>
+
+    <div id="s4" class="clip" data-start="7.4" data-duration="1.8" data-track-index="1">
+      <div id="s4-copy">
+        <div class="eyebrow">The alert</div>
+        <div class="headline">The deal,<br />delivered.</div>
+        <div class="sub">One WhatsApp message — cost-controlled, in the user's language.</div>
+      </div>
+      <div id="editor">
+        <div class="bar"><i></i><i></i><i></i><span>WhatsApp / Elhaq</span></div>
+        <div class="code">
+          <div class="ln dim">---</div>
+          <div class="ln dim">channel: price_alert</div>
+          <div class="ln dim">---</div>
+          <div class="ln h">## Price alert</div>
+          <div class="ln">- RTX 5080 is now 41,000 EGP</div>
+          <div class="ln add">+ lowest in 4 months · cheapest of 3 stores</div>
+        </div>
+      </div>
+      <div id="assist">
+        <div>
+          <div class="who">utility-rate</div>
+          <div class="say">One message, near-zero cost. No marketing fees.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Beat 5: the app's own opening (IntroSequence › SceneLogo) — same
+         elements, same order, same timings and easing; sized 1.5x for the
+         full-screen stage. -->
+    <div id="s5" class="clip" data-start="9" data-duration="4" data-track-index="1">
+      <div id="logo-scene">
+        <svg id="mark2" width="222" height="222" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+          <path class="d-top" d="M5 8 C 12 8, 13 16, 19 16" stroke="url(#g-top)" stroke-width="3.4" stroke-linecap="round"/>
+          <path class="d-bot" d="M5 24 C 12 24, 13 16, 19 16" stroke="url(#g-bot)" stroke-width="3.4" stroke-linecap="round"/>
+          <circle class="p-top" cx="5" cy="8" r="2.6" fill="url(#g-top)"/>
+          <circle class="p-bot" cx="5" cy="24" r="2.6" fill="url(#g-bot)"/>
+          <path class="d-mrg" d="M18 16 H26" stroke="url(#g-mrg)" stroke-width="3.4" stroke-linecap="round"/>
+          <path class="d-arr" d="M22.5 10.8 L28 16 L22.5 21.2" stroke="url(#g-mrg)" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <h1 id="lock-word">El<span>72</span></h1>
+        <p id="lock-tag">Real-time price intelligence, verified and delivered.</p>
+        <p id="powered" class="foot">Elhaq · real-time price tracking &amp; deal detection</p>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      // ---- Tile wall: deterministic, no Math.random (renders are seeked). ----
+      var COLS = 12, ROWS = 6, N = COLS * ROWS;
+      var wall = document.getElementById("tiles");
+      for (var i = 0; i < N; i++) {
+        var verdict = i % 7 === 3 ? "deal" : i % 4 === 1 ? "watch" : "ok";
+        var glyph = verdict === "deal" ? "↓" : verdict === "watch" ? "•" : "✓";
+        var t = document.createElement("div");
+        t.className = "tile " + verdict;
+        t.innerHTML = '<div class="id">' + (1000 + ((i * 373) % 9000)) + '</div><div class="bar" style="width:' + (40 + ((i * 29) % 55)) + '%"></div><div class="v">' + glyph + "</div>";
+        wall.appendChild(t);
+      }
+      var tiles = Array.prototype.slice.call(wall.children);
+      // A fixed shuffle for the arrival order.
+      var order = tiles.map(function (_, i) { return i; }).sort(function (a, b) { return ((a * 7919) % 97) - ((b * 7919) % 97); });
+
+      // CSS cubic-bezier() as a GSAP ease (solve x for t, return y).
+      function bezier(x1, y1, x2, y2) {
+        function curve(a, b, t) { return 3 * a * t * (1 - t) * (1 - t) + 3 * b * t * t * (1 - t) + t * t * t; }
+        return function (x) {
+          if (x <= 0) return 0;
+          if (x >= 1) return 1;
+          var lo = 0, hi = 1, t = x;
+          for (var i = 0; i < 30; i++) {
+            t = (lo + hi) / 2;
+            if (curve(x1, x2, t) < x) lo = t; else hi = t;
+          }
+          return curve(y1, y2, t);
+        };
+      }
+
+      var tl = gsap.timeline({ paused: true, defaults: { ease: "power3.out" } });
+
+      // Beat 1 — the queue fills; the wait counts up to 9 months.
+      tl.from("#s1-copy .eyebrow", { opacity: 0, y: 20, duration: 0.5 }, 0.05)
+        .from("#s1-copy .headline", { opacity: 0, y: 40, duration: 0.7 }, 0.15)
+        .from(order.map(function (i) { return tiles[i]; }), { opacity: 0, y: 36, scale: 0.9, duration: 0.45, stagger: 0.016 }, 0.25)
+        .from("#wait", { opacity: 0, y: 30, duration: 0.5 }, 0.55);
+      var wait = { m: 0 };
+      tl.to(wait, { m: 30, duration: 1.6, ease: "power2.inOut", onUpdate: function () {
+        document.getElementById("months").textContent = Math.round(wait.m);
+      } }, 0.7);
+      tl.to(["#s1-copy", "#wait"], { opacity: 0, y: -24, duration: 0.35, ease: "power2.in" }, 2.45);
+
+      // Beat 2 — El72 sweeps the wall; every price gets a verdict.
+      var strokes = document.querySelectorAll("#mark .stroke");
+      strokes.forEach(function (p) { var L = p.getTotalLength(); p.style.strokeDasharray = L; p.style.strokeDashoffset = L; });
+      tl.to(strokes, { strokeDashoffset: 0, duration: 0.6, stagger: 0.08, ease: "power2.inOut" }, 2.7)
+        .from("#mark .dot", { scale: 0, transformOrigin: "50% 50%", duration: 0.3, stagger: 0.05 }, 2.7)
+        .from("#brand .word", { opacity: 0, x: -20, duration: 0.5 }, 2.95)
+        .from("#s2-copy .headline", { opacity: 0, y: 36, duration: 0.6 }, 3.05)
+        .fromTo("#beam", { x: 60, opacity: 0 }, { x: 1720, opacity: 1, duration: 1.25, ease: "none" }, 2.9)
+        .to("#beam", { opacity: 0, duration: 0.2 }, 4.16);
+      tiles.forEach(function (tile, i) {
+        var at = 2.95 + (i % COLS) / (COLS - 1) * 1.15;
+        var color = tile.classList.contains("deal") ? "rgba(48,209,88,0.55)" : tile.classList.contains("watch") ? "rgba(255,214,10,0.6)" : "rgba(255,255,255,0.2)";
+        tl.to(tile, { borderColor: color, background: "rgba(255,255,255,0.08)", duration: 0.25 }, at)
+          .to(tile.querySelector(".v"), { opacity: 1, scale: 1, duration: 0.25, ease: "back.out(3)" }, at)
+          .fromTo(tile, { scale: 1 }, { scale: 1.08, duration: 0.12, yoyo: true, repeat: 1, ease: "power1.inOut" }, at);
+      });
+      tl.from("#speed .stat", { opacity: 0, x: 40, duration: 0.5, stagger: 0.35 }, 3.5)
+        .to("#tiles", { opacity: 0, scale: 0.96, y: 30, duration: 0.4, ease: "power2.in" }, 4.7)
+        .to(["#s2-copy", "#speed"], { opacity: 0, y: -24, duration: 0.35, ease: "power2.in" }, 4.75);
+
+      // Beat 3 — business impact.
+      tl.from("#s3-copy > *", { opacity: 0, y: 36, duration: 0.55, stagger: 0.1 }, 5.05)
+        .from(".imp", { opacity: 0, y: 70, duration: 0.6, stagger: 0.14 }, 5.3)
+        .from(".imp .arrow", { y: -40, opacity: 0, duration: 0.55, stagger: 0.14, ease: "bounce.out" }, 5.55)
+        .from("#local", { opacity: 0, y: 20, duration: 0.45 }, 6.2)
+        .to(["#s3-copy", "#impact", "#local"], { opacity: 0, y: -24, duration: 0.35, ease: "power2.in" }, 7.1);
+
+      // Beat 4 — your rules, typed in; the assistant proposes one more.
+      tl.from("#s4-copy > *", { opacity: 0, x: -30, duration: 0.5, stagger: 0.1 }, 7.45)
+        .from("#editor", { opacity: 0, y: 50, duration: 0.55 }, 7.5);
+      var lines = document.querySelectorAll("#editor .ln");
+      lines.forEach(function (ln, i) {
+        if (!ln.classList.contains("add")) {
+          tl.to(ln, { clipPath: "inset(0 0% 0 0)", duration: 0.22, ease: "none" }, 7.7 + i * 0.1);
+        }
+      });
+      tl.from("#assist", { opacity: 0, y: 30, scale: 0.96, duration: 0.4 }, 8.15)
+        .to("#editor .ln.add", { clipPath: "inset(0 0% 0 0)", duration: 0.35, ease: "none" }, 8.5)
+        .to(["#s4-copy", "#editor", "#assist"], { opacity: 0, y: -20, duration: 0.3, ease: "power2.in" }, 8.85);
+
+      // Beat 5 — the app's opening scene, tween for tween. Its CSS keyframes
+      // (frontend/src/index.css, mf-*) as seekable GSAP: same durations,
+      // same cubic-bezier curves, same delays, same dash lengths.
+      var appEase = bezier(0.2, 0.8, 0.2, 1);   // mf-rise, mf-pop
+      var drawEase = bezier(0.6, 0, 0.2, 1);    // mf-draw
+      var S = 1.5;                              // stage scale
+      var T0 = 9.05;
+      function pop(sel, ms) {
+        tl.fromTo(sel, { opacity: 0, scale: 0.6, transformOrigin: "50% 50%" },
+          { keyframes: [{ opacity: 1, scale: 1.06, duration: 0.385, ease: appEase }, { scale: 1, duration: 0.165, ease: appEase }] },
+          T0 + ms / 1000);
+      }
+      function draw(sel, len, ms) {
+        tl.fromTo(sel, { strokeDasharray: len, strokeDashoffset: len },
+          { strokeDashoffset: 0, duration: 0.9, ease: drawEase }, T0 + ms / 1000);
+      }
+      function rise(sel, ms) {
+        tl.fromTo(sel, { opacity: 0, y: 18 * S }, { opacity: 1, y: 0, duration: 0.7, ease: appEase }, T0 + ms / 1000);
+      }
+      pop("#mark2 .p-top", 0);
+      draw("#mark2 .d-top", 18, 100);
+      pop("#mark2 .p-bot", 150);
+      draw("#mark2 .d-bot", 18, 250);
+      draw("#mark2 .d-mrg", 9, 900);
+      draw("#mark2 .d-arr", 16, 1150);
+      rise("#lock-word", 1300);
+      rise("#lock-tag", 1650);
+      rise("#powered", 2100);
+      tl.to({}, { duration: 0.01 }, 12.99); // hold the lockup to exactly 13 s
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines["el72-intro"] = tl;
+      tl.seek(0);
+    })();
+  </script>
+  <!-- Live playback inside the deck. Inert unless the page is opened with
+       ?embed, so HyperFrames renders are unaffected. -->
+  <script src="player.js?v=13s-2"></script>
+</body>
+</html>
