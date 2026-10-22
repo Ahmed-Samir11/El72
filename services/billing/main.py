@@ -116,6 +116,11 @@ async def observe_http_requests(request: Request, call_next):
 app.mount("/metrics", make_asgi_app())
 
 
+@app.get("/health", include_in_schema=False)
+async def health() -> dict:
+    return {"status": "ok"}
+
+
 # Pydantic models
 class PurchaseRequest(BaseModel):
     """Requested credit package for a Paymob checkout."""
