@@ -7,7 +7,6 @@ import logging
 import time
 from datetime import datetime
 from typing import List, Optional
-from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from pydantic import BaseModel, validator
@@ -48,22 +47,16 @@ _refresh_attempts: dict[str, datetime] = {}
 
 
 def _validate_item_id(db: Session, item_id: str) -> None:
-    """Routes accept ``str`` ids so both dev (SQLite integer PKs) and prod
-    (Postgres UUID PKs) work. Validation is dialect-aware so a foreign-format
-    id (e.g. a UUID string on SQLite, an integer on Postgres) is rejected
-    with 422 instead of causing a DB cast error."""
-    dialect = db.bind.dialect.name if db.bind else "sqlite"
-    if dialect == "postgresql":
-        try:
-            UUID(item_id)
-            return
-        except (ValueError, TypeError):
-            pass
-    elif item_id.isascii() and item_id.isdigit():
+    """Routes accept ``str`` ids so both dev (SQLite) and prod (Postgres)
+    work. The reconciled schema uses INTEGER PKs for tracked_items on both
+    dialects (OperationalIdType), so a numeric string is the valid form in
+    both environments; anything else is rejected with 422 instead of
+    causing a DB cast error."""
+    if item_id.isascii() and item_id.isdigit():
         return
     raise HTTPException(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        detail="item_id is not a valid identifier for this environment",
+        detail="item_id is not a valid identifier",
     )
 
 
@@ -131,24 +124,6 @@ class PriceInfo(BaseModel):
     url: str
 
 
-class TrackedItemResponse(BaseModel):
-    """Response model for tracked item."""
-
-    id: UUID
-    canonical_product_id: str
-    specs: Optional[dict]
-    target_price: Optional[float]
-    is_active: bool
-    created_at: datetime
-    updated_at: datetime
-    store_count: int
-    lowest_price: Optional[PriceInfo]
-    all_prices: List[PriceInfo]
-
-    class Config:
-        orm_mode = True
-
-
 # Router
 router = APIRouter(prefix="/tracked-items", tags=["tracked-items"])
 
@@ -185,13 +160,21 @@ def _aggregate_fetch_status(stores) -> tuple:
 
     The highest-severity non-OK status wins (a definitive "not a product
     page" beats a transient "blocked" beats "fetch failed"), so the UI can
-    show the single most actionable message. All-OK (or no mappings) is
-    reported as ('ok', None).
+    show the single most actionable message.
+
+    Status semantics (the app relies on these, see TrackedItemModel):
+    - (None, None)  -> every store is still in flight (NULL status): the UI
+      shows the fetching spinner.
+    - ('ok', None)  -> at least one store fetched successfully.
+    - (status, err) -> the worst settled failure across stores.
     """
     worst = None
     worst_status: Optional[str] = None
+    any_settled = False
     for store in stores:
         status = getattr(store, "last_fetch_status", None)
+        if status:
+            any_settled = True
         if not status or status == FETCH_OK:
             continue
         if worst is None or _STATUS_SEVERITY.get(status, 1) > _STATUS_SEVERITY.get(
@@ -200,7 +183,7 @@ def _aggregate_fetch_status(stores) -> tuple:
             worst = store
             worst_status = status
     if worst is None:
-        return FETCH_OK, None
+        return (FETCH_OK, None) if any_settled else (None, None)
     return worst_status, worst.last_fetch_error
 
 
