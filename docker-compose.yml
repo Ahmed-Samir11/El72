@@ -84,11 +84,13 @@ services:
       dockerfile: services/chatbot/Dockerfile
     depends_on:
       - postgres
+      - api
     environment:
       DATABASE_URL: "${DATABASE_URL_DOCKER:?Set DATABASE_URL_DOCKER in .env}"
       API_BASE_URL: "http://api:8000"
+      SECRET_KEY: "${SECRET_KEY:?Set SECRET_KEY in .env}"
     ports:
-      - "8003:8000"
+      - "8003:8003"
 
   prometheus:
     image: prom/prometheus:v2.53.0

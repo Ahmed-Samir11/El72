@@ -427,6 +427,18 @@ class AppLocalizationsAr extends AppLocalizations {
   String get notNow => 'ليس الآن';
 
   @override
+  String get navTrackers => 'متتبعات';
+
+  @override
+  String get navDeals => 'صفقات';
+
+  @override
+  String get navChat => 'دردشة';
+
+  @override
+  String get navProfile => 'الملف الشخصي';
+
+  @override
   String get chatTitle => 'دردشة';
 
   @override

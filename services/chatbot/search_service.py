@@ -5,6 +5,7 @@ across all supported stores. The chatbot service uses Crawl4AI as a library
 (not an import from the scraper service) to keep the service isolated.
 """
 
+import asyncio
 import json
 import logging
 import re
@@ -17,6 +18,10 @@ from openai import AsyncOpenAI
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
+
+# Concurrency limit for multi-store search to avoid overwhelming the client.
+MAX_CONCURRENT_STORES = 4
+_search_semaphore = asyncio.Semaphore(MAX_CONCURRENT_STORES)
 
 # LM Studio Configuration (OpenAI-compatible local endpoint)
 LM_STUDIO_URL = "http://localhost:1234/v1"
@@ -387,6 +392,40 @@ class ChatbotSearchService:
 
         return best_product
 
+    async def _search_one_store(
+        self, query: str, store: StoreConfig
+    ) -> Optional[Dict[str, Any]]:
+        """Search a single store and return a result dict or None."""
+        async with _search_semaphore:
+            try:
+                extracted = await self._extract_search_results(query, store)
+                if not extracted or not extracted.products:
+                    return None
+
+                # Find the best matching product
+                best = self._find_best_match(query, extracted.products)
+                if not best:
+                    return None
+
+                # Resolve relative URLs
+                product_url = best.url
+                if not product_url.startswith("http"):
+                    product_url = f"{store.base_url}{product_url}"
+
+                return {
+                    "store_id": store.store_id,
+                    "store_name": store.store_name,
+                    "title": best.title,
+                    "price": best.price if best.price is not None else 0.0,
+                    "currency": best.currency,
+                    "url": product_url,
+                    "image_url": best.image_url or "",
+                    "in_stock": bool(best.in_stock),
+                }
+            except Exception as e:
+                logger.error(f"Search failed for store {store.store_id}: {e}")
+                return None
+
     async def search(
         self, query: str, max_price: Optional[float] = None
     ) -> List[Dict[str, Any]]:
@@ -399,45 +438,23 @@ class ChatbotSearchService:
         Returns:
             List of search result dicts, ranked by relevance
         """
+        # Fire concurrent searches across stores (bounded by semaphore).
+        tasks = [
+            self._search_one_store(query, store) for store in self.stores
+        ]
+        store_results = await asyncio.gather(*tasks, return_exceptions=True)
+
         results: List[Dict[str, Any]] = []
-
-        for store in self.stores:
-            try:
-                extracted = await self._extract_search_results(query, store)
-                if not extracted or not extracted.products:
-                    continue
-
-                # Find the best matching product
-                best = self._find_best_match(query, extracted.products)
-                if not best:
-                    continue
-
-                # Resolve relative URLs
-                product_url = best.url
-                if not product_url.startswith("http"):
-                    product_url = f"{store.base_url}{product_url}"
-
-                # Apply price filter
-                if best.price is not None and max_price is not None:
-                    if best.price > max_price:
-                        continue
-
-                results.append(
-                    {
-                        "store_id": store.store_id,
-                        "store_name": store.store_name,
-                        "title": best.title,
-                        "price": best.price if best.price is not None else 0.0,
-                        "currency": best.currency,
-                        "url": product_url,
-                        "image_url": best.image_url or "",
-                        "in_stock": bool(best.in_stock),
-                    }
-                )
-
-            except Exception as e:
-                logger.error(f"Search failed for store {store.store_id}: {e}")
+        for result in store_results:
+            if isinstance(result, Exception):
+                logger.error("Store search raised exception: %s", result)
                 continue
+            if result is None:
+                continue
+            # Apply price filter
+            if max_price is not None and result["price"] > max_price:
+                continue
+            results.append(result)
 
         # Rank by relevance: products with exact phrase match first, then by
         # token overlap. Since we already picked the best match per store,

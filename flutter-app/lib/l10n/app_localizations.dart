@@ -829,7 +829,30 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Not now'**
   String get notNow;
-}
+
+  /// Bottom navigation label for the Trackers tab.
+  ///
+  /// In en, this message translates to:
+  /// **'Trackers'**
+  String get navTrackers;
+
+  /// Bottom navigation label for the Deals tab.
+  ///
+  /// In en, this message translates to:
+  /// **'Deals'**
+  String get navDeals;
+
+  /// Bottom navigation label for the Chat tab.
+  ///
+  /// In en, this message translates to:
+  /// **'Chat'**
+  String get navChat;
+
+  /// Bottom navigation label for the Profile tab.
+  ///
+  /// In en, this message translates to:
+  /// **'Profile'**
+  String get navProfile;
 
 class _AppLocalizationsDelegate
     extends LocalizationsDelegate<AppLocalizations> {

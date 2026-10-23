@@ -1,7 +1,8 @@
 """Pydantic request/response models for the chatbot service."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
+from uuid import UUID
 
 from pydantic import BaseModel, Field
 
@@ -23,7 +24,7 @@ class ChatMessage(BaseModel):
     """A single chat message."""
 
     id: int
-    session_id: int
+    session_id: UUID
     role: str  # 'user' or 'bot'
     content: str
     created_at: datetime
@@ -32,7 +33,7 @@ class ChatMessage(BaseModel):
 class ChatSession(BaseModel):
     """A chat session with its messages."""
 
-    id: int
+    id: UUID
     user_id: int
     created_at: datetime
     updated_at: datetime
@@ -40,10 +41,14 @@ class ChatSession(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    """Request to send a message to the chatbot."""
+    """Request to send a message to the chatbot.
 
-    session_id: int
-    user_id: int
+    Note: user_id is not supplied by the client; it is resolved server-side
+    from the JWT token. If present, it is ignored.
+    """
+
+    session_id: Optional[UUID] = None
+    user_id: Optional[int] = None
     message: str
 
 
@@ -51,16 +56,23 @@ class ChatResponse(BaseModel):
     """Response from the chatbot."""
 
     message: str
-    session_id: int
+    session_id: UUID
     search_results: List[SearchResult] = Field(default_factory=list)
 
 
 class AddToFeedRequest(BaseModel):
-    """Request to add a search result to the user's feed (tracked items)."""
+    """Request to add a search result to the user's feed (tracked items).
 
-    session_id: int
-    user_id: int
-    result_id: str  # store_id:url hash or similar
+    Note: user_id is not supplied by the client; it is resolved server-side
+    from the JWT token. If present, it is ignored.
+
+    result_id may be None when the client wants to add the latest search
+    result without specifying a URL.
+    """
+
+    session_id: UUID
+    user_id: Optional[int] = None
+    result_id: Optional[str] = None  # store_id:url hash or similar
     target_price: Optional[float] = None
 
 
@@ -69,3 +81,15 @@ class HealthResponse(BaseModel):
 
     status: str = "ok"
     service: str = "chatbot"
+
+
+class AuthToken(BaseModel):
+    """JWT auth token passed in the Authorization header."""
+
+    access_token: str
+
+
+class ErrorResponse(BaseModel):
+    """Error response model."""
+
+    detail: str

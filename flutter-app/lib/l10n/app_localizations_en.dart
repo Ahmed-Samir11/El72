@@ -423,6 +423,18 @@ class AppLocalizationsEn extends AppLocalizations {
   String get notNow => 'Not now';
 
   @override
+  String get navTrackers => 'Trackers';
+
+  @override
+  String get navDeals => 'Deals';
+
+  @override
+  String get navChat => 'Chat';
+
+  @override
+  String get navProfile => 'Profile';
+
+  @override
   String get chatTitle => 'Chat';
 
   @override

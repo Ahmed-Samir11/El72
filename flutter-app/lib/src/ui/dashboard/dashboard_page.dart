@@ -40,14 +40,20 @@ class _DashboardPageState extends State<DashboardPage> {
         destinations: const [
           NavigationDestination(
             icon: Icon(Icons.track_changes),
-            label: 'Trackers',
+            label: AppLocalizations.of(context).navTrackers,
           ),
-          NavigationDestination(icon: Icon(Icons.local_offer), label: 'Deals'),
+          NavigationDestination(
+            icon: Icon(Icons.local_offer),
+            label: AppLocalizations.of(context).navDeals,
+          ),
           NavigationDestination(
             icon: Icon(Icons.chat),
-            label: 'Chat',
+            label: AppLocalizations.of(context).navChat,
           ),
-          NavigationDestination(icon: Icon(Icons.person), label: 'Profile'),
+          NavigationDestination(
+            icon: Icon(Icons.person),
+            label: AppLocalizations.of(context).navProfile,
+          ),
         ],
         onDestinationSelected: (i) => setState(() => index = i),
       ),

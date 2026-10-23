@@ -9,21 +9,37 @@ Endpoints:
 The chatbot service is isolated from other services: it uses Crawl4AI as a
 library for on-demand product search and calls the API service via REST
 (httpx) to create tracked items when a user taps "Add to Feed".
+
+All endpoints require a valid JWT Bearer token (issued by the API service).
+The token's `sub` claim is the user's phone number; the chatbot looks up the
+user in the shared operational PostgreSQL database to resolve the internal
+user_id. This prevents any client from impersonating another user or
+accessing another user's sessions.
 """
 
 import logging
 import os
 from typing import List, Optional
+from uuid import UUID
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.responses import JSONResponse
+from jose import JWTError, jwt
 from pydantic import BaseModel
+from slowapi import Limiter
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+from slowapi.util import get_remote_address
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from services.chatbot.models import (
+    AddToFeedRequest,
     ChatRequest,
     ChatResponse,
+    ErrorResponse,
     HealthResponse,
     SearchResult,
 )
@@ -38,7 +54,33 @@ logger = logging.getLogger(__name__)
 DATABASE_URL = os.getenv(
     "DATABASE_URL", "postgresql://elhaq:elhaq_pass@localhost:5432/elhaq"
 )
-API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
+API_BASE_URL = os.getenv("API_BASE_URL", "http://api:8000")
+
+# JWT configuration — must match the API service exactly.
+SECRET_KEY = os.getenv("SECRET_KEY")
+ALGORITHM = "HS256"
+
+if not SECRET_KEY:
+    logger.warning("SECRET_KEY is not set; JWT validation will fail for all requests.")
+
+# ---------------------------------------------------------------------------
+# Rate limiting
+# ---------------------------------------------------------------------------
+
+limiter = Limiter(key_func=get_remote_address)
+
+
+# ---------------------------------------------------------------------------
+# Rate limit exception handler
+# ---------------------------------------------------------------------------
+
+
+def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
+    return JSONResponse(
+        content={"detail": "Rate limit exceeded. Please try again later."},
+        status_code=429,
+    )
+
 
 # ---------------------------------------------------------------------------
 # Database setup
@@ -52,7 +94,6 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 # Dependencies
 # ---------------------------------------------------------------------------
 
-
 def get_db():
     """Yield a database session."""
     db = SessionLocal()
@@ -62,11 +103,73 @@ def get_db():
         db.close()
 
 
+security = HTTPBearer()
+
+
+def verify_jwt_token(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+) -> dict:
+    """Decode and validate the JWT Bearer token.
+
+    Returns the JWT payload dict. Raises HTTPException(401) on any failure.
+    """
+    if not SECRET_KEY:
+        raise HTTPException(
+            status_code=503, detail="JWT secret not configured on server"
+        )
+    try:
+        payload = jwt.decode(
+            credentials.credentials, SECRET_KEY, algorithms=[ALGORITHM]
+        )
+    except JWTError as e:
+        logger.warning("JWT validation failed: %s", e)
+        raise HTTPException(
+            status_code=401,
+            detail="Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from None
+    return payload
+
+
+def get_authenticated_user_id(
+    payload: dict = Depends(verify_jwt_token),
+    db: Session = Depends(get_db),
+) -> int:
+    """Resolve the authenticated user's internal ID from the JWT.
+
+    The JWT `sub` claim is the user's phone number. We look up the user in
+    the shared operational PostgreSQL database to obtain the internal
+    user_id. This ensures the client cannot supply an arbitrary user_id.
+    """
+    phone = payload.get("sub")
+    if not phone:
+        raise HTTPException(
+            status_code=401, detail="Token does not contain a user subject"
+        )
+
+    row = db.execute(
+        text("SELECT id FROM users WHERE phone = :phone"),
+        {"phone": phone},
+    ).fetchone()
+
+    if not row:
+        raise HTTPException(
+            status_code=401, detail="User not found"
+        )
+
+    return int(row.id)
+
+
 # ---------------------------------------------------------------------------
 # FastAPI app
 # ---------------------------------------------------------------------------
 
 app = FastAPI(title="El72 Chatbot")
+
+# Add rate limiting middleware and exception handler
+app.add_middleware(SlowAPIMiddleware)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Singleton search service instance
 search_service = ChatbotSearchService()
@@ -84,35 +187,57 @@ async def health():
 
 
 @app.post("/chatbot/message", response_model=ChatResponse)
+@limiter.limit("10/minute")
 async def send_message(
-    request: ChatRequest,
+    request: Request,
+    chat_request: ChatRequest,
+    user_id: int = Depends(get_authenticated_user_id),
     db: Session = Depends(get_db),
 ):
     """Send a message to the chatbot.
 
-    Parses intent, searches for products across stores, and returns results.
-    If the message is an "add_to_feed" action, creates a tracked item via the
-    API service.
+    Requires a valid JWT Bearer token. The authenticated user_id is used
+    for all session operations, preventing impersonation.
     """
-    # Ensure the session exists (idempotent)
-    _ensure_session(db, request.session_id, request.user_id)
+    # Ensure the session exists (server-generated UUID if not provided)
+    session_id = _ensure_session(db, chat_request.session_id, user_id)
 
     # Save user message
-    _save_message(db, request.session_id, "user", request.message)
+    _save_message(db, session_id, "user", chat_request.message)
 
-    # Check for add-to-feed action
-    if request.message.strip().lower() in ("add to feed", "add this", "track this"):
-        return await _handle_add_to_feed(request, db)
+    # Check for add-to-feed action.
+    # The client may send 'add to feed:<url>' to specify which result to add.
+    # Otherwise, the latest search result for the session is used.
+    msg = chat_request.message.strip().lower()
+    add_to_feed_requested = False
+    add_to_feed_url = None
+    if msg.startswith("add to feed:"):
+        add_to_feed_requested = True
+        add_to_feed_url = msg[len("add to feed:"):].strip()
+    elif msg in ("add to feed", "add this", "track this"):
+        add_to_feed_requested = True
+        add_to_feed_url = None  # use latest result
+
+    if add_to_feed_requested:
+        return await _handle_add_to_feed(
+            AddToFeedRequest(
+                session_id=session_id,
+                user_id=user_id,
+                result_id=add_to_feed_url,
+                target_price=None,
+            ),
+            db,
+        )
 
     # Parse intent and search
-    intent_result = await search_service.search_with_intent(request.message)
+    intent_result = await search_service.search_with_intent(chat_request.message)
     query = intent_result["query"]
     max_price = intent_result["max_price"]
     results = intent_result["results"]
 
     # Save search results to chat_search_results (denormalized for quick reads)
     for result in results:
-        _save_search_result(db, request.session_id, result)
+        _save_search_result(db, session_id, result)
 
     # Build bot response
     if not results:
@@ -130,7 +255,7 @@ async def send_message(
         )
 
     # Save bot message
-    _save_message(db, request.session_id, "bot", bot_message)
+    _save_message(db, session_id, "bot", bot_message)
 
     # Convert results to SearchResult models
     search_results = [
@@ -149,17 +274,19 @@ async def send_message(
 
     return ChatResponse(
         message=bot_message,
-        session_id=request.session_id,
+        session_id=session_id,
         search_results=search_results,
     )
 
 
 @app.get("/chatbot/sessions", response_model=List[dict])
+@limiter.limit("30/minute")
 async def list_sessions(
-    user_id: int,
+    request: Request,
+    user_id: int = Depends(get_authenticated_user_id),
     db: Session = Depends(get_db),
 ):
-    """List all chat sessions for a user."""
+    """List all chat sessions for the authenticated user."""
     rows = db.execute(
         text(
             "SELECT id, user_id, created_at, updated_at FROM chat_sessions "
@@ -170,7 +297,7 @@ async def list_sessions(
 
     return [
         {
-            "id": row.id,
+            "id": str(row.id),
             "user_id": row.user_id,
             "created_at": row.created_at.isoformat() if row.created_at else None,
             "updated_at": row.updated_at.isoformat() if row.updated_at else None,
@@ -180,20 +307,27 @@ async def list_sessions(
 
 
 @app.get("/chatbot/sessions/{session_id}", response_model=dict)
+@limiter.limit("30/minute")
 async def get_session(
-    session_id: int,
+    request: Request,
+    session_id: UUID,
+    user_id: int = Depends(get_authenticated_user_id),
     db: Session = Depends(get_db),
 ):
-    """Get a chat session with all its messages."""
-    session = db.execute(
+    """Get a chat session with all its messages.
+
+    Ownership is enforced: only the session's owner can read it.
+    """
+    # Verify ownership
+    row = db.execute(
         text(
-            "SELECT id, user_id, created_at, updated_at FROM chat_sessions "
-            "WHERE id = :session_id"
+            "SELECT id, user_id FROM chat_sessions "
+            "WHERE id = :session_id AND user_id = :user_id"
         ),
-        {"session_id": session_id},
+        {"session_id": str(session_id), "user_id": user_id},
     ).fetchone()
 
-    if not session:
+    if not row:
         raise HTTPException(status_code=404, detail="Chat session not found")
 
     messages = db.execute(
@@ -201,19 +335,17 @@ async def get_session(
             "SELECT id, role, content, created_at FROM chat_messages "
             "WHERE session_id = :session_id ORDER BY created_at"
         ),
-        {"session_id": session_id},
+        {"session_id": str(session_id)},
     ).fetchall()
 
     return {
-        "id": session.id,
-        "user_id": session.user_id,
-        "created_at": session.created_at.isoformat() if session.created_at else None,
-        "updated_at": session.updated_at.isoformat()
-        if session.updated_at
-        else None,
+        "id": str(row.id),
+        "user_id": row.user_id,
+        "created_at": None,
+        "updated_at": None,
         "messages": [
             {
-                "id": m.id,
+                "id": str(m.id),
                 "role": m.role,
                 "content": m.content,
                 "created_at": m.created_at.isoformat() if m.created_at else None,
@@ -228,28 +360,52 @@ async def get_session(
 # ---------------------------------------------------------------------------
 
 
-def _ensure_session(db: Session, session_id: int, user_id: int):
-    """Ensure a chat session row exists (idempotent)."""
+def _ensure_session(db: Session, session_id: Optional[UUID], user_id: int) -> UUID:
+    """Ensure a chat session row exists.
+
+    If session_id is provided and a row with that id already exists for this
+    user, reuse it. Otherwise generate a new server-side UUID.
+    """
+    if session_id is not None:
+        # Verify the session belongs to this user before reusing
+        existing = db.execute(
+            text(
+                "SELECT id FROM chat_sessions "
+                "WHERE id = :session_id AND user_id = :user_id"
+            ),
+            {"session_id": str(session_id), "user_id": user_id},
+        ).fetchone()
+        if existing:
+            return existing.id
+
+    # Generate a new server-side UUID
+    import uuid as _uuid
+
+    new_id = _uuid.uuid4()
     db.execute(
         text(
             "INSERT INTO chat_sessions (id, user_id) "
-            "VALUES (:session_id, :user_id) "
-            "ON CONFLICT (id) DO NOTHING"
+            "VALUES (:session_id, :user_id)"
         ),
-        {"session_id": session_id, "user_id": user_id},
+        {"session_id": str(new_id), "user_id": user_id},
     )
     db.commit()
+    return new_id
 
 
-def _save_message(db: Session, session_id: int, role: str, content: str):
+def _save_message(db: Session, session_id: UUID, role: str, content: str):
     """Save a chat message to the database."""
+    import uuid as _uuid
+
+    message_id = _uuid.uuid4()
     db.execute(
         text(
-            "INSERT INTO chat_messages (session_id, role, content) "
-            "VALUES (:session_id, :role, :content)"
+            "INSERT INTO chat_messages (id, session_id, role, content) "
+            "VALUES (:message_id, :session_id, :role, :content)"
         ),
         {
-            "session_id": session_id,
+            "message_id": str(message_id),
+            "session_id": str(session_id),
             "role": role,
             "content": content,
         },
@@ -257,16 +413,20 @@ def _save_message(db: Session, session_id: int, role: str, content: str):
     db.commit()
 
 
-def _save_search_result(db: Session, session_id: int, result: dict):
+def _save_search_result(db: Session, session_id: UUID, result: dict):
     """Save a search result to the database (denormalized for quick reads)."""
+    import uuid as _uuid
+
+    result_id = _uuid.uuid4()
     db.execute(
         text(
             "INSERT INTO chat_search_results "
-            "(session_id, store_id, product_title, price_local, currency, url, image_url) "
-            "VALUES (:session_id, :store_id, :title, :price, :currency, :url, :image_url)"
+            "(id, session_id, store_id, product_title, price_local, currency, url, image_url) "
+            "VALUES (:result_id, :session_id, :store_id, :title, :price, :currency, :url, :image_url)"
         ),
         {
-            "session_id": session_id,
+            "result_id": str(result_id),
+            "session_id": str(session_id),
             "store_id": result["store_id"],
             "title": result["title"],
             "price": result["price"],
@@ -279,24 +439,36 @@ def _save_search_result(db: Session, session_id: int, result: dict):
 
 
 async def _handle_add_to_feed(
-    request: ChatRequest,
+    request: AddToFeedRequest,
     db: Session,
 ) -> ChatResponse:
     """Handle an 'add to feed' action.
 
-    Looks up the most recent search result for the session and creates a
-    tracked item via the API service.
+    If [request.result_id] is a URL, looks up that specific search result.
+    Otherwise falls back to the most recent search result for the session.
+    Creates a tracked item via the API service.
     """
-    # Find the most recent search result for this session
-    row = db.execute(
-        text(
-            "SELECT store_id, product_title, price_local, currency, url, image_url "
-            "FROM chat_search_results "
-            "WHERE session_id = :session_id "
-            "ORDER BY created_at DESC LIMIT 1"
-        ),
-        {"session_id": request.session_id},
-    ).fetchone()
+    # Find the search result for this session.
+    if request.result_id:
+        row = db.execute(
+            text(
+                "SELECT store_id, product_title, price_local, currency, url, image_url "
+                "FROM chat_search_results "
+                "WHERE session_id = :session_id AND url = :url "
+                "ORDER BY created_at DESC LIMIT 1"
+            ),
+            {"session_id": str(request.session_id), "url": request.result_id},
+        ).fetchone()
+    else:
+        row = db.execute(
+            text(
+                "SELECT store_id, product_title, price_local, currency, url, image_url "
+                "FROM chat_search_results "
+                "WHERE session_id = :session_id "
+                "ORDER BY created_at DESC LIMIT 1"
+            ),
+            {"session_id": str(request.session_id)},
+        ).fetchone()
 
     if not row:
         _save_message(
@@ -311,13 +483,17 @@ async def _handle_add_to_feed(
     url = row.url
     title = row.product_title
     price = float(row.price_local) if row.price_local else None
+    target_price = request.target_price or price
+    store_id = row.store_id
+    currency = row.currency or "EGP"
+    image_url = row.image_url or ""
 
     # Call the API service to create a tracked item
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             payload = {"url": url}
-            if price and price > 0:
-                payload["target_price"] = price
+            if target_price and target_price > 0:
+                payload["target_price"] = target_price
 
             response = await client.post(
                 f"{API_BASE_URL}/tracked-items/from-url",
@@ -325,15 +501,16 @@ async def _handle_add_to_feed(
             )
 
             if response.status_code == 402:
+                detail = response.json().get("detail", "Insufficient credits")
                 _save_message(
                     db,
                     request.session_id,
                     "bot",
-                    "You don't have enough credits to create a tracker. "
+                    f"You don't have enough credits to create a tracker: {detail}. "
                     "Consider upgrading your plan.",
                 )
                 return ChatResponse(
-                    message="Insufficient credits to add this tracker. "
+                    message=f"Insufficient credits: {detail}. "
                     "Upgrade your plan to continue.",
                     session_id=request.session_id,
                     search_results=[],

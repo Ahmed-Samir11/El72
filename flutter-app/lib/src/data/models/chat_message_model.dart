@@ -1,7 +1,7 @@
 /// Model for a chat message as returned by the chatbot service.
 class ChatMessageModel {
   final int id;
-  final int sessionId;
+  final String sessionId; // UUID string from the server
   final String role; // 'user' or 'bot'
   final String content;
   final DateTime createdAt;
@@ -17,7 +17,7 @@ class ChatMessageModel {
   factory ChatMessageModel.fromJson(Map<String, dynamic> json) {
     return ChatMessageModel(
       id: (json['id'] as num?)?.toInt() ?? 0,
-      sessionId: (json['session_id'] as num?)?.toInt() ?? 0,
+      sessionId: json['session_id'] as String? ?? '',
       role: json['role'] as String? ?? '',
       content: json['content'] as String? ?? '',
       createdAt: _parseDate(json['created_at']),
@@ -33,7 +33,7 @@ class ChatMessageModel {
 
 /// Model for a chat session as returned by the chatbot service.
 class ChatSessionModel {
-  final int id;
+  final String id; // UUID string from the server
   final int userId;
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -50,7 +50,7 @@ class ChatSessionModel {
   factory ChatSessionModel.fromJson(Map<String, dynamic> json) {
     final messagesList = json['messages'] as List<dynamic>? ?? const [];
     return ChatSessionModel(
-      id: (json['id'] as num?)?.toInt() ?? 0,
+      id: json['id'] as String? ?? '',
       userId: (json['user_id'] as num?)?.toInt() ?? 0,
       createdAt: _parseDate(json['created_at']),
       updatedAt: _parseDate(json['updated_at']),
@@ -105,7 +105,7 @@ class SearchResultModel {
 /// Response model for `POST /chatbot/message`.
 class ChatResponseModel {
   final String message;
-  final int sessionId;
+  final String sessionId; // UUID string from the server
   final List<SearchResultModel> searchResults;
 
   const ChatResponseModel({
@@ -118,7 +118,7 @@ class ChatResponseModel {
     final resultsList = json['search_results'] as List<dynamic>? ?? const [];
     return ChatResponseModel(
       message: json['message'] as String? ?? '',
-      sessionId: (json['session_id'] as num?)?.toInt() ?? 0,
+      sessionId: json['session_id'] as String? ?? '',
       searchResults:
           resultsList.map((r) => SearchResultModel.fromJson(r)).toList(),
     );

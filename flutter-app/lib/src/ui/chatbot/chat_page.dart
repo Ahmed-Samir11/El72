@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../l10n/app_localizations.dart';
-import '../../data/repositories/chatbot_repository.dart';
 import '../../data/models/chat_message_model.dart';
 import '../../data/models/search_result_model.dart';
+import '../../data/repositories/chatbot_repository.dart';
 import '../chatbot/chat_widgets.dart';
 import '../chatbot/search_result_card.dart';
 
@@ -12,19 +13,43 @@ import '../chatbot/search_result_card.dart';
 /// The user types a natural-language query (e.g. "gaming laptop under 50000 EGP"),
 /// the chatbot searches across all supported stores, and results are displayed
 /// with an "Add to Feed" button that creates a tracked item via the API service.
-class ChatPage extends StatefulWidget {
+///
+/// Authentication: all requests include the stored JWT access token as a
+/// Bearer header (added by [ChatbotRepository]). The chatbot validates the
+/// token and resolves the user_id from the token's `sub` claim (phone number)
+/// by looking up the user in the shared operational database. The client never
+/// supplies a user_id.
+class ChatPage extends ConsumerWidget {
   const ChatPage({super.key});
 
   @override
-  State<ChatPage> createState() => _ChatPageState();
+  Widget build(BuildContext context, WidgetRef ref) {
+    final repository = ref.read(chatbotRepositoryProvider);
+    return _ChatPageBody(repository: repository);
+  }
 }
 
-class _ChatPageState extends State<ChatPage> {
+/// Stateful UI for the chat page. Holds all mutable state (messages, input,
+/// session id, sending flag).
+class _ChatPageBody extends StatefulWidget {
+  final ChatbotRepository repository;
+
+  const _ChatPageBody({required this.repository, super.key});
+
+  @override
+  State<_ChatPageBody> createState() => _ChatPageBodyState();
+}
+
+class _ChatPageBodyState extends State<_ChatPageBody> {
   final TextEditingController _controller = TextEditingController();
   final List<ChatMessageModel> _messages = [];
   final List<SearchResultModel> _searchResults = [];
   bool _isSending = false;
-  int? _sessionId;
+  String? _sessionId;
+
+  final ChatbotRepository _repository;
+
+  _ChatPageBodyState(this._repository);
 
   @override
   void dispose() {
@@ -32,14 +57,17 @@ class _ChatPageState extends State<ChatPage> {
     super.dispose();
   }
 
-  /// Generate a random session ID for this chat session.
-  int _generateSessionId() {
-    final now = DateTime.now();
-    return (now.millisecondsSinceEpoch % 1000000).abs();
+  /// Generate a client-side session ID. The server validates the session
+  /// exists and belongs to the authenticated user (derived from the JWT).
+  String _generateSessionId() {
+    final now = DateTime.now().millisecondsSinceEpoch.toString();
+    return now + Random().nextInt(10000).toString();
   }
 
   /// Send a message to the chatbot and handle the response.
   Future<void> _sendMessage() async {
+    if (!mounted) return;
+
     final text = _controller.text.trim();
     if (text.isEmpty) return;
 
@@ -62,12 +90,12 @@ class _ChatPageState extends State<ChatPage> {
     _controller.clear();
 
     try {
-      final repository = ChatbotRepository();
-      final response = await repository.sendMessage(
+      final response = await _repository.sendMessage(
         sessionId: _sessionId!,
-        userId: 1, // TODO: Replace with actual user ID from auth
         message: text,
       );
+
+      if (!mounted) return;
 
       // Add bot message
       final botMsg = ChatMessageModel(
@@ -83,11 +111,14 @@ class _ChatPageState extends State<ChatPage> {
         _isSending = false;
       });
     } catch (e) {
+      if (!mounted) return;
+
       final errorMsg = ChatMessageModel(
         id: _messages.length + 1,
         sessionId: _sessionId!,
         role: 'bot',
-        content: 'Sorry, I couldn\'t process your request. Please try again.',
+        content:
+            'Sorry, I couldn\'t process your request. Please try again.',
         createdAt: DateTime.now(),
       );
       setState(() {
@@ -102,16 +133,17 @@ class _ChatPageState extends State<ChatPage> {
 
   /// Handle "Add to Feed" tap on a search result.
   Future<void> _addToFeed(SearchResultModel result) async {
-    // Send "add to feed" to the chatbot, which creates a tracker via the API.
+    if (!mounted) return;
+
     setState(() => _isSending = true);
 
     try {
-      final repository = ChatbotRepository();
-      await repository.sendMessage(
+      await _repository.sendMessage(
         sessionId: _sessionId!,
-        userId: 1, // TODO: Replace with actual user ID from auth
-        message: 'add to feed',
+        message: 'add to feed:${result.url}',
       );
+
+      if (!mounted) return;
 
       // Show success
       ScaffoldMessenger.of(context).showSnackBar(
@@ -122,6 +154,8 @@ class _ChatPageState extends State<ChatPage> {
         ),
       );
     } catch (e) {
+      if (!mounted) return;
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -130,6 +164,7 @@ class _ChatPageState extends State<ChatPage> {
         ),
       );
     } finally {
+      if (!mounted) return;
       setState(() => _isSending = false);
     }
   }
@@ -157,7 +192,7 @@ class _ChatPageState extends State<ChatPage> {
       ),
       body: Column(
         children: [
-          // Message list
+          // Message list — Expanded so it fills available height
           Expanded(
             child: _messages.isEmpty
                 ? Center(
@@ -186,29 +221,32 @@ class _ChatPageState extends State<ChatPage> {
                   ),
           ),
 
-          // Search results from the last bot response
+          // Search results from the last bot response.
+          // Wrapped in Expanded so the inner ListView has bounded height.
           if (_searchResults.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    l10n.searchResults,
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 8),
-                  ListView.builder(
-                    itemCount: _searchResults.length,
-                    itemBuilder: (context, index) {
-                      final result = _searchResults[index];
-                      return SearchResultCard(
-                        result: result,
-                        onAddToFeed: () => _addToFeed(result),
-                      );
-                    },
-                  ),
-                ],
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      l10n.searchResults,
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 8),
+                    ListView.builder(
+                      itemCount: _searchResults.length,
+                      itemBuilder: (context, index) {
+                        final result = _searchResults[index];
+                        return SearchResultCard(
+                          result: result,
+                          onAddToFeed: () => _addToFeed(result),
+                        );
+                      },
+                    ),
+                  ],
+                ),
               ),
             ),
 
@@ -246,5 +284,3 @@ class _ChatPageState extends State<ChatPage> {
     );
   }
 }
-
-

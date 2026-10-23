@@ -1,9 +1,7 @@
 # Test dependencies for CI (lint-and-tests job).
 #
 # These are the runtime imports required to *collect and run* the unit tests in
-# services/*/test_*.py. They intentionally EXCLUDE the heavy scraping/ML stack
-# (crawl4ai, torch, transformers) and openai, because no tested module imports
-# them directly — this keeps CI fast and avoids large downloads.
+# services/*/test_*.py.
 #
 # The `playwright` Python package is included (store_scrapers.py imports it for
 # type hints), but the Playwright *browser* binaries are NOT installed; the
@@ -41,3 +39,7 @@ psutil>=5.9.0
 # paymob_client.py (services/common) imports requests for the Paymob REST
 # calls; required to collect the card-payment tests.
 requests>=2.31.0
+# chatbot/search_service.py imports crawl4ai and openai directly; required
+# to collect the chatbot tests.
+crawl4ai>=0.4.0
+openai>=1.0.0
