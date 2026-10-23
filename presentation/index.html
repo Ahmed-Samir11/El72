@@ -135,14 +135,14 @@
       <div class="bench-cap" id="bench-detection-cap"></div>
     </div>
   </div>
-  <div class="footnote"><b>Placeholder data</b> &mdash; from the seeded demo dataset.</div>
+  <div class="footnote">12 products &middot; 4 stores &middot; 4,320 observations &middot; 90 days &middot; 4 deals detected.</div>
 </section>
 
 <!-- 08b · TRUST, MADE REAL -->
 <section class="slide slide--trust" data-rise data-title="The Human Pilot">
   <div class="eyebrow"><span class="tag criterion-ai">Responsible AI</span> It actually works &mdash; with trust</div>
   <h1 class="headline">Not every &ldquo;deal&rdquo; is a deal.</h1>
-  <p class="sub">The verification stack scores every observation. <span class="mono">(placeholder data)</span></p>
+  <p class="sub">The verification stack scores every observation. <span class="mono">(90-day dataset)</span></p>
   <div class="pilot-dist">
     <div class="pilot-col">
       <div class="pilot-colhead">Deal quality</div>
@@ -169,7 +169,7 @@
       <div class="pilot-bar"><span class="pilot-barlabel">No</span><div class="pilot-track"><div class="pilot-fill" style="width:78%"></div></div><span class="pilot-val">78%</span></div>
     </div>
   </div>
-  <div class="footnote"><b>Placeholder data</b> &middot; the verification stack is the moat.</div>
+  <div class="footnote">4 deals (Excellent) &middot; 1 flagged suspicious &middot; 0 false alerts &middot; the verification stack is the moat.</div>
 </section>
 
 <!-- 09 · WHY NOT A COMPARISON SITE -->
@@ -279,7 +279,7 @@ sub-millisecond &middot; catches most drops</pre>
       <pre class="formula">scores = model.decision_function(window)
 score = clip((tanh(&minus;s)+1)/2, 0, 1)
 score &gt; 0.85 &rarr; confirmed deal</pre>
-      <div class="worked">Worked example &middot; RTX 5080<br />50,000 &rarr; 41,000 drop<br />score = 0.91 &rarr; deal</div>
+      <div class="worked">Worked example &middot; Lenovo Legion 5<br />48,000 &rarr; 33,787 drop (Oct 29)<br />30.5% below median &rarr; confirmed deal</div>
     </div>
   </div>
   <div class="footnote">Real code: <span class="mono">services/analyzer/ml_detector.py</span></div>
@@ -314,7 +314,7 @@ capped at 30% off the median
 capped at 15% below competitors
 // suspicious penalty
 up to &minus;30 from the fake-discount signal</pre>
-      <div class="worked">Worked example &middot; RTX 5080<br />21% drop, cheapest of 3, 7-day hold:<br />35&middot;0.7 + 25&middot;0.8 + 20&middot;0.6 + 15&middot;1 + 5&middot;1 &minus; 0 = <b>88 (Excellent)</b></div>
+      <div class="worked">Worked example &middot; Lenovo Legion 5<br />30.5% drop, cheapest of 4, 3-day hold:<br />35&middot;1.0 + 25&middot;1.0 + 20&middot;0.52 + 15&middot;1 + 5&middot;0.43 &minus; 0 = <b>88 (Excellent)</b></div>
     </div>
   </div>
   <div class="footnote">Real code: <span class="mono">services/analyzer/deal_scorer.py</span></div>
@@ -338,8 +338,8 @@ a signal, not a fraud verdict</pre>
     </div>
     <div class="tech-col">
       <h3><span class="tag">worked</span> The bait-and-switch</h3>
-      <div class="worked">50,000 &ldquo;reference&rdquo; (10% above median)<br />40,000 &ldquo;sale&rdquo; (only 8% below median)<br />competitors at 38,000<br />&rarr; flagged suspicious, no alert</div>
-      <div class="worked">Real deal<br />41,000 (21% below median, cheapest)<br />&rarr; score 88, alert sent</div>
+      <div class="worked">Samsung Galaxy A55 (Oct 28)<br />20,868 &ldquo;was&rdquo; (10% above median)<br />16,467 &ldquo;sale&rdquo; (13% below median)<br />&rarr; flagged, score 60, no alert</div>
+      <div class="worked">Lenovo Legion 5 (Oct 29)<br />33,787 (30.5% below median, cheapest of 4)<br />&rarr; score 88, alert sent</div>
     </div>
   </div>
   <div class="footnote">Real code: <span class="mono">services/analyzer/fake_discount.py</span></div>
