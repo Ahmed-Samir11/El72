@@ -205,30 +205,6 @@ async def send_message(
     # Save user message
     _save_message(db, session_id, "user", chat_request.message)
 
-    # Check for add-to-feed action.
-    # The client may send 'add to feed:<url>' to specify which result to add.
-    # Otherwise, the latest search result for the session is used.
-    msg = chat_request.message.strip().lower()
-    add_to_feed_requested = False
-    add_to_feed_url = None
-    if msg.startswith("add to feed:"):
-        add_to_feed_requested = True
-        add_to_feed_url = msg[len("add to feed:"):].strip()
-    elif msg in ("add to feed", "add this", "track this"):
-        add_to_feed_requested = True
-        add_to_feed_url = None  # use latest result
-
-    if add_to_feed_requested:
-        return await _handle_add_to_feed(
-            AddToFeedRequest(
-                session_id=session_id,
-                user_id=user_id,
-                result_id=add_to_feed_url,
-                target_price=None,
-            ),
-            db,
-        )
-
     # Parse intent and search
     intent_result = await search_service.search_with_intent(chat_request.message)
     query = intent_result["query"]
@@ -276,6 +252,31 @@ async def send_message(
         message=bot_message,
         session_id=session_id,
         search_results=search_results,
+    )
+
+
+@app.post("/chatbot/add-to-feed", response_model=ChatResponse)
+@limiter.limit("10/minute")
+async def add_to_feed(
+    request: Request,
+    add_to_feed_request: AddToFeedRequest,
+    user_id: int = Depends(get_authenticated_user_id),
+    db: Session = Depends(get_db),
+):
+    """Add a search result to the user's tracking feed.
+
+    Accepts a session_id and an optional product_url. If product_url is
+    provided, looks up that specific search result. Otherwise falls back
+    to the most recent search result for the session.
+    """
+    return await _handle_add_to_feed(
+        AddToFeedRequest(
+            session_id=add_to_feed_request.session_id,
+            user_id=user_id,
+            result_id=add_to_feed_request.result_id,
+            target_price=add_to_feed_request.target_price,
+        ),
+        db,
     )
 
 

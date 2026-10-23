@@ -4,6 +4,27 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../config.dart';
 import '../models/chat_message_model.dart';
 
+/// Retry a request with exponential backoff for transient failures.
+///
+/// [maxRetries] is the maximum number of attempts (including the first).
+/// Backoff: 1s, 2s, 4s...
+Future<T> _retry<T>(Future<T> Function() future, int maxRetries) async {
+  int attempt = 0;
+  while (attempt < maxRetries) {
+    try {
+      return await future();
+    } catch (e) {
+      attempt++;
+      if (attempt >= maxRetries) rethrow;
+      // Exponential backoff: 1s, 2s, 4s...
+      await Future.delayed(const Duration(seconds: 1) << attempt);
+    }
+  }
+  // Unreachable but satisfies the analyzer.
+  throw StateError('Retry loop exited without result');
+}
+
+
 /// Data source for the chatbot service (`services/chatbot`).
 ///
 /// The chatbot is a standalone FastAPI service that:
@@ -51,21 +72,27 @@ class ChatbotRepository {
 
   /// Send a message to the chatbot and get the response with search results.
   ///
-  /// Throws [DioException] on HTTP errors.
+  /// Retries transient failures up to 3 times with exponential backoff.
+  /// Throws [DioException] on HTTP errors after retries are exhausted.
   Future<ChatResponseModel> sendMessage({
-    required int sessionId,
+    required String sessionId,
     required String message,
   }) async {
     final options = RequestOptions(
       method: 'POST',
       path: '/chatbot/message',
       data: {
-        'session_id': sessionId.toString(),
+        'session_id': sessionId,
         'message': message,
       },
     );
     await _addAuthHeader(options);
 
+    return await _retry(() => _fetchMessage(options), 3);
+  }
+
+  /// Internal fetch for sendMessage, extracted for retry.
+  Future<ChatResponseModel> _fetchMessage(RequestOptions options) async {
     final response = await _dio.fetch(options);
 
     if (response.statusCode == 200 && response.data is Map<String, dynamic>) {
@@ -79,6 +106,11 @@ class ChatbotRepository {
     final options = RequestOptions(method: 'GET', path: '/chatbot/sessions');
     await _addAuthHeader(options);
 
+    return await _retry(() => _fetchSessions(options), 3);
+  }
+
+  /// Internal fetch for getSessions, extracted for retry.
+  Future<List<ChatSessionModel>> _fetchSessions(RequestOptions options) async {
     final response = await _dio.fetch(options);
 
     if (response.statusCode == 200 && response.data is List) {
@@ -90,14 +122,53 @@ class ChatbotRepository {
     throw Exception('Unexpected response from chatbot: ${response.statusCode}');
   }
 
+  /// Add a search result to the user's tracking feed.
+  ///
+  /// Uses a dedicated endpoint instead of encoding the action in message text.
+  /// Throws [DioException] on HTTP errors (e.g., 402 for insufficient credits).
+  Future<ChatResponseModel> addToFeed({
+    required String sessionId,
+    String? productUrl,
+    double? targetPrice,
+  }) async {
+    final options = RequestOptions(
+      method: 'POST',
+      path: '/chatbot/add-to-feed',
+      data: {
+        'session_id': sessionId,
+        ...(productUrl != null ? {'product_url': productUrl} : {}),
+        ...(targetPrice != null ? {'target_price': targetPrice} : {}),
+      },
+    );
+    await _addAuthHeader(options);
+
+    return await _retry(() => _fetchAddToFeed(options), 3);
+  }
+
+  /// Internal fetch for addToFeed, extracted for retry.
+  Future<ChatResponseModel> _fetchAddToFeed(RequestOptions options) async {
+    final response = await _dio.fetch(options);
+
+    if (response.statusCode == 200 && response.data is Map<String, dynamic>) {
+      return ChatResponseModel.fromJson(response.data as Map<String, dynamic>);
+    }
+    // Re-throw non-2xx responses so the caller can handle 402, etc.
+    throw Exception('Unexpected response from chatbot: ${response.statusCode}');
+  }
+
   /// Get a single chat session with all its messages.
-  Future<ChatSessionModel> getSession({required int sessionId}) async {
+  Future<ChatSessionModel> getSession({required String sessionId}) async {
     final options = RequestOptions(
       method: 'GET',
       path: '/chatbot/sessions/$sessionId',
     );
     await _addAuthHeader(options);
 
+    return await _retry(() => _fetchSession(options), 3);
+  }
+
+  /// Internal fetch for getSession, extracted for retry.
+  Future<ChatSessionModel> _fetchSession(RequestOptions options) async {
     final response = await _dio.fetch(options);
 
     if (response.statusCode == 200 && response.data is Map<String, dynamic>) {

@@ -15,19 +15,64 @@ class ChatMessageModel {
   });
 
   factory ChatMessageModel.fromJson(Map<String, dynamic> json) {
+    final id = json['id'] as int?;
+    final sessionId = json['session_id'] as String?;
+    final role = json['role'] as String?;
+    final content = json['content'] as String?;
+    final createdAt = _parseDate(json['created_at']);
+
+    // Required fields must be present; throw if missing to surface data errors.
+    if (id == null) {
+      throw FormatException('ChatMessageModel: missing required field "id"');
+    }
+    if (sessionId == null) {
+      throw FormatException('ChatMessageModel: missing required field "session_id"');
+    }
+    if (role == null) {
+      throw FormatException('ChatMessageModel: missing required field "role"');
+    }
+    if (content == null) {
+      throw FormatException('ChatMessageModel: missing required field "content"');
+    }
+    if (createdAt == null) {
+      throw FormatException('ChatMessageModel: missing required field "created_at"');
+    }
+
     return ChatMessageModel(
-      id: (json['id'] as num?)?.toInt() ?? 0,
-      sessionId: json['session_id'] as String? ?? '',
-      role: json['role'] as String? ?? '',
-      content: json['content'] as String? ?? '',
-      createdAt: _parseDate(json['created_at']),
+      id: id,
+      sessionId: sessionId,
+      role: role,
+      content: content,
+      createdAt: createdAt,
     );
   }
 
-  static DateTime? _parseDate(Object? value) {
-    if (value == null) return null;
+  /// Parse an ISO 8601 date string robustly.
+  ///
+  /// Python's datetime.isoformat() may produce strings with microsecond
+  /// precision and timezone offsets (e.g. "2026-10-23T17:09:22.123456+00:00").
+  /// Dart's DateTime.tryParse handles most ISO 8601 variants, but we normalize
+  /// common edge cases to avoid silent nulls.
+  static DateTime _parseDate(Object? value) {
+    if (value == null) {
+      throw FormatException('ChatMessageModel: created_at is null');
+    }
     if (value is DateTime) return value;
-    return DateTime.tryParse(value.toString());
+
+    final s = value.toString();
+    try {
+      return DateTime.parse(s);
+    } on FormatException {
+      // Try stripping timezone offset if present
+      final trimmed = s.replaceAll(RegExp(r'[+-]\\d{2}:\\d{2}$'), '');
+      try {
+        return DateTime.parse(trimmed);
+      } on FormatException {
+        throw FormatException(
+          'ChatMessageModel: cannot parse date "$s"',
+        );
+      }
+    }
   }
 }
 
@@ -48,21 +93,57 @@ class ChatSessionModel {
   });
 
   factory ChatSessionModel.fromJson(Map<String, dynamic> json) {
-    final messagesList = json['messages'] as List<dynamic>? ?? const [];
+    final id = json['id'] as String?;
+    final userId = json['user_id'] as int?;
+    final createdAt = _parseDate(json['created_at']);
+    final updatedAt = _parseDate(json['updated_at']);
+    final messagesList = json['messages'] as List<dynamic>?;
+
+    // Required fields must be present; throw if missing to surface data errors.
+    if (id == null) {
+      throw FormatException('ChatSessionModel: missing required field "id"');
+    }
+    if (userId == null) {
+      throw FormatException('ChatSessionModel: missing required field "user_id"');
+    }
+    if (createdAt == null) {
+      throw FormatException('ChatSessionModel: missing required field "created_at"');
+    }
+    if (updatedAt == null) {
+      throw FormatException('ChatSessionModel: missing required field "updated_at"');
+    }
+
     return ChatSessionModel(
-      id: json['id'] as String? ?? '',
-      userId: (json['user_id'] as num?)?.toInt() ?? 0,
-      createdAt: _parseDate(json['created_at']),
-      updatedAt: _parseDate(json['updated_at']),
+      id: id,
+      userId: userId,
+      createdAt: createdAt,
+      updatedAt: updatedAt,
       messages:
-          messagesList.map((m) => ChatMessageModel.fromJson(m)).toList(),
+          (messagesList ?? const []).map((m) => ChatMessageModel.fromJson(m)).toList(),
     );
   }
 
-  static DateTime? _parseDate(Object? value) {
-    if (value == null) return null;
+  /// Parse an ISO 8601 date string robustly.
+  static DateTime _parseDate(Object? value) {
+    if (value == null) {
+      throw FormatException('ChatSessionModel: date field is null');
+    }
     if (value is DateTime) return value;
-    return DateTime.tryParse(value.toString());
+
+    final s = value.toString();
+    try {
+      return DateTime.parse(s);
+    } on FormatException {
+      // Try stripping timezone offset if present
+      final trimmed = s.replaceAll(RegExp(r'[+-]\\d{2}:\\d{2}$'), '');
+      try {
+        return DateTime.parse(trimmed);
+      } on FormatException {
+        throw FormatException(
+          'ChatSessionModel: cannot parse date "$s"',
+        );
+      }
+    }
   }
 }
 
@@ -89,15 +170,41 @@ class SearchResultModel {
   });
 
   factory SearchResultModel.fromJson(Map<String, dynamic> json) {
+    final storeId = json['store_id'] as String?;
+    final storeName = json['store_name'] as String?;
+    final title = json['title'] as String?;
+    final price = (json['price'] as num?)?.toDouble();
+    final currency = json['currency'] as String?;
+    final url = json['url'] as String?;
+    final imageUrl = json['image_url'] as String?;
+    final inStock = json['in_stock'] as bool?;
+
+    // Required fields must be present; throw if missing to surface data errors.
+    if (storeId == null) {
+      throw FormatException('SearchResultModel: missing required field "store_id"');
+    }
+    if (storeName == null) {
+      throw FormatException('SearchResultModel: missing required field "store_name"');
+    }
+    if (title == null) {
+      throw FormatException('SearchResultModel: missing required field "title"');
+    }
+    if (price == null) {
+      throw FormatException('SearchResultModel: missing required field "price"');
+    }
+    if (url == null) {
+      throw FormatException('SearchResultModel: missing required field "url"');
+    }
+
     return SearchResultModel(
-      storeId: json['store_id'] as String? ?? '',
-      storeName: json['store_name'] as String? ?? '',
-      title: json['title'] as String? ?? '',
-      price: (json['price'] as num?)?.toDouble() ?? 0.0,
-      currency: json['currency'] as String? ?? 'EGP',
-      url: json['url'] as String? ?? '',
-      imageUrl: json['image_url'] as String? ?? '',
-      inStock: json['in_stock'] as bool? ?? true,
+      storeId: storeId,
+      storeName: storeName ?? '',
+      title: title,
+      price: price,
+      currency: currency ?? 'EGP',
+      url: url,
+      imageUrl: imageUrl ?? '',
+      inStock: inStock ?? true,
     );
   }
 }
@@ -115,12 +222,22 @@ class ChatResponseModel {
   });
 
   factory ChatResponseModel.fromJson(Map<String, dynamic> json) {
-    final resultsList = json['search_results'] as List<dynamic>? ?? const [];
+    final message = json['message'] as String?;
+    final sessionId = json['session_id'] as String?;
+    final resultsList = json['search_results'] as List<dynamic>?;
+
+    if (message == null) {
+      throw FormatException('ChatResponseModel: missing required field "message"');
+    }
+    if (sessionId == null) {
+      throw FormatException('ChatResponseModel: missing required field "session_id"');
+    }
+
     return ChatResponseModel(
-      message: json['message'] as String? ?? '',
-      sessionId: json['session_id'] as String? ?? '',
+      message: message,
+      sessionId: sessionId,
       searchResults:
-          resultsList.map((r) => SearchResultModel.fromJson(r)).toList(),
+          (resultsList ?? const []).map((r) => SearchResultModel.fromJson(r)).toList(),
     );
   }
 }

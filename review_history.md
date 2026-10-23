@@ -13121,3 +13121,240 @@ Model: local/qwen-27b
 Files changed: 21
 WARNING: Diff truncated from 86353 to 50000 chars
 ERROR during review: Connection error.
+## PR Review: feat: chatbot service with search and add-to-feed
+Model: local/qwen-27b
+Files changed: 53
+WARNING: Diff truncated from 1730708 to 50000 chars
+
+### Raw LLM Response
+{
+  "summary": "This PR adds a new chatbot FastAPI service (port 8003) with Flutter integration for natural-language product search and add-to-feed functionality. The backend uses Crawl4AI for cross-store search and calls the API service to add items to the feed. However, the PR is polluted with unrelated files from other PRs, and there are critical type mismatches in the Flutter code between client-generated String session IDs and the repository's int parameters.",
+  "decision": "REQUEST_CHANGES",
+  "confidence": 0.85,
+  "findings": [
+    {
+      "file": "flutter-app/lib/src/data/repositories/chatbot_repository.dart",
+      "line": 33,
+      "severity": "CRITICAL",
+      "category": "correctness",
+      "title": "Type mismatch: sessionId parameter is int but client passes String",
+      "description": "The repository methods `sendMessage`, `getSessions`, and `getSession` declare `sessionId` as `int`, but the chat page generates session IDs as strings via `_generateSessionId()` (timestamp + random int) and stores them in `String? _sessionId`. Passing a String where int is expected will cause a Dart compile-time error or runtime type failure.",
+      "suggestion": "Change the repository method parameters to accept `String sessionId` to match the client-generated ID format, OR generate UUID-style session IDs on the client and keep int parameters if the server expects integer IDs. Ensure consistency across the client, repository, and server."
+    },
+    {
+      "file": ".pr_body2.md",
+      "line": 1,
+      "severity": "CRITICAL",
+      "category": "architecture",
+      "title": "Unrelated PR body files pollute the chatbot PR",
+      "description": "The PR includes `.pr_body2.md`, `.pr_body_f30_note.md`, `.pr_body_f6.md`, `.pr_body_f6_note.md`, `.pr_body_f7.md`, `.pr_body_f7_note.md`, `.pr_body_fk_types.md`, and `.pr_body_mobile_e2e.md` — these are PR body templates and review notes from completely different features (cash payments, monitoring stack, admin disputes, subscriptions, FK type fixes, mobile E2E tests). They are not related to the chatbot feature and should not be part of this PR.",
+      "suggestion": "Remove all `.pr_body_*.md` and `.pr_body_*_note.md` files from this PR. They belong to their respective PRs."
+    },
+    {
+      "file": "cuda-keyring_1.1-1_all.deb",
+      "line": 1,
+      "severity": "CRITICAL",
+      "category": "architecture",
+      "title": "Unrelated binary file included in PR",
+      "description": "A Debian package binary (`cuda-keyring_1.1-1_all.deb`) is included in the PR diff. This is completely unrelated to the chatbot feature and should not be committed to the repository.",
+      "suggestion": "Remove the `cuda-keyring_1.1-1_all.deb` file from the PR."
+    },
+    {
+      "file": "flutter-app/lib/src/ui/chatbot/chat_page.dart",
+      "line": 160,
+      "severity": "WARNING",
+      "category": "correctness",
+      "title": "Add-to-feed implemented as message text hack",
+      "description": "The `_addToFeed` method reuses `sendMessage` by sending a specially formatted message string `'add to feed:${result.url}'`. The backend's `_handle_add_to_feed` presumably parses this prefix. This is fragile: URLs may contain special characters, and any user message containing 'add to feed:' could trigger unintended behavior. It also bypasses proper API design.",
+      "suggestion": "Add a dedicated `POST /chatbot/add-to-feed` endpoint (or reuse the API service's `POST /tracked-items/from-url` directly from the Flutter client) instead of encoding the action in a message text field."
+    },
+    {
+      "file": "flutter-app/lib/src/ui/chatbot/chat_page.dart",
+      "line": 215,
+      "severity": "WARNING",
+      "category": "security",
+      "title": "Error details leaked to user via SnackBar",
+      "description": "In the `_sendMessage` catch block, `SnackBar(content: Text('Error: $e'))` displays the raw exception to the user. This could leak internal error details, stack traces, or sensitive information.",
+      "suggestion": "Catch the exception, log it internally, and show a generic user-friendly message like 'An unexpected error occurred. Please try again.'"
+    },
+    {
+      "file": "flutter-app/lib/src/data/repositories/chatbot_repository.dart",
+      "line": 1,
+      "severity": "WARNING",
+      "category": "testing",
+      "title": "No Flutter tests for chatbot repository or page",
+      "description": "The PR mentions 22/22 backend chatbot tests pass, but there are no Flutter unit tests for `ChatbotRepository` (e.g., mocking Dio responses) or widget tests for `ChatPage`. The repository handles auth tokens, error parsing, and model deserialization — these need test coverage.",
+      "suggestion": "Add unit tests for `ChatbotRepository` using mock Dio clients, and widget tests for `ChatPage` covering message sending, search results display, and add-to-feed flow."
+    },
+    {
+      "file": "flutter-app/lib/src/data/repositories/chatbot_repository.dart",
+      "line": 1,
+      "severity": "WARNING",
+      "category": "architecture",
+      "title": "Client-generated session IDs may not match DB UUID expectations",
+      "description": "The client generates session IDs as `timestamp + random int` strings (e.g., `170000000012345678901234`). The SQL schema likely uses UUIDs for `chat_sessions.id` (following the project's UUID convention). If the server expects UUID-format session IDs in the URL path `/chatbot/sessions/{id}`, the client's non-UUID string will fail to match.",
+      "suggestion": "Generate UUID-style session IDs on the client using `package:uuid` or let the server create the session and return the ID, which the client then stores and uses."
+    },
+    {
+      "file": "flutter-app/lib/src/data/repositories/chatbot_repository.dart",
+      "line": 1,
+      "severity": "INFO",
+      "category": "performance",
+      "title": "Potential timeout issues with Crawl4AI search",
+      "description": "The chatbot uses Crawl4AI for on-demand search across 7 stores, which can be slow (10-30+ seconds per search). The Dio client has 30-second connect/receive timeouts. If a search exceeds this, the user will see an error even though the server may still be processing.",
+      "suggestion": "Increase the HTTP timeout to accommodate Crawl4AI's latency, or implement a two-step flow: submit search, poll for results, then display. Alternatively, add client-side timeout warnings."
+    },
+    {
+      "file": "flutter-app/lib/src/data/repositories/chatbot_repository.dart",
+      "line": 1,
+      "severity": "INFO",
+      "category": "security",
+      "title": "Chatbot service coupled to database for user validation",
+      "description": "The chatbot validates JWT tokens and resolves user_id from the token's `sub` claim (phone number) by looking up the user in the shared operational database. This gives the chatbot service direct DB access, expanding its trust boundary. Any vulnerability in the chatbot could expose user data.",
+      "suggestion": "Consider having the API service validate the token and pass the user_id to the chatbot, or use a JWT verification approach where the chatbot validates the token signature locally without DB lookups (if the token contains all needed claims)."
+    },
+    {
+      "file": "flutter-app/lib/src/data/repositories/chatbot_repository.dart",
+      "line": 1,
+      "severity": "INFO",
+      "category": "correctness",
+      "title": "No input validation/sanitization for search queries",
+      "description": "User search queries are passed directly to Crawl4AI for search. There is no validation, sanitization, or rate limiting. Malicious or excessively long queries could cause Crawl4AI issues or abuse.",
+      "suggestion": "Add input validation (length limits, character filtering) and rate limiting on the chatbot message endpoint."
+    }
+  ],
+  "missed_tests": [
+    "Flutter unit tests for ChatbotRepository: mock Dio to test successful message sending, error handling (401, 402, 500), session retrieval, and model deserialization with missing/null fields.",
+    "Flutter widget tests for ChatPage: test message sending flow, search results display, add-to-feed success/error, and empty state.",
+    "Backend tests for search service edge cases: empty results, Crawl4AI failures, LLM extraction failures, price-filter intent parsing with ambiguous queries.",
+    "Backend tests for add-to-feed: credit exhaustion (402 from API), invalid URLs, duplicate items, network failures when calling the API service.",
+    "Integration tests for the full flow: send search query → receive results → add item to feed → verify tracker created in API service."
+  ],
+  "positive_notes": [
+    "Clean separation of concerns: chatbot is a separate FastAPI service that communicates via REST, following the project's service-isolation pattern.",
+    "Credits are correctly delegated to the API service — the chatbot does not re-implement credit logic.",
+    "The Flutter implementation follows existing patterns: Dio for HTTP, Riverpod for state management, and proper localization (EN + AR).",
+    "The chatbot repository properly handles JWT auth tokens from secure storage and adds them as Bearer headers.",
+    "Docker compose configuration correctly adds the chatbot service with proper dependencies on postgres and api.",
+    "The search result card and message bubble UI components follow the existing widget patterns."
+  ]
+}
+
+
+Review completed in 195.8s
+Decision: REQUEST_CHANGES (confidence: 0.85)
+Findings: 10
+## PR Review: feat: chatbot service with search and add-to-feed
+Model: local/qwen-27b
+Files changed: 53
+WARNING: Diff truncated from 1730708 to 50000 chars
+
+### Raw LLM Response
+{
+  "summary": "This PR adds a chatbot service for natural language product search and add-to-feed functionality, including a FastAPI backend (port 8003), Flutter UI, localization, and Docker integration. However, the PR contains critical issues: unrelated files from other PRs are included, there are type mismatches in the Flutter code (session IDs treated as int instead of String/UUID), and the add-to-feed protocol is implemented via fragile message text parsing. The backend code was not fully visible in the diff due to truncation.",
+  "decision": "REQUEST_CHANGES",
+  "confidence": 0.85,
+  "findings": [
+    {
+      "file": ".pr_body2.md",
+      "line": 1,
+      "severity": "CRITICAL",
+      "category": "correctness",
+      "title": "Unrelated PR body templates included in PR",
+      "description": "Files .pr_body2.md, .pr_body_f30_note.md, .pr_body_f6.md, .pr_body_f6_note.md, .pr_body_f7.md, .pr_body_f7_note.md, .pr_body_fk_types.md, and .pr_body_mobile_e2e.md are PR body templates from OTHER features (cash payments, admin disputes, subscriptions, FK fixes, E2E tests). They are unrelated to the chatbot feature and should not be part of this PR.",
+      "suggestion": "Remove all .pr_body*.md files from this PR. They belong to their respective PRs."
+    },
+    {
+      "file": "cuda-keyring_1.1-1_all.deb",
+      "line": 1,
+      "severity": "CRITICAL",
+      "category": "correctness",
+      "title": "Unrelated binary file committed to repo",
+      "description": "A .deb package (cuda-keyring_1.1-1_all.deb) is included in the PR but is completely unrelated to the chatbot feature. Binary packages should not be committed to the source repository.",
+      "suggestion": "Remove the cuda-keyring deb file from the PR."
+    },
+    {
+      "file": "flutter-app/lib/src/data/repositories/chatbot_repository.dart",
+      "line": 57,
+      "severity": "CRITICAL",
+      "category": "correctness",
+      "title": "Type mismatch: sessionId parameter is int but session IDs are strings",
+      "description": "The sendMessage() and getSession() methods declare `required int sessionId`, but session IDs are UUID strings (per the backend SQL schema and ChatSessionModel). The client generates session IDs as Strings via _generateSessionId() but attempts to pass them to an int parameter, which is a compile-time error in Dart. Even if it compiled, sending numeric IDs where UUIDs are expected would break backend lookup.",
+      "suggestion": "Change sessionId parameter type from int to String in sendMessage(), getSession(), and the ChatPage state. Ensure session IDs are UUID strings throughout the flow."
+    },
+    {
+      "file": "flutter-app/lib/src/ui/chatbot/chat_page.dart",
+      "line": 137,
+      "severity": "WARNING",
+      "category": "correctness",
+      "title": "Hacky add-to-feed protocol via message text parsing",
+      "description": "The add-to-feed action is encoded by sending a message string 'add to feed:${result.url}' to the chatbot. This is fragile: URLs may contain special characters, spaces, or be misinterpreted as regular chat messages. There is no way to distinguish a regular query from an add-to-feed command reliably.",
+      "suggestion": "Implement a dedicated POST /chatbot/add-to-feed endpoint that accepts session_id and product_url, or use a structured message format (e.g., JSON payload with action type) rather than parsing free text."
+    },
+    {
+      "file": "flutter-app/lib/src/ui/chatbot/chat_page.dart",
+      "line": 196,
+      "severity": "WARNING",
+      "category": "security",
+      "title": "Raw error messages exposed to end users",
+      "description": "The catch block in _sendMessage() displays the raw exception via SnackBar(content: Text('Error: $e')). This could leak internal implementation details, stack traces, or sensitive information to the end user.",
+      "suggestion": "Show a generic user-friendly error message and log the detailed error server-side or locally for debugging."
+    },
+    {
+      "file": "flutter-app/lib/src/data/models/chat_message_model.dart",
+      "line": 24,
+      "severity": "INFO",
+      "category": "correctness",
+      "title": "Date parsing may fail with Python ISO format output",
+      "description": "The _parseDate() method uses DateTime.tryParse() which may not handle all ISO 8601 variants produced by Python's datetime serialization (e.g., microsecond precision, timezone offsets). This could result in null createdAt dates without clear error signaling.",
+      "suggestion": "Use a more robust date parsing approach that handles multiple ISO 8601 formats, or ensure the backend consistently serializes dates in a format Dart's DateTime.tryParse can handle."
+    },
+    {
+      "file": "flutter-app/lib/src/data/models/chat_message_model.dart",
+      "line": 27,
+      "severity": "INFO",
+      "category": "correctness",
+      "title": "Default values in model parsing mask data errors",
+      "description": "Model factories use default values (0 for int id, '' for String fields, null for dates) when JSON fields are missing or null. This silently masks data integrity issues rather than surfacing them.",
+      "suggestion": "Consider throwing exceptions or using nullable types with explicit null handling for required fields, so data issues are caught early rather than producing invalid models with default values."
+    },
+    {
+      "file": "services/chatbot/",
+      "line": 1,
+      "severity": "INFO",
+      "category": "architecture",
+      "title": "Backend code not visible in diff for review",
+      "description": "The backend chatbot code (FastAPI service, search_service.py, SQL schema changes) was not visible in the provided diff due to truncation. The PR metadata describes 22/22 tests passing but the test files and backend implementation could not be reviewed.",
+      "suggestion": "Ensure the full backend diff is available for review, including services/chatbot/ files, search_service.py, and infra/sql/schema/postgres.sql changes."
+    },
+    {
+      "file": "flutter-app/lib/src/data/repositories/chatbot_repository.dart",
+      "line": 68,
+      "severity": "INFO",
+      "category": "performance",
+      "title": "No retry logic for transient failures",
+      "description": "The ChatbotRepository has no retry logic for transient network failures. Crawl4AI-based search and API calls could fail intermittently, and the user gets an immediate error without retry.",
+      "suggestion": "Add simple retry logic (e.g., 1-2 retries with backoff) for transient failures in the repository methods."
+    }
+  ],
+  "missed_tests": [
+    "Flutter widget tests for ChatPage covering: empty state, sending messages, add-to-feed success/failure, error handling, session persistence",
+    "Flutter unit tests for ChatbotRepository covering: auth header injection, error response handling, session management",
+    "Backend tests for search_service.py covering: price-filter intent parsing, edge cases in query extraction, Crawl4AI failure handling",
+    "Backend tests for _handle_add_to_feed covering: credit insufficiency (402), API errors, duplicate additions",
+    "Tests for session validation: unauthorized session access, expired sessions, cross-user session isolation"
+  ],
+  "positive_notes": [
+    "Good separation of concerns: chatbot delegates credit checking to the API service via REST",
+    "Follows the project's service-isolation architecture",
+    "Comprehensive Flutter UI with message bubbles, search result cards, bot typing indicator, and add-to-feed functionality",
+    "Localization support for both EN and AR languages",
+    "Docker compose integration with proper depends_on and environment variables",
+    "Chat tab added to dashboard navigation with consistent UI patterns"
+  ]
+}
+
+
+Review completed in 144.2s
+Decision: REQUEST_CHANGES (confidence: 0.85)
+Findings: 9

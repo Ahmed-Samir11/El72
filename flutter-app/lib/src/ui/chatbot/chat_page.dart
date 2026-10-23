@@ -113,6 +113,9 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
     } catch (e) {
       if (!mounted) return;
 
+      // Log the detailed error for debugging, show generic message to user
+      debugPrint('Chatbot error: $e');
+
       final errorMsg = ChatMessageModel(
         id: _messages.length + 1,
         sessionId: _sessionId!,
@@ -126,7 +129,9 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
         _isSending = false;
       });
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: $e')),
+        SnackBar(
+          content: Text('An error occurred. Please try again.'),
+        ),
       );
     }
   }
@@ -138,9 +143,9 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
     setState(() => _isSending = true);
 
     try {
-      await _repository.sendMessage(
+      final response = await _repository.addToFeed(
         sessionId: _sessionId!,
-        message: 'add to feed:${result.url}',
+        productUrl: result.url,
       );
 
       if (!mounted) return;
@@ -156,11 +161,12 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
     } catch (e) {
       if (!mounted) return;
 
+      // Log the detailed error for debugging, show generic message to user
+      debugPrint('Add to feed error: $e');
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            'Failed to add tracker: $e',
-          ),
+          content: Text('Failed to add tracker. Please try again.'),
         ),
       );
     } finally {

@@ -1,2 +1,2 @@
 repo,pr_number,status,decision,confidence,n_findings,auto_approved,comment_id,review_id,pilot_session_id,error
-Ahmed-Samir11/El72,40,posted,REQUEST_CHANGES,0.0,0,False,6361989976,ef0b40c7-f8d4-4e87-b1cf-31c66a5e2f0d,,
+Ahmed-Samir11/El72,40,posted,REQUEST_CHANGES,0.85,9,True,6366972810,e48bd685-7c0c-46ff-a29b-d5bfff20896b,,

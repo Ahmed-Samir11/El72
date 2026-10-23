@@ -13,7 +13,7 @@ class _FakeSecureStorage extends FlutterSecureStorage {
   Future<String?> read({required String key, ...}) async => _map[key];
 
   @override
-  Future<void> write({required String key, required String? value, ...}) async {
+  Future<void> write(String key, String? value) async {
     if (value == null) {
       _map.remove(key);
     } else {
@@ -29,10 +29,12 @@ class _FakeSecureStorage extends FlutterSecureStorage {
 
 /// A Dio adapter that captures requests and returns canned responses.
 class _CapturedAdapter extends HttpClientAdapter {
+  _CapturedAdapter() : super();
+
   final Map<String, dynamic> _responses = {};
   final List<Map<String, dynamic>> _captured = [];
 
-  void setResponse(String path, dynamic response, int statusCode: 200) {
+  void setResponse(String path, dynamic response, int statusCode = 200) {
     _responses[path] = {'body': response, 'statusCode': statusCode};
   }
 
@@ -79,7 +81,7 @@ void main() {
     group('sendMessage', () {
       test('includes Bearer token in Authorization header', () async {
         // Arrange
-        await storage.write(key: 'access_token', value: 'test-token-123');
+        await storage.write('access_token', 'test-token-123');
         adapter.setResponse(
           '/chatbot/message',
           {
@@ -87,6 +89,7 @@ void main() {
             'session_id': 'abc-123',
             'search_results': [],
           },
+          200,
         );
 
         // Act
@@ -102,7 +105,7 @@ void main() {
 
       test('sends session_id and message in request body', () async {
         // Arrange
-        await storage.write(key: 'access_token', value: 'token');
+        await storage.write('access_token', 'token');
         adapter.setResponse(
           '/chatbot/message',
           {
@@ -110,6 +113,7 @@ void main() {
             'session_id': 'abc-123',
             'search_results': [],
           },
+          200,
         );
 
         // Act
@@ -123,7 +127,7 @@ void main() {
 
       test('returns parsed ChatResponseModel', () async {
         // Arrange
-        await storage.write(key: 'access_token', value: 'token');
+        await storage.write('access_token', 'token');
         adapter.setResponse(
           '/chatbot/message',
           {
@@ -142,6 +146,7 @@ void main() {
               },
             ],
           },
+          200,
         );
 
         // Act
@@ -160,11 +165,11 @@ void main() {
 
       test('throws on non-200 response', () async {
         // Arrange
-        await storage.write(key: 'access_token', value: 'token');
+        await storage.write('access_token', 'token');
         adapter.setResponse(
           '/chatbot/message',
           {},
-          statusCode: 500,
+          500,
         );
 
         // Act & Assert
@@ -178,8 +183,8 @@ void main() {
     group('getSessions', () {
       test('includes Bearer token in Authorization header', () async {
         // Arrange
-        await storage.write(key: 'access_token', value: 'test-token');
-        adapter.setResponse('/chatbot/sessions', []);
+        await storage.write('access_token', 'test-token');
+        adapter.setResponse('/chatbot/sessions', [], 200);
 
         // Act
         await repository.getSessions();
@@ -194,7 +199,7 @@ void main() {
 
       test('returns parsed list of ChatSessionModel', () async {
         // Arrange
-        await storage.write(key: 'access_token', value: 'token');
+        await storage.write('access_token', 'token');
         adapter.setResponse(
           '/chatbot/sessions',
           [
@@ -206,6 +211,7 @@ void main() {
               'messages': [],
             },
           ],
+          200,
         );
 
         // Act
@@ -221,7 +227,7 @@ void main() {
     group('getSession', () {
       test('includes Bearer token in Authorization header', () async {
         // Arrange
-        await storage.write(key: 'access_token', value: 'test-token');
+        await storage.write('access_token', 'test-token');
         adapter.setResponse(
           '/chatbot/sessions/abc-123',
           {
@@ -231,6 +237,7 @@ void main() {
             'updated_at': null,
             'messages': [],
           },
+          200,
         );
 
         // Act
@@ -246,7 +253,7 @@ void main() {
 
       test('returns parsed ChatSessionModel', () async {
         // Arrange
-        await storage.write(key: 'access_token', value: 'token');
+        await storage.write('access_token', 'token');
         adapter.setResponse(
           '/chatbot/sessions/abc-123',
           {
@@ -264,6 +271,7 @@ void main() {
               },
             ],
           },
+          200,
         );
 
         // Act

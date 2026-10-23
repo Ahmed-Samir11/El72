@@ -325,10 +325,10 @@ def test_add_to_feed_with_url(client, override_db, override_auth, db_session, au
     httpx.AsyncClient.post = mock_post
     try:
         response = client.post(
-            "/chatbot/message",
+            "/chatbot/add-to-feed",
             json={
-                "message": f"add to feed:https://example.com/product",
                 "session_id": session_id,
+                "product_url": "https://example.com/product",
             },
             headers=auth_headers,
         )
@@ -389,10 +389,10 @@ def test_add_to_feed_insufficient_credits(client, override_db, override_auth, db
     httpx.AsyncClient.post = mock_post
     try:
         response = client.post(
-            "/chatbot/message",
+            "/chatbot/add-to-feed",
             json={
-                "message": f"add to feed:https://example.com/product",
                 "session_id": session_id,
+                "product_url": "https://example.com/product",
             },
             headers=auth_headers,
         )
@@ -416,9 +416,8 @@ def test_add_to_feed_no_results(client, override_db, override_auth, db_session, 
     db_session.commit()
 
     response = client.post(
-        "/chatbot/message",
+        "/chatbot/add-to-feed",
         json={
-            "message": "add to feed",
             "session_id": session_id,
         },
         headers=auth_headers,
