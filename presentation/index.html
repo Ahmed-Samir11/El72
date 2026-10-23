@@ -413,36 +413,6 @@ store_historical_lows
   <div class="footnote">WhatsApp utility rate keeps cost ~<b>$0.0036/msg</b> (vs. $0.1073 marketing). One alert, near-zero cost.</div>
 </section>
 
-<!-- 16 · COST & TRUST BY DESIGN -->
-<section class="slide slide--cost" data-rise data-title="Responsible AI">
-  <div class="eyebrow"><span class="tag criterion-ai">Responsible AI</span> Every principle is a function in the repo</div>
-  <h1 class="headline">Cost and trust by design.</h1>
-  <table class="principle">
-    <thead><tr><th>Principle</th><th>Real code</th></tr></thead>
-    <tbody>
-      <tr><td>Cost control</td><td><span class="mono">notification</span> &mdash; utility-rate templates, rate limiting</td></tr>
-      <tr><td>Trust / verification</td><td><span class="mono">fake_discount.py</span> &mdash; suspicious-discount penalty</td></tr>
-      <tr><td>Explainability</td><td><span class="mono">deal_scorer.py</span> &mdash; every alert has a score + reasons</td></tr>
-      <tr><td>Data sovereignty</td><td>local TimescaleDB / PostgreSQL &mdash; your data, your infra</td></tr>
-      <tr><td>Reliability</td><td>Redis Streams + consumer groups + dead-letter handling</td></tr>
-      <tr><td>Security</td><td>JWT auth + HMAC-validated webhooks (Paymob)</td></tr>
-    </tbody>
-  </table>
-</section>
-
-<!-- 17 · THE NUMBERS -->
-<section class="slide slide--numbers" data-rise data-title="The Numbers">
-  <div class="eyebrow"><span class="tag criterion-feas">Feasibility &amp; Scalability</span> Built, not slideware</div>
-  <h1 class="headline">The numbers.</h1>
-  <div class="numbers-row">
-    <div class="number"><span class="num">7</span><span class="cap">microservices</span></div>
-    <div class="number"><span class="num">30s</span><span class="cap">scrape interval</span></div>
-    <div class="number"><span class="num">4</span><span class="cap">store scrapers</span></div>
-    <div class="number"><span class="num">97%</span><span class="cap">test coverage</span></div>
-  </div>
-  <div class="footnote"><b>Placeholder data</b> &mdash; platform metrics from the seeded dataset.</div>
-</section>
-
 <!-- 18 · ROADMAP -->
 <section class="slide slide--roadmap" data-rise data-title="Roadmap">
   <div class="eyebrow"><span class="tag criterion-feas">Feasibility &amp; Scalability</span> Where it goes next</div>
