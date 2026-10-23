@@ -156,7 +156,7 @@ BEGIN
             'WHERE %I IS NOT NULL AND NOT EXISTS '
             '(SELECT 1 FROM users u WHERE u.id = %I.%I)',
             v.tablename, v.columnname,
-            v.tablename, v.columnname, v.columnname
+            v.tablename, v.tablename, v.columnname
         );
 
         -- Recreate the FK with the intended deletion behavior.

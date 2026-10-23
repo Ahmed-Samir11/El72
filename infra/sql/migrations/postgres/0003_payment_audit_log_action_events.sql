@@ -71,10 +71,14 @@ BEGIN
     END IF;
 
     -- Union: target actions first, then extras not already in the target set.
-    SELECT string_agg(''' || a || '''', ', ' ORDER BY a)
+    SELECT string_agg(
+        quote_literal(all_actions.action_name),
+        ', ' ORDER BY all_actions.action_name
+    )
     INTO action_list
     FROM (
-        SELECT DISTINCT a FROM (
+        SELECT DISTINCT unioned.a AS action_name
+        FROM (
             SELECT unnest(target_actions) AS a
             UNION
             SELECT unnest(COALESCE(extracted, ARRAY[]::text[]))

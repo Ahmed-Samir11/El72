@@ -11,7 +11,7 @@
 
 CREATE TABLE IF NOT EXISTS subscriptions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     paymob_subscription_id VARCHAR(255) NOT NULL UNIQUE,
     card_payment_method_id VARCHAR(255) NOT NULL,
     package VARCHAR(20) NOT NULL

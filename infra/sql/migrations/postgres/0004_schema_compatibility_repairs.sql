@@ -22,7 +22,7 @@ BEGIN
     WHERE status NOT IN ('ACTIVE', 'DELETED');
     IF bad_values IS NOT NULL THEN
         RAISE EXCEPTION
-            'users.status contains values outside (ACTIVE, DELETED): %. '
+            'users.status contains values outside (ACTIVE, DELETED): %%. '
             'Update those rows explicitly, then re-run this migration.'
             USING ERRCODE = 'integrity_constraint_violation', DETAIL = bad_values;
     END IF;

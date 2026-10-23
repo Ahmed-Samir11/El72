@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS refunds (
     method VARCHAR(20) NOT NULL
         CHECK (method IN ('manual', 'card', 'wallet', 'cash')),
     order_id VARCHAR(255) NOT NULL,
-    user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
     package VARCHAR(20) NOT NULL
         CHECK (package IN ('standard', 'premium')),
     amount_egp NUMERIC(10, 2) NOT NULL CHECK (amount_egp > 0),
