@@ -1,7 +1,7 @@
 # El72 — Real-Time Price Intelligence — Investor / Product Deck
 
 **Apple-quality, fully-offline presentation package.** Everything here runs from
-`file://` with **no network**. The deck tells the El72 / Elhaq story: real-time
+`file://` with **no network**. The deck tells the El72 / El72 story: real-time
 price tracking and deal detection for Egypt — scrape → detect → score →
 deliver. The accent is **orange** (`#f7941d`), matching the El72 logo.
 
@@ -15,7 +15,7 @@ deliver. The accent is **orange** (`#f7941d`), matching the El72 logo.
 
 | Path | What it is |
 |------|-----------|
-| `index.html` | **The deck** — 23 slides, Apple dark theme, orange accent. Opens on a 13-second El72 motion intro, the charts animate in, and the demo slide embeds the live El72 app (recorded-hybrid: swap the iframe for a pre-recorded clip of the scrape → detect → WhatsApp flow). The last slide introduces the three-person team (headshots in `assets/team/`). |
+| `index.html` | **The deck** — 24 slides, Apple dark theme, orange accent. Opens on a 13-second El72 motion intro, the charts animate in, and the demo slide embeds the live El72 app (recorded-hybrid: swap the iframe for a pre-recorded clip of the scrape → detect → WhatsApp flow). The last slide introduces the three-person team (headshots in `assets/team/`). |
 | `css/apple-theme.css` | Apple design language (SF Pro, `#000`/`#f5f5f7`/`#f7941d`, hairlines). |
 | `js/deck.js` | Minimal offline slide engine (keyboard + click + hash nav). |
 | `js/data.js` | Embeds the (placeholder) volume + detection data and renders the two charts. |
@@ -24,7 +24,7 @@ deliver. The accent is **orange** (`#f7941d`), matching the El72 logo.
 | `intro/` | The 13-second El72 motion intro (GSAP + HyperFrames). |
 | `fallback/replay.html` | **The fallback** — self-contained animated replay of one full El72 loop (scrape → detect → score → deliver, ~40s). No server, no network. |
 | `rehearsal.md` | **The day-of run book** — pre-flight, venue setup, timed run-of-show, demo script, cut-to-fallback triggers, recovery, Q&A cards. |
-| `strategy.md` | The strategy: 23-slide structure, the two killer objection slides, the numbers story, timed script, Q&A prep, contingency. |
+| `strategy.md` | The strategy: 24-slide structure, the two killer objection slides, the numbers story, timed script, Q&A prep, contingency. |
 | `assets/el72-logo.svg` | The El72 mark (orange gradient). |
 | `assets/el72-pipeline.svg` | The scrape → store → alert pipeline diagram. |
 | `assets/el72-intelligence.svg` | The cross-store / B2B intelligence diagram. |
@@ -34,7 +34,7 @@ deliver. The accent is **orange** (`#f7941d`), matching the El72 logo.
 
 ---
 
-## The 23-slide spine
+## The 24-slide spine
 
 1. Cold open — "It takes **30 seconds**."
 2. The graveyard of stale prices.

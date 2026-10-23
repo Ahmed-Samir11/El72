@@ -71,6 +71,7 @@ body::before {
               transform 0.6s cubic-bezier(0.22, 1, 0.36, 1);
   pointer-events: none;
   visibility: hidden;
+  overflow: hidden;
 }
 .slide.is-active {
   opacity: 1;
@@ -105,13 +106,18 @@ body::before {
   font-weight: 600;
   margin-bottom: 2.2vh;
 }
-h1.headline {
+h1.headline,
+h2.headline {
   font-size: clamp(40px, 6.2vw, 92px);
   line-height: 1.04;
   font-weight: 600;
   letter-spacing: -0.02em;
   text-align: center;
   max-width: 16ch;
+  /* Prevent long headlines from running off the viewport at 1080P */
+  overflow-wrap: break-word;
+  word-break: normal;
+  overflow-wrap: anywhere;
 }
 h2.headline {
   font-size: clamp(34px, 4.6vw, 68px);
@@ -120,6 +126,15 @@ h2.headline {
   letter-spacing: -0.018em;
   text-align: center;
   max-width: 20ch;
+  /* Prevent long headlines from running off the viewport at 1080P */
+  overflow-wrap: break-word;
+  word-break: normal;
+  overflow-wrap: anywhere;
+}
+
+/* Slide 13b: let the two-line headline run full width so it stays at 2 lines instead of wrapping to 4 */
+.slide-13b h1.headline {
+  max-width: none;
 }
 .subhead {
   font-size: clamp(19px, 2.1vw, 30px);
@@ -153,6 +168,26 @@ h2.headline {
 .good { color: var(--good); }
 .bad { color: var(--bad); }
 .mono { font-family: var(--mono); }
+
+/* Criterion tags — small badges on each slide eyebrow */
+.tag {
+  display: inline-block;
+  font-size: clamp(10px, 0.85vw, 13px);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 0.2em 0.6em;
+  border-radius: 999px;
+  margin-right: 0.6em;
+  border: 1px solid var(--card-border);
+  background: var(--card);
+}
+.tag.criterion-social { color: var(--good); border-color: var(--good); }
+.tag.criterion-tech { color: var(--accent); border-color: var(--accent); }
+.tag.criterion-ai { color: #00a8e8; border-color: #00a8e8; }
+.tag.criterion-feas { color: var(--warn); border-color: var(--warn); }
+.tag.criterion-pres { color: var(--fg-faint); border-color: var(--fg-faint); }
+.tag.criterion-all { color: var(--fg); border-color: var(--fg); background: var(--fg); color: var(--bg); }
 
 /* ------------------------------------------------------------------ */
 /*  Title slide                                                         */
@@ -681,6 +716,9 @@ table.principle tbody tr:last-child td { border-bottom: none; }
   border: 1px solid var(--card-border);
   border-radius: 20px;
   padding: 3vh 2.4vw;
+  /* Keep descriptions from overflowing the step box at 1080P */
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 .roadmap .step .k {
   font-size: clamp(12px, 1vw, 15px);
@@ -729,8 +767,16 @@ table.principle tbody tr:last-child td { border-bottom: none; }
   padding: 1.8vh 1.6vw;
   font-size: clamp(12px, 1.05vw, 17px);
   line-height: 1.6;
+  /* Allow long code lines to wrap instead of overflowing the column at 1080P */
+  overflow-wrap: break-word;
+  white-space: pre-wrap;
 }
-.pr-line { padding: 0.8vh 0; }
+.pr-line {
+  padding: 0.8vh 0;
+  /* Allow long code lines to wrap instead of overflowing the column at 1080P */
+  overflow-wrap: break-word;
+  white-space: pre-wrap;
+}
 .pr-line + .pr-line { border-top: 1px solid var(--hairline); }
 .pr-line .cm { color: var(--fg-faint); font-size: 0.82em; }
 .pr-line.bad .pen { color: var(--bad); font-weight: 600; }
@@ -840,6 +886,38 @@ table.principle tbody tr:last-child td { border-bottom: none; }
   line-height: 1.4;
   text-align: center;
 }
+.diagram-flow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(6px, 0.8vw, 14px);
+  min-height: 150px;
+  padding: 2vh 1vw;
+  color: var(--fg);
+  font-size: clamp(12px, 1.15vw, 18px);
+  font-weight: 600;
+  text-align: center;
+}
+.diagram-flow span {
+  display: grid;
+  place-items: center;
+  min-height: 64px;
+  padding: 1vh 0.8vw;
+  border: 1px solid var(--card-border);
+  border-radius: 12px;
+  background: var(--card);
+}
+.diagram-flow b {
+  color: var(--fg-faint);
+  font-size: 1.2em;
+}
+.intelligence-flow {
+  color: var(--accent);
+}
+.intelligence-flow span {
+  border-color: rgba(247, 148, 29, 0.5);
+  background: var(--accent-soft);
+}
 .diagram .d-tag {
   display: inline-block;
   font-size: 0.78em;
@@ -937,6 +1015,9 @@ table.principle tbody tr:last-child td { border-bottom: none; }
   color: var(--fg);
   text-align: left;
   white-space: pre-wrap;
+  /* Prevent long unbroken strings from overflowing the column at 1080P */
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 .formula .op { color: var(--accent); }
 .formula .val { color: var(--good); }
@@ -999,6 +1080,8 @@ table.principle tbody tr:last-child td { border-bottom: none; }
   font-size: clamp(12px, 1vw, 16px);
   color: var(--fg-dim);
   line-height: 1.45;
+  /* Prevent long notes from overflowing the column at 1080P */
+  overflow-wrap: break-word;
 }
 .tech-note b { color: var(--fg); font-weight: 600; }
 
@@ -1064,7 +1147,13 @@ table.principle tbody tr:last-child td { border-bottom: none; }
 }
 .compound .c-metric { font-size: clamp(13px, 1.1vw, 17px); color: var(--fg-dim); font-weight: 500; }
 .compound .c-arrow { font-size: clamp(30px, 3vw, 48px); font-weight: 700; color: var(--good); line-height: 1; margin: 1vh 0; }
-.compound .c-why { font-size: clamp(11px, 0.95vw, 15px); color: var(--fg-faint); line-height: 1.4; }
+.compound .c-why {
+  font-size: clamp(11px, 0.95vw, 15px);
+  color: var(--fg-faint);
+  line-height: 1.4;
+  /* Prevent long value text from overflowing the compound box at 1080P */
+  overflow-wrap: break-word;
+}
 
 /* ------------------------------------------------------------------ */
 /*  Architecture compare (stateless vs stateful)                       */
@@ -1130,6 +1219,29 @@ table.principle tbody tr:last-child td { border-bottom: none; }
   width: 100%;
   max-width: 1400px;
 }
+.team > figure,
+.team .member {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: 22px;
+  padding: 3.4vh 1vw 3vh;
+}
+.team > figure > img,
+.team .avatar {
+  width: clamp(84px, 8.6vw, 148px);
+  height: clamp(84px, 8.6vw, 148px);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1px solid var(--card-border);
+}
 .team .member {
   flex: 1;
   margin: 0;
@@ -1148,6 +1260,9 @@ table.principle tbody tr:last-child td { border-bottom: none; }
   border-radius: 50%;
   object-fit: cover;
   border: 1px solid var(--card-border);
+}
+.team > figure figcaption {
+  width: 100%;
 }
 /* No photo yet: a monogram in the same circle, so the row stays even. */
 .team .avatar--initials {
@@ -1201,10 +1316,10 @@ table.principle tbody tr:last-child td { border-bottom: none; }
 /* ------------------------------------------------------------------ */
 .slide--intro { padding: 0; }
 .intro-frame {
-  position: absolute;
+  position: fixed;
   inset: 0;
-  width: 100%;
-  height: 100%;
+  width: 100vw;
+  height: 100vh;
   border: 0;
   pointer-events: none;
   background: transparent; /* the intro lets the deck's backdrop through */
@@ -1227,8 +1342,10 @@ table.principle tbody tr:last-child td { border-bottom: none; }
 /* ------------------------------------------------------------------ */
 /*  Live demo (El72 app in an iframe, driven by its guided tour)          */
 /* ------------------------------------------------------------------ */
-.slide--demo .demo-cover { text-align: center; max-width: 1100px; }
-.slide--demo .demo-cover .lede { margin-left: auto; margin-right: auto; }
+.slide--demo .demo-cover,
+.demo-slide .demo-cover { text-align: center; max-width: 1100px; }
+.slide--demo .demo-cover .lede,
+.demo-slide .demo-cover .lede { margin-left: auto; margin-right: auto; }
 .demo-start {
   margin-top: 4.5vh;
   display: inline-flex;
@@ -1242,6 +1359,46 @@ table.principle tbody tr:last-child td { border-bottom: none; }
   font: 600 clamp(15px, 1.25vw, 20px) var(--font);
   cursor: pointer;
   box-shadow: 0 0 0 1px var(--accent), 0 16px 50px -12px rgba(247, 148, 29, 0.7);
+}
+.demo-slide {
+  justify-content: flex-start;
+  padding-top: 5vh;
+}
+.demo-head {
+  flex: 0 0 auto;
+  text-align: center;
+}
+.demo-head .eyebrow,
+.demo-head .lede {
+  margin-left: auto;
+  margin-right: auto;
+}
+.demo-stage {
+  position: relative;
+  width: min(92vw, 1240px);
+  flex: 1 1 auto;
+  min-height: 0;
+  margin-top: 2.5vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.demo-frame-wrap {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--card-border);
+  border-radius: 18px;
+  background: #000;
+}
+.demo-frame-wrap-inner,
+.demo-frame-wrap-inner .demo-frame {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
 }
 .demo-start kbd {
   font: 600 0.8em var(--mono);
@@ -1261,8 +1418,10 @@ table.principle tbody tr:last-child td { border-bottom: none; }
   visibility: hidden;
   transition: opacity 0.5s ease;
 }
-.slide--demo.is-live .demo-frame { opacity: 1; visibility: visible; }
-.slide--demo.is-live .demo-cover { visibility: hidden; }
+.slide--demo.is-live .demo-frame,
+.demo-slide.is-live .demo-frame { opacity: 1; visibility: visible; }
+.slide--demo.is-live .demo-cover,
+.demo-slide.is-live .demo-cover { visibility: hidden; }
 /* Always-reachable way back to the slides, above the app. */
 .demo-exit {
   position: absolute;
@@ -1280,8 +1439,167 @@ table.principle tbody tr:last-child td { border-bottom: none; }
   cursor: pointer;
   backdrop-filter: blur(10px);
 }
-.slide--demo.is-live .demo-exit { display: block; }
+.slide--demo.is-live .demo-exit,
+.demo-slide.is-live .demo-exit { display: block; }
 body.demo-live .nav-zone,
 body.demo-live .nav-hint { display: none; }
 body.demo-live .counter,
 body.demo-live .progress { opacity: 0; }
+
+/* Keep the dense slides inside the presentation safe area on short screens. */
+.slide--graveyard,
+.slide--proof,
+.slide--bench,
+.slide--comparison,
+.slide--field,
+.slide--how,
+.slide--diagram,
+.slide--tech,
+.slide--award,
+.slide--business,
+.slide--cost,
+.slide--numbers,
+.slide--roadmap,
+.slide--team {
+  justify-content: flex-start;
+  padding-top: clamp(20px, 5vh, 56px);
+  padding-bottom: clamp(32px, 7vh, 76px);
+}
+.slide--graveyard .pr-split,
+.slide--proof .proof-split,
+.slide--bench .bench-split,
+.slide--comparison .arch-compare,
+.slide--field table.compare,
+.slide--how .loop,
+.slide--diagram .diagram-split,
+.slide--tech .tech-split,
+.slide--award .tech-split,
+.slide--business .pipeline,
+.slide--cost table.principle,
+.slide--numbers .numbers-row,
+.slide--roadmap .roadmap,
+.slide--team .team {
+  max-height: calc(100vh - 150px);
+}
+.slide--award .tech-split {
+  transform: scale(0.82);
+  transform-origin: top center;
+  margin-bottom: -110px;
+}
+.slide--award > div[style] img {
+  max-height: 10vh !important;
+}
+.slide--how .headline {
+  font-size: clamp(38px, 5vw, 72px);
+  line-height: 1.02;
+}
+.slide--how .loop {
+  gap: 0.7vh;
+  margin-top: 2vh;
+  max-height: none;
+}
+.slide--how .loop .node {
+  min-width: min(46vw, 620px);
+  padding: 0.8vh 1.8vw;
+  font-size: clamp(13px, 1.05vw, 17px);
+  line-height: 1.2;
+}
+.slide--how .loop .node .tag {
+  margin-top: 0.2vh;
+  padding: 0.1em 0.5em;
+}
+.slide--how .loop .arrow {
+  font-size: clamp(14px, 1.2vw, 20px);
+}
+.slide--how .loop .branch {
+  gap: 2vw;
+}
+.slide--how .loop .branch .node {
+  min-width: min(28vw, 360px);
+}
+.award-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(250px, 0.85fr);
+  align-items: center;
+  gap: 3vw;
+  width: min(92vw, 1240px);
+  margin-top: 2.5vh;
+}
+.award-copy {
+  min-width: 0;
+}
+.award-copy h3 {
+  font-size: clamp(14px, 1.2vw, 19px);
+  line-height: 1.3;
+  color: var(--fg);
+}
+.award-copy .formula {
+  margin-top: 1.5vh;
+}
+.award-copy .point-list {
+  margin-top: 2vh;
+  gap: 1.5vh;
+}
+.award-copy .point-list li {
+  font-size: clamp(14px, 1.35vw, 20px);
+}
+.award-copy .tech-note {
+  margin-top: 2vh;
+}
+.award-photo {
+  width: min(100%, 430px);
+  justify-self: center;
+  margin: 0;
+  text-align: center;
+}
+.award-photo img {
+  display: block;
+  width: auto;
+  height: min(62vh, 620px);
+  max-width: 100%;
+  object-fit: contain;
+  border: 1px solid var(--card-border);
+  border-radius: 18px;
+}
+.award-photo figcaption {
+  margin-top: 1vh;
+  color: var(--fg-dim);
+  font-size: clamp(12px, 1vw, 15px);
+  letter-spacing: 0.04em;
+}
+@media (max-height: 760px) {
+  .slide { padding-top: 4vh; padding-bottom: 6vh; }
+  .slide h1.headline { font-size: clamp(30px, 5vw, 68px); }
+  .slide--graveyard .pr-split,
+  .slide--proof .proof-split,
+  .slide--bench .bench-split,
+  .slide--comparison .arch-compare,
+  .slide--field table.compare,
+  .slide--how .loop,
+  .slide--diagram .diagram-split,
+  .slide--tech .tech-split,
+  .slide--award .tech-split,
+  .slide--business .pipeline,
+  .slide--cost table.principle,
+  .slide--numbers .numbers-row,
+  .slide--roadmap .roadmap,
+  .slide--team .team { transform: scale(0.88); transform-origin: top center; }
+  .award-layout {
+    gap: 2vw;
+    margin-top: 1.5vh;
+  }
+  .award-photo { width: min(100%, 330px); }
+  .award-photo img { height: min(48vh, 360px); }
+  .award-copy .point-list { gap: 1vh; margin-top: 1.5vh; }
+  .award-copy .point-list li { font-size: clamp(12px, 1.2vw, 16px); }
+  .slide--graveyard .pr-split,
+  .slide--proof .proof-split,
+  .slide--how .loop {
+    transform: scale(0.82);
+    transform-origin: top center;
+    margin-bottom: -70px;
+  }
+  .slide--proof .proof-split { transform: scale(0.68); margin-bottom: -125px; }
+  .slide--how .loop { transform: none; margin-bottom: 0; }
+  .slide--how .loop .node { padding-top: 0.55vh; padding-bottom: 0.55vh; }
+}

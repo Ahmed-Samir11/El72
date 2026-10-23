@@ -1,10 +1,10 @@
-# El72 / Elhaq — Adapting the DevOpsDays deck
+# El72 / El72 — Adapting the DevOpsDays deck
 
 **Source:** `presentation copy/` — the "Self-Improving PR Review Agent" (HGM / MergeFlow)
 DevOpsDays Cairo 2026 deck. Apple dark theme, 20-slide engine, real-data charts, a
 13-second motion intro, a live MergeFlow demo, and a self-contained replay fallback.
 
-**Target:** an investor/audience deck for **Elhaq (El72)** — the real-time price-tracking
+**Target:** an investor/audience deck for **El72 (El72)** — the real-time price-tracking
 & deal-detection platform (Egypt). Same engine, same polish, new theme, new assets,
 new story.
 
@@ -116,7 +116,7 @@ El72 keeps the **exact same spine** but swaps the subject from "PR review agent"
 |---|---|---|---|---|
 | 1 | Cold open — "The lead quit" | **The fake discount** | Kicker "A story from last week". Headline: **"The 40k 'deal' was 42k."** Pullquote from a burned buyer. Turn: the problem isn't scraping — **it's that nobody verifies the price.** | none |
 | 2 | Pain, made real — PR #196 | **The graveyard** | "A typo. No error. The wrong model." → **"Two trackers. Both dead."** Left: the bait-and-switch pattern (inflate → "sale"). Right: Yaoota (503, dead) + Kanbkam (dormant since 2022). Footnote: passive comparison sites failed because they can't see across stores. | fake-discount chart / competitor screenshots |
-| 3 | Title | **Title** | Brand: "El72 · Price Intelligence". Headline: **"Seize the deal before it's gone."** Lede: real-time price tracking + AI-verified deals, delivered on WhatsApp. Cred: "Elhaq". | El72 mark |
+| 3 | Title | **Title** | Brand: "El72 · Price Intelligence". Headline: **"Seize the deal before it's gone."** Lede: real-time price tracking + AI-verified deals, delivered on WhatsApp. Cred: "El72". | El72 mark |
 | 4 | Intro (13s) | **Intro (13s)** | Rebuild beats: (1) a price wall of tracked items, (2) El72 mark + "Verified in seconds, not weeks", (3) business impact (real deals / fewer fake alerts / cost per alert), (4) the WhatsApp alert, (5) El72 logo lockup. | new `intro/` |
 | 5 | The reveal (live demo) | **The reveal** | "Watch it work." A live price drop → detected → graded → **WhatsApp alert in seconds**. | none |
 | 6 | Live demo (MergeFlow) | **Live demo (El72 app)** | Embed the El72 **Flutter/web dashboard** (or landing page) instead of MergeFlow: a tracker, its price-history chart, a confirmed deal, the WhatsApp alert. Tour: dashboard → price history → deals feed → alert. | rewire `js/demo.js`, `data-app` → El72 URL |

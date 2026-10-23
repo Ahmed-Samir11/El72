@@ -1,7 +1,7 @@
 # El72 Deck — Strategy
 
-The investor/product story for **El72 / Elhaq**: real-time price tracking and
-deal detection for Egypt. The deck is 23 slides, one idea per slide, Apple dark
+The investor/product story for **El72 / El72**: real-time price tracking and
+deal detection for Egypt. The deck is 24 slides, one idea per slide, Apple dark
 theme with an **orange** accent. Runtime ≈ 12–14 minutes + Q&A.
 
 **The through-line:** the market is full of fake discounts; El72 verifies every
@@ -10,7 +10,7 @@ seconds — on your infrastructure, at near-zero cost.
 
 ---
 
-## The 23-slide spine (with the job of each)
+## The 24-slide spine (with the job of each)
 
 | # | Slide | Job |
 |---|-------|-----|
@@ -80,7 +80,7 @@ The one number to lead with: **~$0.0036 per alert** (WhatsApp utility rate).
 - 7:00–9:30 — how it works + the four engines (slides 12–17).
 - 9:30–11:00 — business case + cost + numbers (slides 18–20).
 - 11:00–12:00 — roadmap + close (slides 21–22).
-- 12:00+ — team + Q&A (slide 23).
+- 12:00+ — team + Q&A (slide 24).
 
 ---
 

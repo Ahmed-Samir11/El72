@@ -6,7 +6,7 @@ The day-of checklist for presenting the El72 deck. Runtime ≈ 13 minutes + Q&A.
 
 ## Pre-flight (the night before)
 
-- [ ] Open `index.html` in Chrome/Edge, full-screen. Verify all 23 slides
+- [ ] Open `index.html` in Chrome/Edge, full-screen. Verify all 24 slides
       render, the intro plays, and the charts animate.
 - [ ] Confirm the **placeholder numbers** are acceptable, or swap in real
       values in `js/data.js` + `index.html`.
