@@ -17,6 +17,19 @@ class InsufficientCreditsException implements Exception {
   String toString() => 'InsufficientCreditsException: $message';
 }
 
+/// Custom exception for HTTP 401 (unauthorized) responses.
+///
+/// The chatbot service returns 401 when the JWT token is missing, expired,
+/// or invalid. The UI should prompt the user to re-authenticate.
+class UnauthorizedException implements Exception {
+  final String message;
+
+  const UnauthorizedException(this.message);
+
+  @override
+  String toString() => 'UnauthorizedException: $message';
+}
+
 /// Retry a request with exponential backoff for transient failures.
 ///
 /// Only used for idempotent GET requests. POST requests are never retried
@@ -74,7 +87,7 @@ class ChatbotRepository {
     : _dio = dio ?? Dio(BaseOptions(
         baseUrl: AppConfig.chatbotBaseUrl,
         connectTimeout: const Duration(seconds: 30),
-        receiveTimeout: const Duration(seconds: 60),
+        receiveTimeout: const Duration(seconds: 120),
       )),
       _storage = storage ?? const FlutterSecureStorage();
 
@@ -93,7 +106,8 @@ class ChatbotRepository {
 
   /// Send a message to the chatbot and get the response with search results.
   ///
-  /// POST is not retried (non-idempotent). Throws [DioException] on HTTP errors.
+  /// POST is not retried (non-idempotent). Throws [UnauthorizedException] on 401,
+  /// [InsufficientCreditsException] on 402, [DioException] on other errors.
   Future<ChatResponseModel> sendMessage({
     required String sessionId,
     required String message,
@@ -108,12 +122,37 @@ class ChatbotRepository {
     );
     await _addAuthHeader(options);
 
-    final response = await _dio.fetch(options);
+    try {
+      final response = await _dio.fetch(options);
 
-    if (response.statusCode == 200 && response.data is Map<String, dynamic>) {
-      return ChatResponseModel.fromJson(response.data as Map<String, dynamic>);
+      if (response.statusCode == 200 && response.data is Map<String, dynamic>) {
+        return ChatResponseModel.fromJson(response.data as Map<String, dynamic>);
+      }
+      throw Exception('Unexpected response from chatbot: ${response.statusCode}');
+    } on DioException catch (e) {
+      _handleHttpError(e);
+      rethrow; // Unreachable; _handleHttpError always throws.
     }
-    throw Exception('Unexpected response from chatbot: ${response.statusCode}');
+  }
+
+  /// Convert Dio HTTP errors to domain exceptions.
+  ///
+  /// 401 → [UnauthorizedException] (token expired/invalid)
+  /// 402 → [InsufficientCreditsException] (no credits)
+  /// Other → rethrow the original [DioException].
+  Never _handleHttpError(DioException e) {
+    final status = e.response?.statusCode;
+    if (status == 401) {
+      throw UnauthorizedException(
+        'Your session has expired. Please log in again.',
+      );
+    }
+    if (status == 402) {
+      throw InsufficientCreditsException(
+        'You have run out of credits. Purchase a plan to create trackers.',
+      );
+    }
+    throw e;
   }
 
   /// List all chat sessions for the authenticated user.
@@ -142,7 +181,8 @@ class ChatbotRepository {
   /// Add a search result to the user's tracking feed.
   ///
   /// POST is not retried (non-idempotent — retrying would create duplicate
-  /// trackers). Throws [InsufficientCreditsException] on HTTP 402.
+  /// trackers). Throws [UnauthorizedException] on 401,
+  /// [InsufficientCreditsException] on 402, [DioException] on other errors.
   Future<ChatResponseModel> addToFeed({
     required String sessionId,
     String? productUrl,
@@ -167,14 +207,8 @@ class ChatbotRepository {
       }
       throw Exception('Unexpected response from chatbot: ${response.statusCode}');
     } on DioException catch (e) {
-      // Surface 402 (insufficient credits) as a specific exception so the UI
-      // can prompt the user to purchase credits.
-      if (e.response?.statusCode == 402) {
-        throw InsufficientCreditsException(
-          'You have run out of credits. Purchase a plan to create trackers.',
-        );
-      }
-      rethrow;
+      _handleHttpError(e);
+      rethrow; // Unreachable; _handleHttpError always throws.
     }
   }
 

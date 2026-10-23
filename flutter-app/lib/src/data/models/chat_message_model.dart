@@ -4,6 +4,12 @@
 /// precision and timezone offsets (e.g. "2026-10-23T17:09:22.123456+00:00").
 /// Dart's DateTime.parse handles most ISO 8601 variants, but we normalize
 /// common edge cases to avoid silent nulls.
+///
+/// Note: if DateTime.parse fails on the full string, we strip the timezone
+/// offset as a fallback. This means the returned DateTime is in local time,
+/// not UTC. This is acceptable for display purposes (chat timestamps) but
+/// would be incorrect for arithmetic. The server always sends UTC, so in
+/// practice the fallback is rarely exercised.
 DateTime parseDateRobust(Object? value) {
   if (value == null) {
     throw FormatException('created_at is null');

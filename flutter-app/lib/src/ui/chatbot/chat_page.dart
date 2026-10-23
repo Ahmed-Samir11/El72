@@ -115,6 +115,10 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
 
       if (!mounted) return;
 
+      // Adopt the server's session ID — the server may create a new session
+      // if the client-generated ID didn't match an existing one.
+      _sessionId = response.sessionId;
+
       // Add bot message — use UUID to avoid collisions
       final botMsg = ChatMessageModel(
         id: _generateUuid(),
@@ -134,9 +138,20 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
       // Log the detailed error for debugging, show generic message to user
       debugPrint('Chatbot error: $e');
 
+      if (e is UnauthorizedException) {
+        // Token expired or invalid — prompt re-authentication.
+        setState(() => _isSending = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(e.message),
+          ),
+        );
+        return;
+      }
+
       final errorMsg = ChatMessageModel(
         id: _generateUuid(),
-        sessionId: _sessionId!,
+        sessionId: _sessionId ?? '',
         role: 'bot',
         content:
             'Sorry, I couldn\'t process your request. Please try again.',
@@ -188,8 +203,15 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
       // Log the detailed error for debugging
       debugPrint('Add to feed error: $e');
 
+      if (e is UnauthorizedException) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.message)),
+        );
+        return;
+      }
+
       // Surface insufficient-credits errors specifically so the user
-      /// knows to purchase credits or check their balance.
+      // knows to purchase credits or check their balance.
       if (e is InsufficientCreditsException) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(

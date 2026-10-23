@@ -83,14 +83,22 @@ services:
       context: .
       dockerfile: services/chatbot/Dockerfile
     depends_on:
-      - postgres
-      - api
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_started
     environment:
       DATABASE_URL: "${DATABASE_URL_DOCKER:?Set DATABASE_URL_DOCKER in .env}"
       API_BASE_URL: "http://api:8000"
       SECRET_KEY: "${SECRET_KEY:?Set SECRET_KEY in .env}"
     ports:
-      - "8003:8003"
+      - "127.0.0.1:8003:8003"
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:8003/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   prometheus:
     image: prom/prometheus:v2.53.0

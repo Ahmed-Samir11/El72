@@ -15,6 +15,14 @@ The token's `sub` claim is the user's phone number; the chatbot looks up the
 user in the shared operational PostgreSQL database to resolve the internal
 user_id. This prevents any client from impersonating another user or
 accessing another user's sessions.
+
+Database design note: the chatbot shares the operational PostgreSQL database
+with the API service. This is intentional — the `users` table is owned by the
+API service, and the chatbot only reads from it to resolve user_id from the
+JWT `sub` claim. The chatbot owns its own tables (`chat_sessions`,
+`chat_messages`, `chat_search_results`) and never writes to `users` or any
+other service's tables. This avoids the need for a separate user database
+or a cross-service REST call for every authentication check.
 """
 
 import logging
@@ -198,7 +206,16 @@ async def send_message(
 
     Requires a valid JWT Bearer token. The authenticated user_id is used
     for all session operations, preventing impersonation.
+
+    Input bounds: message must be 1–500 characters to prevent abuse and
+    keep search queries reasonable.
     """
+    if len(chat_request.message) > 500:
+        raise HTTPException(
+            status_code=400,
+            detail="Message must be 500 characters or fewer.",
+        )
+
     # Ensure the session exists (server-generated UUID if not provided)
     session_id = _ensure_session(db, chat_request.session_id, user_id)
 
