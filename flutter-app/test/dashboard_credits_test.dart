@@ -30,9 +30,7 @@ Widget _wrap(Future<CreditBalance> balanceFuture, {Locale? locale}) {
 }
 
 Future<void> _gotoProfile(WidgetTester tester, {Locale? locale}) async {
-  final label = locale?.languageCode == 'ar'
-      ? 'الملف الشخصي'
-      : 'Profile';
+  final label = locale?.languageCode == 'ar' ? 'الملف الشخصي' : 'Profile';
   await tester.tap(find.text(label));
   await tester.pumpAndSettle();
 }
