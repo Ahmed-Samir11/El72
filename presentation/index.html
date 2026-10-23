@@ -92,32 +92,32 @@
 <section class="slide slide--proof" data-rise data-title="The Proof">
   <div class="eyebrow"><span class="tag criterion-ai">Responsible AI</span> It actually works</div>
   <h1 class="headline">It caught a real deal &mdash; and rejected a fake one.</h1>
-  <p class="sub">Every alert is scored and explained. <span class="mono">(placeholder data)</span></p>
+  <p class="sub">Every alert is scored and explained. <span class="mono">(90-day dataset, seed 7242)</span></p>
   <div class="proof-split">
     <div class="proof-mutations">
       <div class="mutation">
-        <div class="mut-feedback">RTX 5080 dropped 50,000 &rarr; 41,000.</div>
+        <div class="mut-feedback">Lenovo Legion 5 dropped 48,000 &rarr; 33,787 on Oct 29.</div>
         <div class="mut-arrow">&darr; the score says</div>
         <div class="mut-added">Deal score 88 (Excellent) &mdash; alert sent.</div>
       </div>
       <div class="mutation">
-        <div class="mut-feedback">&ldquo;50% off&rdquo; at 40,000 &mdash; the reference was 50,000.</div>
+        <div class="mut-feedback">Samsung Galaxy A55 at 16,467 &mdash; the &ldquo;was&rdquo; price was 20,868 (Oct 28).</div>
         <div class="mut-arrow">&darr; the check says</div>
-        <div class="mut-added">Flagged suspicious (only 8% below median) &mdash; no alert.</div>
+        <div class="mut-added">Flagged: reference 10% above median &mdash; score 60, no alert.</div>
       </div>
       <div class="mutation">
-        <div class="mut-feedback">Lowest price in 4 months, cheapest of 3 stores.</div>
+        <div class="mut-feedback">Lowest price in 90 days, cheapest of 4 stores.</div>
         <div class="mut-arrow">&darr; the score says</div>
-        <div class="mut-added">Deal score 91 (Excellent) &mdash; alert sent.</div>
+        <div class="mut-added">Deal score 88 (Excellent) &mdash; alert sent.</div>
       </div>
     </div>
     <div class="proof-right">
       <div class="proof-stat"><span class="num">88</span><span class="cap">deal score, Excellent grade</span></div>
       <div class="proof-stat"><span class="num">0</span><span class="cap">fake discounts let through</span></div>
-      <div class="proof-stat"><span class="num">3</span><span class="cap">stores compared per product</span></div>
+      <div class="proof-stat"><span class="num">4</span><span class="cap">stores compared per product</span></div>
     </div>
   </div>
-  <div class="footnote"><b>Placeholder data</b> &mdash; numbers are illustrative until a real capture is wired in.</div>
+  <div class="footnote">Data from the 90-day seeded dataset (seed 7242) &mdash; 12 products, 4 stores, 4,320 observations.</div>
 </section>
 <!-- 08 · PROOF AT SCALE -->
 <section class="slide slide--bench" data-rise data-title="The Proof at Scale">
