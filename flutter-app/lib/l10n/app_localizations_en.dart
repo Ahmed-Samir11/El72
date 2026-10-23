@@ -435,10 +435,14 @@ class AppLocalizationsEn extends AppLocalizations {
   String get navProfile => 'Profile';
 
   @override
-  String get chatTitle => 'Chat';
+  String get addToFeed => 'Add to Feed';
 
   @override
-  String get addToFeed => 'Add to Feed';
+  String get searchHint =>
+      'Search for products (e.g. \"gaming laptop under 50000 EGP\")';
+
+  @override
+  String get searchResults => 'Search Results';
 
   @override
   String get botTyping => 'Bot is typing...';
@@ -447,12 +451,8 @@ class AppLocalizationsEn extends AppLocalizations {
   String get newChat => 'New Chat';
 
   @override
+  String get chatTitle => 'Chat';
+
+  @override
   String get noMessagesYet => 'No messages yet. Start a conversation.';
-
-  @override
-  String get searchHint =>
-      'Search for products (e.g. "gaming laptop under 50000 EGP")';
-
-  @override
-  String get searchResults => 'Search Results';
 }

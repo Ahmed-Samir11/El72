@@ -240,5 +240,49 @@
   "notNow": "ليس الآن",
   "@notNow": {
     "description": "إجراء إغلاق نافذة نفاد الرصيد."
+  },
+  "navTrackers": "متتبعات",
+  "@navTrackers": {
+    "description": "تسمية تبويب المتتبعات في شريط التنقل السفلي."
+  },
+  "navDeals": "صفقات",
+  "@navDeals": {
+    "description": "تسمية تبويب الصفقات في شريط التنقل السفلي."
+  },
+  "navChat": "دردشة",
+  "@navChat": {
+    "description": "تسمية تبويب الدردشة في شريط التنقل السفلي."
+  },
+  "navProfile": "الملف الشخصي",
+  "@navProfile": {
+    "description": "تسمية تبويب الملف الشخصي في شريط التنقل السفلي."
+  },
+  "addToFeed": "أضف إلى المتابعة",
+  "@addToFeed": {
+    "description": "تسمية زر إضافة نتيجة البحث إلى قائمة المتابعة."
+  },
+  "searchHint": "ابحث عن المنتجات (مثال: \"لابتوب غيمينج أقل من 50000 جنيه\")",
+  "@searchHint": {
+    "description": "نص توضيحي لحقل البحث في الدردشة."
+  },
+  "searchResults": "نتائج البحث",
+  "@searchResults": {
+    "description": "عنوان يظهر فوق نتائج البحث."
+  },
+  "botTyping": "البوت يكتب...",
+  "@botTyping": {
+    "description": "نص يظهر عندما يكون البوت يكتب."
+  },
+  "newChat": "دردشة جديدة",
+  "@newChat": {
+    "description": "تسمية زر بدء محادثة جديدة."
+  },
+  "chatTitle": "دردشة",
+  "@chatTitle": {
+    "description": "العنوان الظاهر في شريط تطبيق الدردشة."
+  },
+  "noMessagesYet": "لا توجد رسائل بعد. ابدأ محادثة.",
+  "@noMessagesYet": {
+    "description": "نص يظهر عندما لا توجد رسائل بعد."
   }
 }

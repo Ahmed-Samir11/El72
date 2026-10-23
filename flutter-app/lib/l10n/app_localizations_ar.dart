@@ -439,10 +439,14 @@ class AppLocalizationsAr extends AppLocalizations {
   String get navProfile => 'الملف الشخصي';
 
   @override
-  String get chatTitle => 'دردشة';
+  String get addToFeed => 'أضف إلى المتابعة';
 
   @override
-  String get addToFeed => 'أضف إلى المتابعة';
+  String get searchHint =>
+      'ابحث عن المنتجات (مثال: \"لابتوب غيمينج أقل من 50000 جنيه\")';
+
+  @override
+  String get searchResults => 'نتائج البحث';
 
   @override
   String get botTyping => 'البوت يكتب...';
@@ -451,12 +455,8 @@ class AppLocalizationsAr extends AppLocalizations {
   String get newChat => 'دردشة جديدة';
 
   @override
+  String get chatTitle => 'دردشة';
+
+  @override
   String get noMessagesYet => 'لا توجد رسائل بعد. ابدأ محادثة.';
-
-  @override
-  String get searchHint =>
-      'ابحث عن المنتجات (مثال: "لابتوب ألعاب أقل من 50000 ج.م")';
-
-  @override
-  String get searchResults => 'نتائج البحث';
 }

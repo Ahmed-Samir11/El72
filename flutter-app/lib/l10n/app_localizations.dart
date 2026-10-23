@@ -863,7 +863,7 @@ abstract class AppLocalizations {
   /// Placeholder text for the chat search input field.
   ///
   /// In en, this message translates to:
-  /// **'Search for products (e.g. "gaming laptop under 50000 EGP")'**
+  /// **'Search for products (e.g. \"gaming laptop under 50000 EGP\")'**
   String get searchHint;
 
   /// Heading shown above search results.
