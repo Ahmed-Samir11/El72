@@ -1,9 +1,7 @@
 # Test dependencies for CI (lint-and-tests job).
 #
 # These are the runtime imports required to *collect and run* the unit tests in
-# services/*/test_*.py. They intentionally EXCLUDE the heavy scraping/ML stack
-# (crawl4ai, torch, transformers) and openai, because no tested module imports
-# them directly — this keeps CI fast and avoids large downloads.
+# services/*/test_*.py.
 #
 # The `playwright` Python package is included (store_scrapers.py imports it for
 # type hints), but the Playwright *browser* binaries are NOT installed; the
@@ -14,14 +12,12 @@ pytest-asyncio>=0.23.0
 
 fastapi>=0.109.0
 sqlalchemy>=2.0.0
-# Pinned to match the production services (which import BaseSettings from
-# `pydantic`); newer pydantic moved BaseSettings to `pydantic-settings`.
-pydantic==2.5.0
+# The production services import BaseSettings from `pydantic-settings`.
+# crawl4ai requires pydantic>=2.10, so we pin to a compatible version.
+pydantic>=2.10
 # The analyzer's settings.py imports `BaseSettings` from `pydantic_settings`
 # (pydantic v2 migration), so the package is required to collect its tests.
-# Pinned to the pydantic 2.5.0 era to avoid the resolver pulling a newer
-# pydantic-settings that would force a pydantic upgrade past the pin above.
-pydantic-settings==2.1.0
+pydantic-settings>=2.6.0
 
 numpy>=1.26.0
 scikit-learn>=1.4.0
@@ -41,3 +37,7 @@ psutil>=5.9.0
 # paymob_client.py (services/common) imports requests for the Paymob REST
 # calls; required to collect the card-payment tests.
 requests>=2.31.0
+# chatbot/search_service.py imports crawl4ai and openai directly; required
+# to collect the chatbot tests.
+crawl4ai>=0.4.0
+openai>=1.0.0

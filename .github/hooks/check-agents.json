@@ -1,0 +1,12 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "type": "command",
+        "command": "${CLAUDE_PROJECT_DIR:-.}/scripts/check-agents.sh",
+        "timeout": 10
+      }
+    ]
+  }
+}

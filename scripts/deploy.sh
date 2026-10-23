@@ -33,7 +33,7 @@ echo "[deploy] building and starting the production stack"
 docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env up -d --build
 
 echo "[deploy] waiting for API health at https://${API_DOMAIN}/health"
-for i in $(seq 1 12); do
+for _ in $(seq 1 12); do
   if curl -fsS "https://${API_DOMAIN}/health" >/dev/null 2>&1; then
     echo "[deploy] API healthy"
     exit 0

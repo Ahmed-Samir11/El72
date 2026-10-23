@@ -240,5 +240,49 @@
   "notNow": "Not now",
   "@notNow": {
     "description": "Dismiss action on the credit-limit dialog."
+  },
+  "navTrackers": "Trackers",
+  "@navTrackers": {
+    "description": "Bottom navigation label for the Trackers tab."
+  },
+  "navDeals": "Deals",
+  "@navDeals": {
+    "description": "Bottom navigation label for the Deals tab."
+  },
+  "navChat": "Chat",
+  "@navChat": {
+    "description": "Bottom navigation label for the Chat tab."
+  },
+  "navProfile": "Profile",
+  "@navProfile": {
+    "description": "Bottom navigation label for the Profile tab."
+  },
+  "addToFeed": "Add to Feed",
+  "@addToFeed": {
+    "description": "Button label to add a search result to the tracking feed."
+  },
+  "searchHint": "Search for products (e.g. \"gaming laptop under 50000 EGP\")",
+  "@searchHint": {
+    "description": "Placeholder text for the chat search input field."
+  },
+  "searchResults": "Search Results",
+  "@searchResults": {
+    "description": "Heading shown above search results."
+  },
+  "botTyping": "Bot is typing...",
+  "@botTyping": {
+    "description": "Text shown when the bot is typing."
+  },
+  "newChat": "New Chat",
+  "@newChat": {
+    "description": "Button label to start a new chat session."
+  },
+  "chatTitle": "Chat",
+  "@chatTitle": {
+    "description": "Title shown in the chat app bar."
+  },
+  "noMessagesYet": "No messages yet. Start a conversation.",
+  "@noMessagesYet": {
+    "description": "Text shown when there are no messages yet."
   }
 }

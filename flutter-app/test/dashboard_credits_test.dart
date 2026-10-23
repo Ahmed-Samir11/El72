@@ -29,8 +29,9 @@ Widget _wrap(Future<CreditBalance> balanceFuture, {Locale? locale}) {
   );
 }
 
-Future<void> _gotoProfile(WidgetTester tester) async {
-  await tester.tap(find.text('Profile'));
+Future<void> _gotoProfile(WidgetTester tester, {Locale? locale}) async {
+  final label = locale?.languageCode == 'ar' ? 'الملف الشخصي' : 'Profile';
+  await tester.tap(find.text(label));
   await tester.pumpAndSettle();
 }
 
@@ -117,7 +118,7 @@ void main() {
       ),
     );
 
-    await _gotoProfile(tester);
+    await _gotoProfile(tester, locale: const Locale('ar'));
 
     expect(find.text('لديك متتبع واحد متبقٍ'), findsOneWidget);
   });

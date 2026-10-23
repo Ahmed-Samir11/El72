@@ -35,6 +35,12 @@ El72 (Elhaq) is a **real-time price tracking & deal detection platform** for the
     (see `plans/review-agent-tunnel.md`).
 - Address all review findings, push, then merge.
 
+> **Full operational guide:** See [`.agents/PR_WORKFLOW.md`](PR_WORKFLOW.md)
+> for step-by-step instructions on creating PRs via the GitHub API (no `gh`
+> CLI), running the HGM review agent, addressing findings, and merging.
+> It covers token retrieval, shell-escaping pitfalls, mergeability checks,
+> and branch cleanup.
+
 ## Constraints
 - All edits stay inside this repo.
 - Tests must pass before opening a PR.

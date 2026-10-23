@@ -3,7 +3,7 @@ set -uo pipefail
 
 # Read-only audit: no migrations, no writes, no service restarts.
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-cd "$ROOT"
+cd "$ROOT" || exit 1
 
 PASS=0
 WARN=0

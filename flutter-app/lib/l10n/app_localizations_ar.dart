@@ -425,4 +425,38 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get notNow => 'ليس الآن';
+
+  @override
+  String get navTrackers => 'متتبعات';
+
+  @override
+  String get navDeals => 'صفقات';
+
+  @override
+  String get navChat => 'دردشة';
+
+  @override
+  String get navProfile => 'الملف الشخصي';
+
+  @override
+  String get addToFeed => 'أضف إلى المتابعة';
+
+  @override
+  String get searchHint =>
+      'ابحث عن المنتجات (مثال: \"لابتوب غيمينج أقل من 50000 جنيه\")';
+
+  @override
+  String get searchResults => 'نتائج البحث';
+
+  @override
+  String get botTyping => 'البوت يكتب...';
+
+  @override
+  String get newChat => 'دردشة جديدة';
+
+  @override
+  String get chatTitle => 'دردشة';
+
+  @override
+  String get noMessagesYet => 'لا توجد رسائل بعد. ابدأ محادثة.';
 }

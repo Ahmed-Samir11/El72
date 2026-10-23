@@ -829,6 +829,72 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Not now'**
   String get notNow;
+
+  /// Bottom navigation label for the Trackers tab.
+  ///
+  /// In en, this message translates to:
+  /// **'Trackers'**
+  String get navTrackers;
+
+  /// Bottom navigation label for the Deals tab.
+  ///
+  /// In en, this message translates to:
+  /// **'Deals'**
+  String get navDeals;
+
+  /// Bottom navigation label for the Chat tab.
+  ///
+  /// In en, this message translates to:
+  /// **'Chat'**
+  String get navChat;
+
+  /// Bottom navigation label for the Profile tab.
+  ///
+  /// In en, this message translates to:
+  /// **'Profile'**
+  String get navProfile;
+
+  /// Button label to add a search result to the tracking feed.
+  ///
+  /// In en, this message translates to:
+  /// **'Add to Feed'**
+  String get addToFeed;
+
+  /// Placeholder text for the chat search input field.
+  ///
+  /// In en, this message translates to:
+  /// **'Search for products (e.g. \"gaming laptop under 50000 EGP\")'**
+  String get searchHint;
+
+  /// Heading shown above search results.
+  ///
+  /// In en, this message translates to:
+  /// **'Search Results'**
+  String get searchResults;
+
+  /// Text shown when the bot is typing.
+  ///
+  /// In en, this message translates to:
+  /// **'Bot is typing...'**
+  String get botTyping;
+
+  /// Button label to start a new chat session.
+  ///
+  /// In en, this message translates to:
+  /// **'New Chat'**
+  String get newChat;
+
+  /// Title shown in the chat app bar.
+  ///
+  /// In en, this message translates to:
+  /// **'Chat'**
+  String get chatTitle;
+
+  /// Text shown when there are no messages yet.
+  ///
+  /// In en, this message translates to:
+  /// **'No messages yet. Start a conversation.'**
+  String get noMessagesYet;
 }
 
 class _AppLocalizationsDelegate
