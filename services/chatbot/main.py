@@ -32,10 +32,9 @@ from uuid import UUID
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.responses import JSONResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
-from pydantic import BaseModel
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
@@ -47,7 +46,6 @@ from services.chatbot.models import (
     AddToFeedRequest,
     ChatRequest,
     ChatResponse,
-    ErrorResponse,
     HealthResponse,
     SearchResult,
 )
@@ -101,6 +99,7 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 # ---------------------------------------------------------------------------
 # Dependencies
 # ---------------------------------------------------------------------------
+
 
 def get_db():
     """Yield a database session."""
@@ -161,9 +160,7 @@ def get_authenticated_user_id(
     ).fetchone()
 
     if not row:
-        raise HTTPException(
-            status_code=401, detail="User not found"
-        )
+        raise HTTPException(status_code=401, detail="User not found")
 
     return int(row.id)
 
@@ -402,8 +399,7 @@ def _ensure_session(db: Session, session_id: Optional[UUID], user_id: int) -> UU
     new_id = _uuid.uuid4()
     db.execute(
         text(
-            "INSERT INTO chat_sessions (id, user_id) "
-            "VALUES (:session_id, :user_id)"
+            "INSERT INTO chat_sessions (id, user_id) " "VALUES (:session_id, :user_id)"
         ),
         {"session_id": str(new_id), "user_id": user_id},
     )
@@ -439,8 +435,10 @@ def _save_search_result(db: Session, session_id: UUID, result: dict):
     db.execute(
         text(
             "INSERT INTO chat_search_results "
-            "(id, session_id, store_id, product_title, price_local, currency, url, image_url) "
-            "VALUES (:result_id, :session_id, :store_id, :title, :price, :currency, :url, :image_url)"
+            "(id, session_id, store_id, product_title, "
+            "price_local, currency, url, image_url) "
+            "VALUES (:result_id, :session_id, :store_id, "
+            ":title, :price, :currency, :url, :image_url)"
         ),
         {
             "result_id": str(result_id),
@@ -489,9 +487,7 @@ async def _handle_add_to_feed(
         ).fetchone()
 
     if not row:
-        _save_message(
-            db, request.session_id, "bot", "No search results found to add."
-        )
+        _save_message(db, request.session_id, "bot", "No search results found to add.")
         return ChatResponse(
             message="No search results found to add to your feed.",
             session_id=request.session_id,
@@ -502,9 +498,6 @@ async def _handle_add_to_feed(
     title = row.product_title
     price = float(row.price_local) if row.price_local else None
     target_price = request.target_price or price
-    store_id = row.store_id
-    currency = row.currency or "EGP"
-    image_url = row.image_url or ""
 
     # Call the API service to create a tracked item
     try:

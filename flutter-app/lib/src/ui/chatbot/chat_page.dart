@@ -35,10 +35,10 @@ class ChatPage extends ConsumerWidget {
 class _ChatPageBody extends StatefulWidget {
   final ChatbotRepository repository;
 
-  const _ChatPageBody({required this.repository, super.key});
+  const _ChatPageBody({required this.repository});
 
   @override
-  State<_ChatPageBody> createState() => _ChatPageBodyState(repository);
+  State<_ChatPageBody> createState() => _ChatPageBodyState();
 }
 
 class _ChatPageBodyState extends State<_ChatPageBody> {
@@ -48,9 +48,7 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
   bool _isSending = false;
   String? _sessionId;
 
-  final ChatbotRepository _repository;
-
-  _ChatPageBodyState(this._repository);
+  ChatbotRepository get _repository => widget.repository;
 
   @override
   void dispose() {
@@ -141,11 +139,9 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
       if (e is UnauthorizedException) {
         // Token expired or invalid — prompt re-authentication.
         setState(() => _isSending = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(e.message),
-          ),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(e.message)));
         return;
       }
 
@@ -153,8 +149,7 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
         id: _generateUuid(),
         sessionId: _sessionId ?? '',
         role: 'bot',
-        content:
-            'Sorry, I couldn\'t process your request. Please try again.',
+        content: 'Sorry, I couldn\'t process your request. Please try again.',
         createdAt: DateTime.now(),
       );
       setState(() {
@@ -162,9 +157,7 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
         _isSending = false;
       });
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('An error occurred. Please try again.'),
-        ),
+        SnackBar(content: Text('An error occurred. Please try again.')),
       );
     }
   }
@@ -204,25 +197,21 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
       debugPrint('Add to feed error: $e');
 
       if (e is UnauthorizedException) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(e.message)),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(e.message)));
         return;
       }
 
       // Surface insufficient-credits errors specifically so the user
       // knows to purchase credits or check their balance.
       if (e is InsufficientCreditsException) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(e.toString()),
-          ),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(e.toString())));
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to add tracker. Please try again.'),
-          ),
+          SnackBar(content: Text('Failed to add tracker. Please try again.')),
         );
       }
     } finally {
@@ -318,8 +307,7 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
             ),
 
           // Bot typing indicator
-          if (_isSending)
-            BotTypingIndicator(),
+          if (_isSending) BotTypingIndicator(),
 
           // Input area
           Padding(
@@ -332,8 +320,10 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
                     decoration: InputDecoration(
                       hintText: l10n.searchHint,
                       border: const OutlineInputBorder(),
-                      contentPadding:
-                          const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 12,
+                      ),
                     ),
                     onSubmitted: (_) => _sendMessage(),
                   ),

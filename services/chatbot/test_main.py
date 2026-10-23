@@ -9,6 +9,7 @@ Tests cover:
 """
 
 import os
+
 import pytest
 from fastapi.testclient import TestClient
 from jose import jwt
@@ -17,14 +18,14 @@ from sqlalchemy.orm import sessionmaker
 
 from services.chatbot.main import (
     app,
+    get_authenticated_user_id,
     get_db,
     verify_jwt_token,
-    get_authenticated_user_id,
 )
 from services.chatbot.search_service import (
+    STORES,
     ChatbotSearchService,
     parse_intent,
-    STORES,
 )
 
 # ---------------------------------------------------------------------------
@@ -33,9 +34,7 @@ from services.chatbot.search_service import (
 
 TEST_DB_PATH = "test_chatbot.db"
 TEST_ENGINE = create_engine(f"sqlite:///{TEST_DB_PATH}")
-TEST_SESSION_LOCAL = sessionmaker(
-    autocommit=False, autoflush=False, bind=TEST_ENGINE
-)
+TEST_SESSION_LOCAL = sessionmaker(autocommit=False, autoflush=False, bind=TEST_ENGINE)
 
 # JWT test settings
 TEST_SECRET_KEY = "test-secret-key-for-tests"
@@ -56,6 +55,7 @@ def _make_token(phone: str) -> str:
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(scope="module")
 def client():
@@ -273,15 +273,17 @@ async def test_search_service_init():
 # ---------------------------------------------------------------------------
 
 
-def test_add_to_feed_with_url(client, override_db, override_auth, db_session, auth_headers):
+def test_add_to_feed_with_url(
+    client, override_db, override_auth, db_session, auth_headers
+):
     """Test add-to-feed with a specific URL creates a tracker.
 
     Mocks the API service to return success.
     """
-    import httpx
-
     # Create a session and a search result
     import uuid as _uuid
+
+    import httpx
 
     session_id = str(_uuid.uuid4())
     db_session.execute(
@@ -340,12 +342,14 @@ def test_add_to_feed_with_url(client, override_db, override_auth, db_session, au
     assert "added" in data["message"].lower() or "tracker" in data["message"].lower()
 
 
-def test_add_to_feed_insufficient_credits(client, override_db, override_auth, db_session, auth_headers):
+def test_add_to_feed_insufficient_credits(
+    client, override_db, override_auth, db_session, auth_headers
+):
     """Test add-to-feed when the API returns 402 (insufficient credits)."""
-    import httpx
-
     # Create a session and a search result
     import uuid as _uuid
+
+    import httpx
 
     session_id = str(_uuid.uuid4())
     db_session.execute(
@@ -401,10 +405,13 @@ def test_add_to_feed_insufficient_credits(client, override_db, override_auth, db
 
     assert response.status_code == 200
     data = response.json()
-    assert "credit" in data["message"].lower() or "insufficient" in data["message"].lower()
+    msg = data["message"].lower()
+    assert "credit" in msg or "insufficient" in msg
 
 
-def test_add_to_feed_no_results(client, override_db, override_auth, db_session, auth_headers):
+def test_add_to_feed_no_results(
+    client, override_db, override_auth, db_session, auth_headers
+):
     """Test add-to-feed when there are no search results."""
     import uuid as _uuid
 
@@ -431,6 +438,7 @@ def test_add_to_feed_no_results(client, override_db, override_auth, db_session, 
 # ---------------------------------------------------------------------------
 # Cleanup (session-scoped to avoid file locking)
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(scope="session", autouse=True)
 def cleanup_test_db():

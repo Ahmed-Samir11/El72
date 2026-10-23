@@ -61,13 +61,17 @@ class ChatMessageModel {
       throw FormatException('ChatMessageModel: missing required field "id"');
     }
     if (sessionId == null) {
-      throw FormatException('ChatMessageModel: missing required field "session_id"');
+      throw FormatException(
+        'ChatMessageModel: missing required field "session_id"',
+      );
     }
     if (role == null) {
       throw FormatException('ChatMessageModel: missing required field "role"');
     }
     if (content == null) {
-      throw FormatException('ChatMessageModel: missing required field "content"');
+      throw FormatException(
+        'ChatMessageModel: missing required field "content"',
+      );
     }
 
     return ChatMessageModel(
@@ -108,7 +112,9 @@ class ChatSessionModel {
       throw FormatException('ChatSessionModel: missing required field "id"');
     }
     if (userId == null) {
-      throw FormatException('ChatSessionModel: missing required field "user_id"');
+      throw FormatException(
+        'ChatSessionModel: missing required field "user_id"',
+      );
     }
 
     return ChatSessionModel(
@@ -116,8 +122,9 @@ class ChatSessionModel {
       userId: userId,
       createdAt: createdAt,
       updatedAt: updatedAt,
-      messages:
-          (messagesList ?? const []).map((m) => ChatMessageModel.fromJson(m)).toList(),
+      messages: (messagesList ?? const [])
+          .map((m) => ChatMessageModel.fromJson(m))
+          .toList(),
     );
   }
 }
@@ -149,23 +156,31 @@ class SearchResultModel {
     final storeName = json['store_name'] as String?;
     final title = json['title'] as String?;
     final price = (json['price'] as num?)?.toDouble();
-    final currency = json['currency'] as String?;
+    final currency = (json['currency'] as String?) ?? 'EGP';
     final url = json['url'] as String?;
     final imageUrl = json['image_url'] as String?;
     final inStock = json['in_stock'] as bool?;
 
     // Required fields must be present; throw if missing to surface data errors.
     if (storeId == null) {
-      throw FormatException('SearchResultModel: missing required field "store_id"');
+      throw FormatException(
+        'SearchResultModel: missing required field "store_id"',
+      );
     }
     if (storeName == null) {
-      throw FormatException('SearchResultModel: missing required field "store_name"');
+      throw FormatException(
+        'SearchResultModel: missing required field "store_name"',
+      );
     }
     if (title == null) {
-      throw FormatException('SearchResultModel: missing required field "title"');
+      throw FormatException(
+        'SearchResultModel: missing required field "title"',
+      );
     }
     if (price == null) {
-      throw FormatException('SearchResultModel: missing required field "price"');
+      throw FormatException(
+        'SearchResultModel: missing required field "price"',
+      );
     }
     if (url == null) {
       throw FormatException('SearchResultModel: missing required field "url"');
@@ -173,10 +188,10 @@ class SearchResultModel {
 
     return SearchResultModel(
       storeId: storeId,
-      storeName: storeName ?? '',
+      storeName: storeName,
       title: title,
       price: price,
-      currency: currency ?? 'EGP',
+      currency: currency,
       url: url,
       imageUrl: imageUrl ?? '',
       inStock: inStock ?? true,
@@ -202,17 +217,22 @@ class ChatResponseModel {
     final resultsList = json['search_results'] as List<dynamic>?;
 
     if (message == null) {
-      throw FormatException('ChatResponseModel: missing required field "message"');
+      throw FormatException(
+        'ChatResponseModel: missing required field "message"',
+      );
     }
     if (sessionId == null) {
-      throw FormatException('ChatResponseModel: missing required field "session_id"');
+      throw FormatException(
+        'ChatResponseModel: missing required field "session_id"',
+      );
     }
 
     return ChatResponseModel(
       message: message,
       sessionId: sessionId,
-      searchResults:
-          (resultsList ?? const []).map((r) => SearchResultModel.fromJson(r)).toList(),
+      searchResults: (resultsList ?? const [])
+          .map((r) => SearchResultModel.fromJson(r))
+          .toList(),
     );
   }
 }

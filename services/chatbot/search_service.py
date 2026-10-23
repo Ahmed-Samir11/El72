@@ -154,7 +154,8 @@ def parse_intent(message: str) -> Dict[str, Any]:
     and an optional max_price.
 
     Examples:
-        "gaming laptop under 50000 EGP" -> {"query": "gaming laptop", "max_price": 50000}
+        "gaming laptop under 50000 EGP"
+            -> {"query": "gaming laptop", "max_price": 50000}
         "iPhone 15 Pro Max" -> {"query": "iPhone 15 Pro Max", "max_price": None}
         "Samsung TV below 30000" -> {"query": "Samsung TV", "max_price": 30000}
     """
@@ -259,9 +260,7 @@ URL: {url or 'unknown'}
                 json_match = _re.search(r"\{[\s\S]*\}", result)
                 if json_match:
                     return json_match.group()
-                logger.warning(
-                    f"Could not parse LLM response as JSON: {result[:200]}"
-                )
+                logger.warning(f"Could not parse LLM response as JSON: {result[:200]}")
                 return result
 
         except Exception as e:
@@ -345,7 +344,9 @@ class ChatbotSearchService:
             return SearchResultsSchema.model_validate(result_dict)
 
         except Exception as e:
-            logger.error(f"Search extraction failed for {query} on {store.store_id}: {e}")
+            logger.error(
+                f"Search extraction failed for {query} on {store.store_id}: {e}"
+            )
             return None
 
     def _find_best_match(
@@ -439,9 +440,7 @@ class ChatbotSearchService:
             List of search result dicts, ranked by relevance
         """
         # Fire concurrent searches across stores (bounded by semaphore).
-        tasks = [
-            self._search_one_store(query, store) for store in self.stores
-        ]
+        tasks = [self._search_one_store(query, store) for store in self.stores]
         store_results = await asyncio.gather(*tasks, return_exceptions=True)
 
         results: List[Dict[str, Any]] = []
@@ -463,9 +462,7 @@ class ChatbotSearchService:
 
         return results
 
-    async def search_with_intent(
-        self, message: str
-    ) -> Dict[str, Any]:
+    async def search_with_intent(self, message: str) -> Dict[str, Any]:
         """Parse intent from a message and search for products.
 
         Args:

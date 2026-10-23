@@ -451,8 +451,7 @@ class AppLocalizationsAr extends AppLocalizations {
   String get newChat => 'دردشة جديدة';
 
   @override
-  String get noMessagesYet =>
-      'لا توجد رسائل بعد. ابدأ محادثة.';
+  String get noMessagesYet => 'لا توجد رسائل بعد. ابدأ محادثة.';
 
   @override
   String get searchHint =>

@@ -1,15 +1,15 @@
 """Unit tests for the chatbot search service."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
 from services.chatbot.search_service import (
+    STORES,
     ChatbotSearchService,
     SearchResultItem,
     SearchResultsSchema,
     parse_intent,
-    STORES,
 )
 
 
@@ -72,6 +72,7 @@ async def test_search_service_init(search_service):
 @pytest.mark.asyncio
 async def test_search_with_mocked_extract(search_service):
     """Test full search flow with mocked extraction."""
+
     # Mock _extract_search_results to return results
     async def mock_extract(query, store):
         if store.store_id == "amazon_eg":
@@ -104,6 +105,7 @@ async def test_search_with_mocked_extract(search_service):
 @pytest.mark.asyncio
 async def test_search_price_filter(search_service):
     """Test that price filter is applied in search."""
+
     async def mock_extract(query, store):
         if store.store_id == "amazon_eg":
             return MagicMock(
@@ -143,6 +145,7 @@ async def test_search_price_filter(search_service):
 @pytest.mark.asyncio
 async def test_search_no_results(search_service):
     """Test search when no results are found."""
+
     async def mock_extract(query, store):
         return MagicMock(products=[])
 
@@ -158,6 +161,7 @@ async def test_search_no_results(search_service):
 @pytest.mark.asyncio
 async def test_search_with_intent(search_service):
     """Test search_with_intent parses and searches."""
+
     async def mock_extract(query, store):
         if store.store_id == "amazon_eg":
             return MagicMock(
@@ -215,4 +219,3 @@ def test_search_results_schema_validation():
     )
     assert len(schema.products) == 1
     assert schema.total_results == 1
-

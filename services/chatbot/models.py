@@ -1,6 +1,6 @@
 """Pydantic request/response models for the chatbot service."""
 
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import List, Optional
 from uuid import UUID
 

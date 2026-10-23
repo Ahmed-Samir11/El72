@@ -895,7 +895,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'No messages yet. Start a conversation.'**
   String get noMessagesYet;
-
 }
 
 class _AppLocalizationsDelegate

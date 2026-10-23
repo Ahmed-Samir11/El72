@@ -80,15 +80,16 @@ class ChatbotRepository {
   /// Secure storage for the JWT access token.
   final FlutterSecureStorage _storage;
 
-  ChatbotRepository({
-    Dio? dio,
-    FlutterSecureStorage? storage,
-  })
-    : _dio = dio ?? Dio(BaseOptions(
-        baseUrl: AppConfig.chatbotBaseUrl,
-        connectTimeout: const Duration(seconds: 30),
-        receiveTimeout: const Duration(seconds: 120),
-      )),
+  ChatbotRepository({Dio? dio, FlutterSecureStorage? storage})
+    : _dio =
+          dio ??
+          Dio(
+            BaseOptions(
+              baseUrl: AppConfig.chatbotBaseUrl,
+              connectTimeout: const Duration(seconds: 30),
+              receiveTimeout: const Duration(seconds: 120),
+            ),
+          ),
       _storage = storage ?? const FlutterSecureStorage();
 
   /// Read the stored JWT access token.
@@ -115,10 +116,7 @@ class ChatbotRepository {
     final options = RequestOptions(
       method: 'POST',
       path: '/chatbot/message',
-      data: {
-        'session_id': sessionId,
-        'message': message,
-      },
+      data: {'session_id': sessionId, 'message': message},
     );
     await _addAuthHeader(options);
 
@@ -126,12 +124,17 @@ class ChatbotRepository {
       final response = await _dio.fetch(options);
 
       if (response.statusCode == 200 && response.data is Map<String, dynamic>) {
-        return ChatResponseModel.fromJson(response.data as Map<String, dynamic>);
+        return ChatResponseModel.fromJson(
+          response.data as Map<String, dynamic>,
+        );
       }
-      throw Exception('Unexpected response from chatbot: ${response.statusCode}');
+      throw Exception(
+        'Unexpected response from chatbot: ${response.statusCode}',
+      );
     } on DioException catch (e) {
+      // _handleHttpError is a Never-returning function: it always throws
+      // (UnauthorizedException, InsufficientCreditsException, or rethrows).
       _handleHttpError(e);
-      rethrow; // Unreachable; _handleHttpError always throws.
     }
   }
 
@@ -203,12 +206,15 @@ class ChatbotRepository {
       final response = await _dio.fetch(options);
 
       if (response.statusCode == 200 && response.data is Map<String, dynamic>) {
-        return ChatResponseModel.fromJson(response.data as Map<String, dynamic>);
+        return ChatResponseModel.fromJson(
+          response.data as Map<String, dynamic>,
+        );
       }
-      throw Exception('Unexpected response from chatbot: ${response.statusCode}');
+      throw Exception(
+        'Unexpected response from chatbot: ${response.statusCode}',
+      );
     } on DioException catch (e) {
       _handleHttpError(e);
-      rethrow; // Unreachable; _handleHttpError always throws.
     }
   }
 

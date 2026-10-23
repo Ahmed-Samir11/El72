@@ -447,8 +447,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get newChat => 'New Chat';
 
   @override
-  String get noMessagesYet =>
-      'No messages yet. Start a conversation.';
+  String get noMessagesYet => 'No messages yet. Start a conversation.';
 
   @override
   String get searchHint =>
