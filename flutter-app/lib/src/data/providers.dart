@@ -7,6 +7,7 @@ import 'models/price_point_model.dart';
 import 'models/tracked_item_model.dart';
 import 'repositories/auth_repository.dart';
 import 'repositories/credits_repository.dart';
+import 'repositories/chatbot_repository.dart';
 import 'repositories/deals_repository.dart';
 import 'repositories/price_history_repository.dart';
 import 'repositories/stats_repository.dart';
@@ -34,6 +35,11 @@ final priceHistoryRepositoryProvider = Provider<PriceHistoryRepository>((ref) {
 
 final creditsRepositoryProvider = Provider<CreditsRepository>((ref) {
   return CreditsRepository();
+});
+
+/// Client for the chatbot service (`services/chatbot`).
+final chatbotRepositoryProvider = Provider<ChatbotRepository>((ref) {
+  return ChatbotRepository();
 });
 
 /// The current user's active tracked items.

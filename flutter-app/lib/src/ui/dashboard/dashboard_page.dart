@@ -13,6 +13,7 @@ import '../subscription_screen.dart';
 import '../widgets/deal_card.dart';
 import '../widgets/market_pulse_header.dart';
 import '../widgets/tracker_card.dart';
+import '../chatbot/chat_page.dart';
 
 class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key});
@@ -26,7 +27,12 @@ class _DashboardPageState extends State<DashboardPage> {
 
   @override
   Widget build(BuildContext context) {
-    final pages = <Widget>[_TrackersTab(), _DealsTab(), _ProfileTab()];
+    final pages = <Widget>[
+      _TrackersTab(),
+      _DealsTab(),
+      _ChatTab(),
+      _ProfileTab(),
+    ];
     return Scaffold(
       body: pages[index],
       bottomNavigationBar: NavigationBar(
@@ -37,6 +43,10 @@ class _DashboardPageState extends State<DashboardPage> {
             label: 'Trackers',
           ),
           NavigationDestination(icon: Icon(Icons.local_offer), label: 'Deals'),
+          NavigationDestination(
+            icon: Icon(Icons.chat),
+            label: 'Chat',
+          ),
           NavigationDestination(icon: Icon(Icons.person), label: 'Profile'),
         ],
         onDestinationSelected: (i) => setState(() => index = i),
@@ -245,6 +255,13 @@ class _DealsTab extends ConsumerWidget {
         ),
       ],
     );
+  }
+}
+
+class _ChatTab extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return const ChatPage();
   }
 }
 

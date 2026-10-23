@@ -425,4 +425,27 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get notNow => 'ليس الآن';
+
+  @override
+  String get chatTitle => 'دردشة';
+
+  @override
+  String get addToFeed => 'أضف إلى المتابعة';
+
+  @override
+  String get botTyping => 'البوت يكتب...';
+
+  @override
+  String get newChat => 'دردشة جديدة';
+
+  @override
+  String get noMessagesYet =>
+      'لا توجد رسائل بعد. ابدأ محادثة.';
+
+  @override
+  String get searchHint =>
+      'ابحث عن المنتجات (مثال: "لابتوب ألعاب أقل من 50000 ج.م")';
+
+  @override
+  String get searchResults => 'نتائج البحث';
 }

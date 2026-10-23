@@ -78,6 +78,18 @@ services:
     ports:
       - "8000:8000"
 
+  chatbot:
+    build:
+      context: .
+      dockerfile: services/chatbot/Dockerfile
+    depends_on:
+      - postgres
+    environment:
+      DATABASE_URL: "${DATABASE_URL_DOCKER:?Set DATABASE_URL_DOCKER in .env}"
+      API_BASE_URL: "http://api:8000"
+    ports:
+      - "8003:8000"
+
   prometheus:
     image: prom/prometheus:v2.53.0
     restart: unless-stopped

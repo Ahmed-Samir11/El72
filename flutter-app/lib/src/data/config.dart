@@ -28,6 +28,14 @@ class AppConfig {
     defaultValue: _emulatorDefaultUrl,
   );
 
+  /// Base URL of the chatbot service (`services/chatbot`). Overridable at
+  /// build time via `--dart-define=CHATBOT_BASE_URL=<prod>`. Defaults to the
+  /// emulator loopback address for local development.
+  static const String chatbotBaseUrl = String.fromEnvironment(
+    'CHATBOT_BASE_URL',
+    defaultValue: _emulatorDefaultUrl.replaceAll(':8000', ':8003'),
+  );
+
   static const String _demoModeKey = 'demo_mode';
   static late SharedPreferences _preferences;
   static bool demoMode = false;

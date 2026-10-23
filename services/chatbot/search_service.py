@@ -1,0 +1,503 @@
+"""Product search service for the chatbot.
+
+Uses Crawl4AI with local LLM inference (LM Studio) to search for products
+across all supported stores. The chatbot service uses Crawl4AI as a library
+(not an import from the scraper service) to keep the service isolated.
+"""
+
+import json
+import logging
+import re
+from typing import Any, Dict, List, Optional
+from urllib.parse import quote_plus
+
+from crawl4ai import AsyncWebCrawler
+from crawl4ai.extraction_strategy import LLMExtractionStrategy
+from openai import AsyncOpenAI
+from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
+
+# LM Studio Configuration (OpenAI-compatible local endpoint)
+LM_STUDIO_URL = "http://localhost:1234/v1"
+LM_STUDIO_MODEL = "local-model"
+
+# Crawl4AI Configuration
+CRAWL_TIMEOUT = 30
+CRAWL_WAIT_FOR = "networkidle"
+MAX_TOKENS_EXTRACTION = 2000
+
+
+# =============================================================================
+# LM Studio Client
+# =============================================================================
+
+
+def get_lm_studio_client() -> AsyncOpenAI:
+    """Get AsyncOpenAI client configured for LM Studio."""
+    return AsyncOpenAI(base_url=LM_STUDIO_URL, api_key="not-needed")
+
+
+# =============================================================================
+# Extraction Schemas (local copies for service isolation)
+# =============================================================================
+
+
+class SearchResultItem(BaseModel):
+    """Schema for a single product in search results."""
+
+    title: str
+    url: str
+    price: Optional[float] = None
+    currency: str = "EGP"
+    image_url: Optional[str] = None
+    in_stock: Optional[bool] = True
+
+
+class SearchResultsSchema(BaseModel):
+    """Schema for extracting product listings from search results."""
+
+    products: List[SearchResultItem] = []
+    total_results: Optional[int] = None
+    current_page: Optional[int] = None
+    has_next_page: Optional[bool] = None
+
+
+# =============================================================================
+# Store Configuration
+# =============================================================================
+
+
+class StoreConfig:
+    """Configuration for a single store scraper."""
+
+    def __init__(
+        self,
+        store_id: str,
+        store_name: str,
+        base_url: str,
+        search_url_pattern: str,
+    ):
+        self.store_id = store_id
+        self.store_name = store_name
+        self.base_url = base_url
+        self.search_url_pattern = search_url_pattern
+
+    def get_search_url(self, query: str) -> str:
+        """Build the search URL for a product query."""
+        encoded_query = quote_plus(query)
+        return self.search_url_pattern.format(encoded_query=encoded_query)
+
+
+# Supported stores for search. Mirrors the store list in services/api/main.py.
+STORES: List[StoreConfig] = [
+    StoreConfig(
+        store_id="amazon_eg",
+        store_name="Amazon Egypt",
+        base_url="https://www.amazon.eg",
+        search_url_pattern="{base_url}/s?k={encoded_query}",
+    ),
+    StoreConfig(
+        store_id="noon",
+        store_name="Noon Egypt",
+        base_url="https://www.noon.com",
+        search_url_pattern="{base_url}/egypt-en/search?search={encoded_query}",
+    ),
+    StoreConfig(
+        store_id="jumia",
+        store_name="Jumia Egypt",
+        base_url="https://www.jumia.com.eg",
+        search_url_pattern="{base_url}/search?q={encoded_query}",
+    ),
+    StoreConfig(
+        store_id="elbadrgroup",
+        store_name="ElBadr Group",
+        base_url="https://elbadrgroup.com",
+        search_url_pattern="{base_url}/index.php?route=product/search&search={encoded_query}",
+    ),
+    StoreConfig(
+        store_id="2b_egypt",
+        store_name="2B Egypt",
+        base_url="https://www.2b.com.eg",
+        search_url_pattern="{base_url}/search?q={encoded_query}",
+    ),
+    StoreConfig(
+        store_id="sigma_computer",
+        store_name="Sigma Computer",
+        base_url="https://www.sigma-computer.com",
+        search_url_pattern="{base_url}/en/search?s={encoded_query}",
+    ),
+    StoreConfig(
+        store_id="egyprice",
+        store_name="EgyPrice",
+        base_url="https://egyprice.com",
+        search_url_pattern="{base_url}/search?q={encoded_query}",
+    ),
+]
+
+
+# =============================================================================
+# Intent Parsing
+# =============================================================================
+
+
+def parse_intent(message: str) -> Dict[str, Any]:
+    """Parse a user message into a search query and optional price filter.
+
+    Looks for price-related keywords (under, below, less than, max, etc.)
+    followed by a number. Returns the query (message minus price filter)
+    and an optional max_price.
+
+    Examples:
+        "gaming laptop under 50000 EGP" -> {"query": "gaming laptop", "max_price": 50000}
+        "iPhone 15 Pro Max" -> {"query": "iPhone 15 Pro Max", "max_price": None}
+        "Samsung TV below 30000" -> {"query": "Samsung TV", "max_price": 30000}
+    """
+    msg = message.strip()
+    max_price: Optional[float] = None
+    query = msg
+
+    # Price filter patterns (case-insensitive)
+    patterns = [
+        r"\bunder\s+([\d,]+)\s*(?:EGP)?\b",
+        r"\bbelow\s+([\d,]+)\s*(?:EGP)?\b",
+        r"\bless than\s+([\d,]+)\s*(?:EGP)?\b",
+        r"\bmax\s+([\d,]+)\s*(?:EGP)?\b",
+        r"\bmaximum\s+([\d,]+)\s*(?:EGP)?\b",
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, msg, re.IGNORECASE)
+        if match:
+            price_str = match.group(1).replace(",", "")
+            try:
+                max_price = float(price_str)
+            except ValueError:
+                continue
+            # Remove the matched price phrase from the query
+            query = msg[: match.start()] + msg[match.end() :]
+            query = re.sub(r"\s+", " ", query).strip()
+            break
+
+    # If no keyword pattern matched, check for a standalone number at the end
+    if max_price is None:
+        standalone = re.search(r"\b([\d,]+)\s*(?:EGP)?\s*$", msg, re.IGNORECASE)
+        if standalone:
+            price_str = standalone.group(1).replace(",", "")
+            try:
+                max_price = float(price_str)
+            except ValueError:
+                pass
+            else:
+                query = msg[: standalone.start()].strip()
+
+    return {"query": query, "max_price": max_price}
+
+
+# =============================================================================
+# LLM Extraction Strategy
+# =============================================================================
+
+
+class LMStudioExtractionStrategy(LLMExtractionStrategy):
+    """Custom extraction strategy that uses LM Studio for local inference."""
+
+    def __init__(
+        self,
+        schema: dict,
+        extraction_prompt: str,
+        model: str = None,
+        **kwargs,
+    ):
+        self.schema = schema
+        self.extraction_prompt = extraction_prompt
+        self.model = model or LM_STUDIO_MODEL
+        self.client = get_lm_studio_client()
+        super().__init__(**kwargs)
+
+    async def extract(self, content: str, url: str = None) -> str:
+        """Extract structured data from content using local LLM."""
+        system_prompt = f"""{self.extraction_prompt}
+
+Expected JSON schema:
+{json.dumps(self.schema, indent=2)}
+
+URL: {url or 'unknown'}
+"""
+
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {
+                        "role": "user",
+                        "content": (
+                            f"Extract product information from this page content:\n\n"
+                            f"{content[:8000]}"
+                        ),
+                    },
+                ],
+                max_tokens=MAX_TOKENS_EXTRACTION,
+                temperature=0.1,
+            )
+
+            result = response.choices[0].message.content
+
+            # Try to parse as JSON to validate
+            try:
+                parsed = json.loads(result)
+                return json.dumps(parsed)
+            except json.JSONDecodeError:
+                import re as _re
+
+                json_match = _re.search(r"\{[\s\S]*\}", result)
+                if json_match:
+                    return json_match.group()
+                logger.warning(
+                    f"Could not parse LLM response as JSON: {result[:200]}"
+                )
+                return result
+
+        except Exception as e:
+            logger.error(f"LM Studio extraction failed: {e}")
+            raise
+
+
+# =============================================================================
+# Search Service
+# =============================================================================
+
+
+class ChatbotSearchService:
+    """Searches for products across all supported stores using Crawl4AI."""
+
+    def __init__(self):
+        self.stores = STORES
+        self._crawler: Optional[AsyncWebCrawler] = None
+
+    async def _get_crawler(self) -> AsyncWebCrawler:
+        """Get or create the async web crawler instance."""
+        if self._crawler is None:
+            self._crawler = AsyncWebCrawler(headless=True, verbose=False)
+            await self._crawler.__aenter__()
+        return self._crawler
+
+    async def close(self):
+        """Close the crawler and release resources."""
+        if self._crawler:
+            await self._crawler.__aexit__(None, None, None)
+            self._crawler = None
+
+    async def _crawl_page(self, url: str) -> Optional[str]:
+        """Crawl a single page and return its content.
+
+        Returns page content (HTML/text) or None if failed.
+        """
+        try:
+            crawler = await self._get_crawler()
+            result = await crawler.arun(
+                url=url,
+                timeout=CRAWL_TIMEOUT * 1000,
+                wait_for=CRAWL_WAIT_FOR,
+            )
+            if result.success:
+                return result.markdown or result.html
+            else:
+                logger.error(f"Crawl failed for {url}: {result.error_message}")
+                return None
+        except Exception as e:
+            logger.error(f"Exception crawling {url}: {e}")
+            return None
+
+    async def _extract_search_results(
+        self, query: str, store: StoreConfig
+    ) -> Optional[SearchResultsSchema]:
+        """Search for products on a specific store and extract results.
+
+        Args:
+            query: Product search query
+            store: Store configuration
+
+        Returns:
+            Extracted search results or None if failed
+        """
+        search_url = store.get_search_url(query)
+        content = await self._crawl_page(search_url)
+
+        if not content:
+            return None
+
+        try:
+            strategy = LMStudioExtractionStrategy(
+                schema=SearchResultsSchema.model_json_schema(),
+                extraction_prompt=SEARCH_RESULTS_EXTRACTION_PROMPT,
+            )
+
+            result_json = await strategy.extract(content, search_url)
+
+            result_dict = json.loads(result_json)
+            return SearchResultsSchema.model_validate(result_dict)
+
+        except Exception as e:
+            logger.error(f"Search extraction failed for {query} on {store.store_id}: {e}")
+            return None
+
+    def _find_best_match(
+        self, query: str, products: List[SearchResultItem]
+    ) -> Optional[SearchResultItem]:
+        """Find the best matching product from search results.
+
+        Uses token overlap scoring.
+
+        Args:
+            query: Original search query
+            products: List of search result items
+
+        Returns:
+            Best matching product or None
+        """
+        if not products:
+            return None
+
+        query_lower = query.lower()
+        query_tokens = set(query_lower.split())
+
+        best_score = -1
+        best_product = None
+
+        for product in products:
+            title_lower = product.title.lower()
+            title_tokens = set(title_lower.split())
+
+            # Token overlap score
+            token_hits = len(query_tokens & title_tokens)
+
+            # Length bonus (shorter titles often more relevant)
+            length_bonus = 1.0 / (1 + len(title_lower) / 100)
+
+            # Phrase bonus (exact phrase match)
+            phrase_bonus = 1.0 if query_lower in title_lower else 0.0
+
+            score = token_hits + length_bonus + phrase_bonus
+
+            if score > best_score:
+                best_score = score
+                best_product = product
+
+        return best_product
+
+    async def search(
+        self, query: str, max_price: Optional[float] = None
+    ) -> List[Dict[str, Any]]:
+        """Search for products across all stores.
+
+        Args:
+            query: Product search query
+            max_price: Optional maximum price filter
+
+        Returns:
+            List of search result dicts, ranked by relevance
+        """
+        results: List[Dict[str, Any]] = []
+
+        for store in self.stores:
+            try:
+                extracted = await self._extract_search_results(query, store)
+                if not extracted or not extracted.products:
+                    continue
+
+                # Find the best matching product
+                best = self._find_best_match(query, extracted.products)
+                if not best:
+                    continue
+
+                # Resolve relative URLs
+                product_url = best.url
+                if not product_url.startswith("http"):
+                    product_url = f"{store.base_url}{product_url}"
+
+                # Apply price filter
+                if best.price is not None and max_price is not None:
+                    if best.price > max_price:
+                        continue
+
+                results.append(
+                    {
+                        "store_id": store.store_id,
+                        "store_name": store.store_name,
+                        "title": best.title,
+                        "price": best.price if best.price is not None else 0.0,
+                        "currency": best.currency,
+                        "url": product_url,
+                        "image_url": best.image_url or "",
+                        "in_stock": bool(best.in_stock),
+                    }
+                )
+
+            except Exception as e:
+                logger.error(f"Search failed for store {store.store_id}: {e}")
+                continue
+
+        # Rank by relevance: products with exact phrase match first, then by
+        # token overlap. Since we already picked the best match per store,
+        # sort by price (ascending) for budget-conscious users.
+        results.sort(key=lambda r: r["price"])
+
+        return results
+
+    async def search_with_intent(
+        self, message: str
+    ) -> Dict[str, Any]:
+        """Parse intent from a message and search for products.
+
+        Args:
+            message: User message (e.g., "gaming laptop under 50000 EGP")
+
+        Returns:
+            Dict with "query", "max_price", and "results" keys
+        """
+        intent = parse_intent(message)
+        query = intent["query"]
+        max_price = intent["max_price"]
+
+        if not query:
+            return {
+                "query": "",
+                "max_price": max_price,
+                "results": [],
+                "message": "Please enter a product to search for.",
+            }
+
+        results = await self.search(query, max_price)
+
+        return {
+            "query": query,
+            "max_price": max_price,
+            "results": results,
+        }
+
+
+# =============================================================================
+# Extraction Prompts
+# =============================================================================
+
+SEARCH_RESULTS_EXTRACTION_PROMPT = """
+You are extracting product listings from an e-commerce search results page.
+
+For each product listing/card on the page, extract:
+1. Product title
+2. URL/link to the product page
+3. Price (if shown)
+4. Currency
+5. Image thumbnail URL
+6. Stock status (if indicated)
+
+Also extract pagination info if visible:
+- Total results count
+- Current page number
+- Whether there's a next page
+
+Return ONLY the JSON object with a "products" array and pagination fields.
+Extract ALL visible products, not just the first few.
+"""

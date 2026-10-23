@@ -421,4 +421,27 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get notNow => 'Not now';
+
+  @override
+  String get chatTitle => 'Chat';
+
+  @override
+  String get addToFeed => 'Add to Feed';
+
+  @override
+  String get botTyping => 'Bot is typing...';
+
+  @override
+  String get newChat => 'New Chat';
+
+  @override
+  String get noMessagesYet =>
+      'No messages yet. Start a conversation.';
+
+  @override
+  String get searchHint =>
+      'Search for products (e.g. "gaming laptop under 50000 EGP")';
+
+  @override
+  String get searchResults => 'Search Results';
 }
