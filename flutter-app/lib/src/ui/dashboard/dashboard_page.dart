@@ -37,7 +37,7 @@ class _DashboardPageState extends State<DashboardPage> {
       body: pages[index],
       bottomNavigationBar: NavigationBar(
         selectedIndex: index,
-        destinations: const [
+        destinations: [
           NavigationDestination(
             icon: Icon(Icons.track_changes),
             label: AppLocalizations.of(context).navTrackers,

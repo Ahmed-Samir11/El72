@@ -4,8 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../l10n/app_localizations.dart';
 import '../../data/models/chat_message_model.dart';
-import '../../data/models/search_result_model.dart';
 import '../../data/repositories/chatbot_repository.dart';
+import '../../data/providers.dart';
 import '../chatbot/chat_widgets.dart';
 import '../chatbot/search_result_card.dart';
 
@@ -38,7 +38,7 @@ class _ChatPageBody extends StatefulWidget {
   const _ChatPageBody({required this.repository, super.key});
 
   @override
-  State<_ChatPageBody> createState() => _ChatPageBodyState();
+  State<_ChatPageBody> createState() => _ChatPageBodyState(repository);
 }
 
 class _ChatPageBodyState extends State<_ChatPageBody> {
@@ -58,17 +58,29 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
     super.dispose();
   }
 
-  /// Generate a client-side session ID using a cryptographically secure
-  /// random UUID. The server validates the session exists and belongs to the
-  /// authenticated user (derived from the JWT).
-  String _generateSessionId() {
+  /// Generate a cryptographically secure random UUID v4 string.
+  /// Used for message IDs and session IDs.
+  String _generateUuid() {
     final random = Random.secure();
     final bytes = List<int>.generate(16, (_) => random.nextInt(256));
-    return '${bytes[0..8].map((b) => b.toString(16).padLeft(2, '0')).join()}-'
-        '${bytes[8..12].map((b) => b.toString(16).padLeft(2, '0')).join()}-'
-        '${bytes[12..14].map((b) => b.toString(16).padLeft(2, '0')).join()}-'
-        '${bytes[14..16].map((b) => b.toString(16).padLeft(2, '0')).join()}-'
-        '${bytes[16..20].map((b) => b.toString(16).padLeft(2, '0')).join()}';
+    // Set version (4) and variant (10) bits per UUID v4 spec
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    final sb = StringBuffer();
+    for (int i = 0; i < 16; i++) {
+      sb.write(bytes[i].toRadixString(16).padLeft(2, '0'));
+      if (i == 3 || i == 5 || i == 7 || i == 9) {
+        sb.write('-');
+      }
+    }
+    return sb.toString();
+  }
+
+  /// Generate a client-side session ID using a cryptographically secure
+  /// random UUID v4 format.
+  /// The server validates the session exists and belongs to the authenticated
+  /// user (derived from the JWT).
+  String _generateSessionId() => _generateUuid();
 
   /// Send a message to the chatbot and handle the response.
   Future<void> _sendMessage() async {
@@ -80,9 +92,9 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
     // Generate or reuse session ID
     _sessionId ??= _generateSessionId();
 
-    // Add user message optimistically — use timestamp-based ID to avoid collisions
+    // Add user message optimistically — use UUID to avoid collisions
     final userMsg = ChatMessageModel(
-      id: DateTime.now().millisecondsSinceEpoch,
+      id: _generateUuid(),
       sessionId: _sessionId!,
       role: 'user',
       content: text,
@@ -103,9 +115,9 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
 
       if (!mounted) return;
 
-      // Add bot message — use timestamp-based ID to avoid collisions
+      // Add bot message — use UUID to avoid collisions
       final botMsg = ChatMessageModel(
-        id: DateTime.now().millisecondsSinceEpoch,
+        id: _generateUuid(),
         sessionId: _sessionId!,
         role: 'bot',
         content: response.message,
@@ -123,7 +135,7 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
       debugPrint('Chatbot error: $e');
 
       final errorMsg = ChatMessageModel(
-        id: DateTime.now().millisecondsSinceEpoch,
+        id: _generateUuid(),
         sessionId: _sessionId!,
         role: 'bot',
         content:
@@ -143,13 +155,19 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
   }
 
   /// Handle "Add to Feed" tap on a search result.
-  Future<void> _addToFeed(SearchResultModel result) async {
+  Future<void> addToFeed(SearchResultModel result) async {
     if (!mounted) return;
+
+    // Defensive null guard: session ID must be set before adding to feed
+    if (_sessionId == null) {
+      debugPrint('addToFeed called without a session ID');
+      return;
+    }
 
     setState(() => _isSending = true);
 
     try {
-      final response = await _repository.addToFeed(
+      await _repository.addToFeed(
         sessionId: _sessionId!,
         productUrl: result.url,
       );
@@ -167,16 +185,25 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
     } catch (e) {
       if (!mounted) return;
 
-      // Log the detailed error for debugging, show generic message to user
+      // Log the detailed error for debugging
       debugPrint('Add to feed error: $e');
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to add tracker. Please try again.'),
-        ),
-      );
+      // Surface insufficient-credits errors specifically so the user
+      /// knows to purchase credits or check their balance.
+      if (e is InsufficientCreditsException) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(e.toString()),
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to add tracker. Please try again.'),
+          ),
+        );
+      }
     } finally {
-      if (!mounted) return;
       setState(() => _isSending = false);
     }
   }
@@ -256,7 +283,7 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
                         final result = _searchResults[index];
                         return SearchResultCard(
                           result: result,
-                          onAddToFeed: () => _addToFeed(result),
+                          onAddToFeed: () => addToFeed(result),
                         );
                       },
                     ),

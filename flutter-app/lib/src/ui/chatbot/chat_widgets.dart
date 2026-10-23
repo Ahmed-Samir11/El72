@@ -16,8 +16,6 @@ class ChatMessageBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context);
-
     return Align(
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
@@ -71,7 +69,7 @@ class NewChatButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return FilledButton(
       onPressed: onPressed,
-      label: Text(AppLocalizations.of(context).newChat),
+      child: Text(AppLocalizations.of(context).newChat),
     );
   }
 }

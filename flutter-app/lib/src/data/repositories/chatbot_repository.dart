@@ -4,10 +4,23 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../config.dart';
 import '../models/chat_message_model.dart';
 
+/// Custom exception for HTTP 402 (insufficient credits) responses.
+///
+/// The chatbot service returns 402 when the user has no remaining credits
+/// to create a tracker. The UI should surface this as an upgrade prompt.
+class InsufficientCreditsException implements Exception {
+  final String message;
+
+  const InsufficientCreditsException(this.message);
+
+  @override
+  String toString() => 'InsufficientCreditsException: $message';
+}
+
 /// Retry a request with exponential backoff for transient failures.
 ///
 /// [maxRetries] is the maximum number of attempts (including the first).
-/// Backoff: 1s, 2s, 4s...
+/// Backoff: 500ms, 1s, 2s...
 Future<T> _retry<T>(Future<T> Function() future, int maxRetries) async {
   int attempt = 0;
   while (attempt < maxRetries) {
@@ -16,8 +29,8 @@ Future<T> _retry<T>(Future<T> Function() future, int maxRetries) async {
     } catch (e) {
       attempt++;
       if (attempt >= maxRetries) rethrow;
-      // Exponential backoff: 1s, 2s, 4s...
-      await Future.delayed(Duration(seconds: 1) * (1 << attempt));
+      // Exponential backoff: 500ms, 1s, 2s...
+      await Future.delayed(Duration(milliseconds: 500) * (1 << attempt));
     }
   }
   // Unreachable but satisfies the analyzer.
@@ -152,7 +165,14 @@ class ChatbotRepository {
     if (response.statusCode == 200 && response.data is Map<String, dynamic>) {
       return ChatResponseModel.fromJson(response.data as Map<String, dynamic>);
     }
-    // Re-throw non-2xx responses so the caller can handle 402, etc.
+    // Surface 402 (insufficient credits) as a specific exception so the UI
+    /// can prompt the user to purchase credits.
+    if (response.statusCode == 402) {
+      throw InsufficientCreditsException(
+        'You have run out of credits. Purchase a plan to create trackers.',
+      );
+    }
+    // Re-throw non-2xx responses so the caller can handle other errors.
     throw Exception('Unexpected response from chatbot: ${response.statusCode}');
   }
 
@@ -174,6 +194,14 @@ class ChatbotRepository {
     if (response.statusCode == 200 && response.data is Map<String, dynamic>) {
       return ChatSessionModel.fromJson(response.data as Map<String, dynamic>);
     }
+    // Surface 402 (insufficient credits) as a specific exception so the UI
+    /// can prompt the user to purchase credits.
+    if (response.statusCode == 402) {
+      throw InsufficientCreditsException(
+        'You have run out of credits. Purchase a plan to create trackers.',
+      );
+    }
+    // Re-throw non-2xx responses so the caller can handle other errors.
     throw Exception('Unexpected response from chatbot: ${response.statusCode}');
   }
 }

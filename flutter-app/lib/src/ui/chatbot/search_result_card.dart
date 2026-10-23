@@ -30,9 +30,9 @@ class SearchResultCard extends StatelessWidget {
                 width: 60,
                 height: 60,
                 fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => const Icon(Icons.product),
+                errorBuilder: (_, __, ___) => const Icon(Icons.shopping_cart),
               )
-            : const Icon(Icons.product),
+            : const Icon(Icons.shopping_cart),
         title: Text(result.title, maxLines: 2, overflow: TextOverflow.ellipsis),
         subtitle: Text(
           '${result.storeName} • ${result.price.toStringAsFixed(0)} ${result.currency}',
@@ -40,7 +40,7 @@ class SearchResultCard extends StatelessWidget {
         ),
         trailing: FilledButton(
           onPressed: onAddToFeed,
-          child: Text('Add to Feed'),
+          child: Text(l10n.addToFeed),
         ),
       ),
     );
