@@ -247,10 +247,10 @@
   <h1 class="headline">A pipeline is scrape &rarr; store &rarr; alert.<br /><span class="accent">El72 is the intelligence that wraps it.</span></h1>
   <div class="diagram-split">
     <figure class="diagram">
-      <div class="diagram-flow" aria-label="Static pipeline: scraper to Redis Streams to TimescaleDB to notification">
-        <span>Scraper</span><b>&rarr;</b><span>Redis Streams</span><b>&rarr;</b><span>TimescaleDB</span><b>&rarr;</b><span>Notify</span>
+      <div class="diagram-flow" aria-label="Static pipeline: scraper to TimescaleDB to Redis Streams to notification">
+        <span>Scraper</span><b>&rarr;</b><span>TimescaleDB</span><b>&rarr;</b><span>Redis Streams</span><b>&rarr;</b><span>Notify</span>
       </div>
-      <figcaption>The <b>pipeline</b>: scraper &rarr; Redis &rarr; TimescaleDB &rarr; notification. It moves data. It does <b>not</b> decide what's real.</figcaption>
+      <figcaption>The <b>pipeline</b>: scraper &rarr; TimescaleDB &rarr; Redis &rarr; notification. It moves data. It does <b>not</b> decide what's real.</figcaption
     </figure>
     <figure class="diagram">
       <div class="diagram-flow intelligence-flow" aria-label="El72 intelligence: detect, grade, flag, rank">
