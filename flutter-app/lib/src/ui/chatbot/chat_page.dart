@@ -284,6 +284,7 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
                         return SearchResultCard(
                           result: result,
                           onAddToFeed: () => addToFeed(result),
+                          isEnabled: !_isSending,
                         );
                       },
                     ),

@@ -15,7 +15,7 @@ DateTime parseDateRobust(Object? value) {
     return DateTime.parse(s);
   } on FormatException {
     // Try stripping timezone offset if present
-    final trimmed = s.replaceAll(RegExp(r'[+-]\\d{2}:\\d{2}$'), '');
+    final trimmed = s.replaceAll(RegExp(r'[+-]\d{2}:\d{2}$'), '');
     try {
       return DateTime.parse(trimmed);
     } on FormatException {

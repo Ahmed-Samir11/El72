@@ -12,10 +12,12 @@ class SearchResultCard extends StatelessWidget {
     super.key,
     required this.result,
     required this.onAddToFeed,
+    this.isEnabled = true,
   });
 
   final SearchResultModel result;
   final VoidCallback onAddToFeed;
+  final bool isEnabled;
 
   @override
   Widget build(BuildContext context) {
@@ -39,7 +41,7 @@ class SearchResultCard extends StatelessWidget {
           style: Theme.of(context).textTheme.bodySmall,
         ),
         trailing: FilledButton(
-          onPressed: onAddToFeed,
+          onPressed: isEnabled ? onAddToFeed : null,
           child: Text(l10n.addToFeed),
         ),
       ),

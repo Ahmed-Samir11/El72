@@ -19,24 +19,32 @@ class InsufficientCreditsException implements Exception {
 
 /// Retry a request with exponential backoff for transient failures.
 ///
+/// Only used for idempotent GET requests. POST requests are never retried
+/// to avoid creating duplicate side effects (e.g. duplicate trackers).
 /// [maxRetries] is the maximum number of attempts (including the first).
 /// Backoff: 500ms, 1s, 2s...
-Future<T> _retry<T>(Future<T> Function() future, int maxRetries) async {
+Future<T> _retryGet<T>(Future<T> Function() future, int maxRetries) async {
   int attempt = 0;
   while (attempt < maxRetries) {
     try {
       return await future();
-    } catch (e) {
-      attempt++;
-      if (attempt >= maxRetries) rethrow;
-      // Exponential backoff: 500ms, 1s, 2s...
-      await Future.delayed(Duration(milliseconds: 500) * (1 << attempt));
+    } on DioException catch (e) {
+      // Only retry on transient network errors, not HTTP error responses.
+      if (e.type == DioExceptionType.connectionTimeout ||
+          e.type == DioExceptionType.connectionError ||
+          e.type == DioExceptionType.receiveTimeout ||
+          e.type == DioExceptionType.sendTimeout) {
+        attempt++;
+        if (attempt >= maxRetries) rethrow;
+        await Future.delayed(Duration(milliseconds: 500) * (1 << attempt));
+        continue;
+      }
+      rethrow;
     }
   }
   // Unreachable but satisfies the analyzer.
   throw StateError('Retry loop exited without result');
 }
-
 
 /// Data source for the chatbot service (`services/chatbot`).
 ///
@@ -66,7 +74,7 @@ class ChatbotRepository {
     : _dio = dio ?? Dio(BaseOptions(
         baseUrl: AppConfig.chatbotBaseUrl,
         connectTimeout: const Duration(seconds: 30),
-        receiveTimeout: const Duration(seconds: 30),
+        receiveTimeout: const Duration(seconds: 60),
       )),
       _storage = storage ?? const FlutterSecureStorage();
 
@@ -85,8 +93,7 @@ class ChatbotRepository {
 
   /// Send a message to the chatbot and get the response with search results.
   ///
-  /// Retries transient failures up to 3 times with exponential backoff.
-  /// Throws [DioException] on HTTP errors after retries are exhausted.
+  /// POST is not retried (non-idempotent). Throws [DioException] on HTTP errors.
   Future<ChatResponseModel> sendMessage({
     required String sessionId,
     required String message,
@@ -101,11 +108,6 @@ class ChatbotRepository {
     );
     await _addAuthHeader(options);
 
-    return await _retry(() => _fetchMessage(options), 3);
-  }
-
-  /// Internal fetch for sendMessage, extracted for retry.
-  Future<ChatResponseModel> _fetchMessage(RequestOptions options) async {
     final response = await _dio.fetch(options);
 
     if (response.statusCode == 200 && response.data is Map<String, dynamic>) {
@@ -115,11 +117,13 @@ class ChatbotRepository {
   }
 
   /// List all chat sessions for the authenticated user.
+  ///
+  /// GET is retried up to 3 times on transient network failures.
   Future<List<ChatSessionModel>> getSessions() async {
     final options = RequestOptions(method: 'GET', path: '/chatbot/sessions');
     await _addAuthHeader(options);
 
-    return await _retry(() => _fetchSessions(options), 3);
+    return await _retryGet(() => _fetchSessions(options), 3);
   }
 
   /// Internal fetch for getSessions, extracted for retry.
@@ -137,8 +141,8 @@ class ChatbotRepository {
 
   /// Add a search result to the user's tracking feed.
   ///
-  /// Uses a dedicated endpoint instead of encoding the action in message text.
-  /// Throws [DioException] on HTTP errors (e.g., 402 for insufficient credits).
+  /// POST is not retried (non-idempotent — retrying would create duplicate
+  /// trackers). Throws [InsufficientCreditsException] on HTTP 402.
   Future<ChatResponseModel> addToFeed({
     required String sessionId,
     String? productUrl,
@@ -155,28 +159,28 @@ class ChatbotRepository {
     );
     await _addAuthHeader(options);
 
-    return await _retry(() => _fetchAddToFeed(options), 3);
-  }
+    try {
+      final response = await _dio.fetch(options);
 
-  /// Internal fetch for addToFeed, extracted for retry.
-  Future<ChatResponseModel> _fetchAddToFeed(RequestOptions options) async {
-    final response = await _dio.fetch(options);
-
-    if (response.statusCode == 200 && response.data is Map<String, dynamic>) {
-      return ChatResponseModel.fromJson(response.data as Map<String, dynamic>);
+      if (response.statusCode == 200 && response.data is Map<String, dynamic>) {
+        return ChatResponseModel.fromJson(response.data as Map<String, dynamic>);
+      }
+      throw Exception('Unexpected response from chatbot: ${response.statusCode}');
+    } on DioException catch (e) {
+      // Surface 402 (insufficient credits) as a specific exception so the UI
+      // can prompt the user to purchase credits.
+      if (e.response?.statusCode == 402) {
+        throw InsufficientCreditsException(
+          'You have run out of credits. Purchase a plan to create trackers.',
+        );
+      }
+      rethrow;
     }
-    // Surface 402 (insufficient credits) as a specific exception so the UI
-    /// can prompt the user to purchase credits.
-    if (response.statusCode == 402) {
-      throw InsufficientCreditsException(
-        'You have run out of credits. Purchase a plan to create trackers.',
-      );
-    }
-    // Re-throw non-2xx responses so the caller can handle other errors.
-    throw Exception('Unexpected response from chatbot: ${response.statusCode}');
   }
 
   /// Get a single chat session with all its messages.
+  ///
+  /// GET is retried up to 3 times on transient network failures.
   Future<ChatSessionModel> getSession({required String sessionId}) async {
     final options = RequestOptions(
       method: 'GET',
@@ -184,7 +188,7 @@ class ChatbotRepository {
     );
     await _addAuthHeader(options);
 
-    return await _retry(() => _fetchSession(options), 3);
+    return await _retryGet(() => _fetchSession(options), 3);
   }
 
   /// Internal fetch for getSession, extracted for retry.
@@ -194,14 +198,6 @@ class ChatbotRepository {
     if (response.statusCode == 200 && response.data is Map<String, dynamic>) {
       return ChatSessionModel.fromJson(response.data as Map<String, dynamic>);
     }
-    // Surface 402 (insufficient credits) as a specific exception so the UI
-    /// can prompt the user to purchase credits.
-    if (response.statusCode == 402) {
-      throw InsufficientCreditsException(
-        'You have run out of credits. Purchase a plan to create trackers.',
-      );
-    }
-    // Re-throw non-2xx responses so the caller can handle other errors.
     throw Exception('Unexpected response from chatbot: ${response.statusCode}');
   }
 }
