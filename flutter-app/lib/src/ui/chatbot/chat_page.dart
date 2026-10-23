@@ -204,7 +204,9 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
         );
       }
     } finally {
-      setState(() => _isSending = false);
+      if (mounted) {
+        setState(() => _isSending = false);
+      }
     }
   }
 
