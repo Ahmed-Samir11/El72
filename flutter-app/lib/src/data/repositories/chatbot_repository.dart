@@ -17,7 +17,7 @@ Future<T> _retry<T>(Future<T> Function() future, int maxRetries) async {
       attempt++;
       if (attempt >= maxRetries) rethrow;
       // Exponential backoff: 1s, 2s, 4s...
-      await Future.delayed(const Duration(seconds: 1) << attempt);
+      await Future.delayed(Duration(seconds: 1) * (1 << attempt));
     }
   }
   // Unreachable but satisfies the analyzer.

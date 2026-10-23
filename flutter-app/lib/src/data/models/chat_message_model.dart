@@ -1,3 +1,29 @@
+/// Parse an ISO 8601 date string robustly.
+///
+/// Python's datetime.isoformat() may produce strings with microsecond
+/// precision and timezone offsets (e.g. "2026-10-23T17:09:22.123456+00:00").
+/// Dart's DateTime.parse handles most ISO 8601 variants, but we normalize
+/// common edge cases to avoid silent nulls.
+DateTime parseDateRobust(Object? value) {
+  if (value == null) {
+    throw FormatException('created_at is null');
+  }
+  if (value is DateTime) return value;
+
+  final s = value.toString();
+  try {
+    return DateTime.parse(s);
+  } on FormatException {
+    // Try stripping timezone offset if present
+    final trimmed = s.replaceAll(RegExp(r'[+-]\\d{2}:\\d{2}$'), '');
+    try {
+      return DateTime.parse(trimmed);
+    } on FormatException {
+      throw FormatException('cannot parse date "$s"');
+    }
+  }
+}
+
 /// Model for a chat message as returned by the chatbot service.
 class ChatMessageModel {
   final int id;
@@ -19,7 +45,7 @@ class ChatMessageModel {
     final sessionId = json['session_id'] as String?;
     final role = json['role'] as String?;
     final content = json['content'] as String?;
-    final createdAt = _parseDate(json['created_at']);
+    final createdAt = parseDateRobust(json['created_at']);
 
     // Required fields must be present; throw if missing to surface data errors.
     if (id == null) {
@@ -46,34 +72,6 @@ class ChatMessageModel {
       createdAt: createdAt,
     );
   }
-
-  /// Parse an ISO 8601 date string robustly.
-  ///
-  /// Python's datetime.isoformat() may produce strings with microsecond
-  /// precision and timezone offsets (e.g. "2026-10-23T17:09:22.123456+00:00").
-  /// Dart's DateTime.tryParse handles most ISO 8601 variants, but we normalize
-  /// common edge cases to avoid silent nulls.
-  static DateTime _parseDate(Object? value) {
-    if (value == null) {
-      throw FormatException('ChatMessageModel: created_at is null');
-    }
-    if (value is DateTime) return value;
-
-    final s = value.toString();
-    try {
-      return DateTime.parse(s);
-    } on FormatException {
-      // Try stripping timezone offset if present
-      final trimmed = s.replaceAll(RegExp(r'[+-]\\d{2}:\\d{2}$'), '');
-      try {
-        return DateTime.parse(trimmed);
-      } on FormatException {
-        throw FormatException(
-          'ChatMessageModel: cannot parse date "$s"',
-        );
-      }
-    }
-  }
 }
 
 /// Model for a chat session as returned by the chatbot service.
@@ -95,8 +93,8 @@ class ChatSessionModel {
   factory ChatSessionModel.fromJson(Map<String, dynamic> json) {
     final id = json['id'] as String?;
     final userId = json['user_id'] as int?;
-    final createdAt = _parseDate(json['created_at']);
-    final updatedAt = _parseDate(json['updated_at']);
+    final createdAt = parseDateRobust(json['created_at']);
+    final updatedAt = parseDateRobust(json['updated_at']);
     final messagesList = json['messages'] as List<dynamic>?;
 
     // Required fields must be present; throw if missing to surface data errors.
@@ -123,29 +121,6 @@ class ChatSessionModel {
     );
   }
 
-  /// Parse an ISO 8601 date string robustly.
-  static DateTime _parseDate(Object? value) {
-    if (value == null) {
-      throw FormatException('ChatSessionModel: date field is null');
-    }
-    if (value is DateTime) return value;
-
-    final s = value.toString();
-    try {
-      return DateTime.parse(s);
-    } on FormatException {
-      // Try stripping timezone offset if present
-      final trimmed = s.replaceAll(RegExp(r'[+-]\\d{2}:\\d{2}$'), '');
-      try {
-        return DateTime.parse(trimmed);
-      } on FormatException {
-        throw FormatException(
-          'ChatSessionModel: cannot parse date "$s"',
-        );
-      }
-    }
-  }
-}
 
 /// Model for a search result returned by the chatbot service.
 class SearchResultModel {

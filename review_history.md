@@ -13358,3 +13358,120 @@ WARNING: Diff truncated from 1730708 to 50000 chars
 Review completed in 144.2s
 Decision: REQUEST_CHANGES (confidence: 0.85)
 Findings: 9
+## PR Review: feat: chatbot service with search and add-to-feed
+Model: local/qwen-27b
+Files changed: 45
+WARNING: Diff truncated from 1736882 to 50000 chars
+
+### Raw LLM Response
+{
+  "summary": "This PR adds a chatbot service (FastAPI on port 8003) with Flutter frontend integration for natural-language product search and add-to-feed functionality. The backend uses Crawl4AI for search and calls the API service for tracker creation. The Flutter side adds a chat repository, UI pages, widgets, localization, and routing. Overall the architecture follows service-isolation patterns, but there are several critical compilation errors that must be fixed before the code can build.",
+  "decision": "REQUEST_CHANGES",
+  "confidence": 0.92,
+  "findings": [
+    {
+      "file": "flutter-app/lib/src/data/repositories/chatbot_repository.dart",
+      "line": 33,
+      "severity": "CRITICAL",
+      "category": "correctness",
+      "title": "Invalid Dart syntax in retry backoff: Duration << int",
+      "description": "The `_retry` function uses `const Duration(seconds: 1) << attempt` but Dart's `Duration` class does not support the `<<` (left shift) operator. This is a compile-time error that prevents the Flutter app from building.",
+      "suggestion": "Replace with `Duration(seconds: 1) * (1 << attempt)` or use `Duration(seconds: 1 << attempt)` to achieve exponential backoff (1s, 2s, 4s...)."
+    },
+    {
+      "file": "flutter-app/lib/src/ui/chatbot/search_result_card.dart",
+      "line": 39,
+      "severity": "CRITICAL",
+      "category": "correctness",
+      "title": "Undefined localization method: currentLabel",
+      "description": "`search_result_card.dart` calls `l10n.currentLabel(result.price.toStringAsFixed(0))` but `currentLabel` is not defined in `AppLocalizations` or any locale implementation (EN/AR). This will cause a compile error.",
+      "suggestion": "Either add a `currentLabel` method to the localization classes or inline the price formatting directly (e.g., `result.price.toStringAsFixed(0)` without a localization wrapper)."
+    },
+    {
+      "file": "flutter-app/lib/src/ui/chatbot/chat_page.dart",
+      "line": 217,
+      "severity": "CRITICAL",
+      "category": "correctness",
+      "title": "Undefined localization string: trackerCreated",
+      "description": "`chat_page.dart` references `AppLocalizations.of(context).trackerCreated` in the success snackbar for add-to-feed, but `trackerCreated` is not defined in the localization base class or EN/AR implementations. This will cause a compile error.",
+      "suggestion": "Add `trackerCreated` to the localization classes (base, EN, AR) or replace with an existing string like `addToFeed`."
+    },
+    {
+      "file": "flutter-app/lib/l10n/app_localizations.dart",
+      "line": 830,
+      "severity": "CRITICAL",
+      "category": "correctness",
+      "title": "Possible missing closing brace on abstract class",
+      "description": "The diff shows the closing `}` of the `AppLocalizations` abstract class being removed (`-}`) and new members added, but no closing `}` is visible after the new members. If the closing brace is truly missing, the file will not compile.",
+      "suggestion": "Verify that `app_localizations.dart` has a proper closing `}` after the `navProfile` member declaration."
+    },
+    {
+      "file": "flutter-app/lib/src/ui/chatbot/chat_page.dart",
+      "line": 130,
+      "severity": "WARNING",
+      "category": "correctness",
+      "title": "Two Expanded widgets in a Column cause layout conflicts",
+      "description": "The `build` method places two `Expanded` widgets (message list and search results) inside a `Column`. Both expand to fill available space, which can cause layout conflicts or unexpected sizing when both are present.",
+      "suggestion": "Use `Expanded` for the message list and a non-Expanded `Container` with bounded height for the search results section, or use a `Flexible` for one of them."
+    },
+    {
+      "file": "flutter-app/lib/src/data/repositories/chatbot_repository.dart",
+      "line": 33,
+      "severity": "WARNING",
+      "category": "performance",
+      "title": "Retry backoff logic is incorrect even if syntax were valid",
+      "description": "Even if the `<<` syntax were valid, `Duration(seconds: 1) << attempt` would not produce the intended exponential backoff. The bitwise shift on a Duration object is meaningless. The intended backoff (1s, 2s, 4s...) needs proper arithmetic.",
+      "suggestion": "Use `Duration(seconds: 1) * (1 << attempt)` to get 1s, 2s, 4s, 8s... backoff."
+    },
+    {
+      "file": "flutter-app/lib/src/ui/chatbot/chat_page.dart",
+      "line": 103,
+      "severity": "WARNING",
+      "category": "correctness",
+      "title": "Client-side message IDs can collide",
+      "description": "Message IDs are generated as `_messages.length + 1` client-side. If messages are ever deleted or the list is reordered, IDs could collide. More importantly, these IDs are not persisted from the server, so they are meaningless for server-side reconciliation.",
+      "suggestion": "Use server-generated IDs for messages when available, or use a UUID/timestamp-based client ID that is unique per message."
+    },
+    {
+      "file": "flutter-app/lib/src/data/models/chat_message_model.dart",
+      "line": 1,
+      "severity": "INFO",
+      "category": "architecture",
+      "title": "Code duplication: _parseDate method duplicated",
+      "description": "The `_parseDate` method is duplicated identically in both `ChatMessageModel` and `ChatSessionModel`. This violates DRY principles and increases maintenance burden.",
+      "suggestion": "Extract `_parseDate` into a private top-level extension method or a shared utility class that both models can use."
+    },
+    {
+      "file": "flutter-app/lib/src/ui/chatbot/chat_page.dart",
+      "line": 73,
+      "severity": "INFO",
+      "category": "security",
+      "title": "Predictable client-side session ID generation",
+      "description": "Session IDs are generated as `DateTime.now().millisecondsSinceEpoch.toString() + Random().nextInt(10000)`. This is predictable and only 4 digits of randomness, making session hijacking theoretically possible if an attacker can guess the timing.",
+      "suggestion": "Use a cryptographically secure random UUID for session IDs (e.g., `uuid` package) instead of timestamp-based generation."
+    }
+  ],
+  "missed_tests": [
+    "Widget tests for ChatPage covering message sending, add-to-feed success/failure, and search results display.",
+    "Repository tests for error scenarios: 402 insufficient credits, network timeouts, 500 errors, and malformed responses.",
+    "Backend unit tests for the chatbot service (search_service.py, intent parsing, add-to-feed handler) - these are mentioned as passing but not visible in the diff.",
+    "Tests for the `_retry` backoff behavior to verify it actually retries with delays.",
+    "Tests verifying that the Bearer token is included in all outgoing requests.",
+    "Tests for the `addToFeed` endpoint returning 402 and the UI handling it gracefully."
+  ],
+  "positive_notes": [
+    "Follows the project's service-isolation architecture: chatbot is a standalone FastAPI service that communicates with the API via REST.",
+    "Proper JWT authentication: all requests include the stored access token as a Bearer header; the chatbot resolves user_id from the token's `sub` claim server-side.",
+    "Comprehensive localization support with both EN and AR translations for all new strings.",
+    "Repository tests use a custom `_CapturedAdapter` to verify request headers, body, and response parsing - good testing practice.",
+    "Retry logic with exponential backoff is conceptually sound for transient failures.",
+    "Error handling in the UI shows user-friendly messages while logging detailed errors for debugging.",
+    "Docker-compose integration includes the new chatbot service with proper dependencies on postgres and api.",
+    "Database schema additions include proper FKs and indexes for chat_sessions, chat_messages, and chat_search_results."
+  ]
+}
+
+
+Review completed in 170.9s
+Decision: REQUEST_CHANGES (confidence: 0.92)
+Findings: 9

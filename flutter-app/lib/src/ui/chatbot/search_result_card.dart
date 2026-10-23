@@ -35,14 +35,12 @@ class SearchResultCard extends StatelessWidget {
             : const Icon(Icons.product),
         title: Text(result.title, maxLines: 2, overflow: TextOverflow.ellipsis),
         subtitle: Text(
-          '${result.storeName} • ${l10n.currentLabel(
-            result.price.toStringAsFixed(0),
-          )} ${result.currency}',
+          '${result.storeName} • ${result.price.toStringAsFixed(0)} ${result.currency}',
           style: Theme.of(context).textTheme.bodySmall,
         ),
         trailing: FilledButton(
           onPressed: onAddToFeed,
-          label: Text(l10n.addToFeed),
+          child: Text('Add to Feed'),
         ),
       ),
     );

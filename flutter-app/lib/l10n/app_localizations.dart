@@ -854,6 +854,8 @@ abstract class AppLocalizations {
   /// **'Profile'**
   String get navProfile;
 
+}
+
 class _AppLocalizationsDelegate
     extends LocalizationsDelegate<AppLocalizations> {
   const _AppLocalizationsDelegate();

@@ -1,3 +1,4 @@
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -57,12 +58,17 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
     super.dispose();
   }
 
-  /// Generate a client-side session ID. The server validates the session
-  /// exists and belongs to the authenticated user (derived from the JWT).
+  /// Generate a client-side session ID using a cryptographically secure
+  /// random UUID. The server validates the session exists and belongs to the
+  /// authenticated user (derived from the JWT).
   String _generateSessionId() {
-    final now = DateTime.now().millisecondsSinceEpoch.toString();
-    return now + Random().nextInt(10000).toString();
-  }
+    final random = Random.secure();
+    final bytes = List<int>.generate(16, (_) => random.nextInt(256));
+    return '${bytes[0..8].map((b) => b.toString(16).padLeft(2, '0')).join()}-'
+        '${bytes[8..12].map((b) => b.toString(16).padLeft(2, '0')).join()}-'
+        '${bytes[12..14].map((b) => b.toString(16).padLeft(2, '0')).join()}-'
+        '${bytes[14..16].map((b) => b.toString(16).padLeft(2, '0')).join()}-'
+        '${bytes[16..20].map((b) => b.toString(16).padLeft(2, '0')).join()}';
 
   /// Send a message to the chatbot and handle the response.
   Future<void> _sendMessage() async {
@@ -74,9 +80,9 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
     // Generate or reuse session ID
     _sessionId ??= _generateSessionId();
 
-    // Add user message optimistically
+    // Add user message optimistically — use timestamp-based ID to avoid collisions
     final userMsg = ChatMessageModel(
-      id: _messages.length + 1,
+      id: DateTime.now().millisecondsSinceEpoch,
       sessionId: _sessionId!,
       role: 'user',
       content: text,
@@ -97,9 +103,9 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
 
       if (!mounted) return;
 
-      // Add bot message
+      // Add bot message — use timestamp-based ID to avoid collisions
       final botMsg = ChatMessageModel(
-        id: _messages.length + 1,
+        id: DateTime.now().millisecondsSinceEpoch,
         sessionId: _sessionId!,
         role: 'bot',
         content: response.message,
@@ -117,7 +123,7 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
       debugPrint('Chatbot error: $e');
 
       final errorMsg = ChatMessageModel(
-        id: _messages.length + 1,
+        id: DateTime.now().millisecondsSinceEpoch,
         sessionId: _sessionId!,
         role: 'bot',
         content:
@@ -154,7 +160,7 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            '${AppLocalizations.of(context).trackerCreated} "${result.title}"',
+            'Tracker created for "${result.title}". You will be notified on price changes.',
           ),
         ),
       );
@@ -228,9 +234,12 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
           ),
 
           // Search results from the last bot response.
-          // Wrapped in Expanded so the inner ListView has bounded height.
+          // Bounded height so it doesn't conflict with the Expanded message list.
           if (_searchResults.isNotEmpty)
-            Expanded(
+            Container(
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.of(context).size.height * 0.3,
+              ),
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: Column(
