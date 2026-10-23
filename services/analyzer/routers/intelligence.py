@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import time
 from datetime import date, datetime
 from typing import Dict, List, Optional
 
@@ -19,6 +21,24 @@ from services.analyzer.fake_discount import detect_fake_discount
 from services.analyzer.platform_metrics import platform_metrics
 
 router = APIRouter(tags=["intelligence"])
+logger = logging.getLogger(__name__)
+
+# In-process TTL cache for DB-backed fake-discount verdicts (review finding:
+# every request hit the DB). The detector reads a bounded 90-day window per
+# SKU, and the scrape pipeline refreshes prices far less often than a hot
+# SKU is requested, so a short TTL removes repeated identical queries. It is
+# intentionally in-process: the verdict is an advisory signal (not financial
+# state), so cross-worker staleness of tens of seconds is acceptable and a
+# process restart simply starts an empty cache. Only successful verdicts are
+# cached; errors are never cached so a transient DB blip does not stick.
+_FAKE_DISCOUNT_CACHE_TTL_SECONDS = 60.0
+_FAKE_DISCOUNT_CACHE_MAX_ENTRIES = 512
+_fake_discount_cache: Dict[tuple, tuple] = {}
+
+
+def clear_fake_discount_cache() -> None:
+    """Drop all cached fake-discount verdicts (exposed for tests)."""
+    _fake_discount_cache.clear()
 
 
 class DealScoreRequest(BaseModel):
@@ -108,7 +128,9 @@ async def fake_discount(request: FakeDiscountRequest):
 
 
 @router.get("/intelligence/fake-discount/{sku}")
-async def fake_discount_for_sku(sku: str, request: Request, store_id: Optional[str] = None):
+async def fake_discount_for_sku(
+    sku: str, request: Request, store_id: Optional[str] = None
+):
     """DB-backed fake-discount verdict for a product.
 
     Loads the 90-day price history for ``sku`` (optionally scoped to one
@@ -121,16 +143,31 @@ async def fake_discount_for_sku(sku: str, request: Request, store_id: Optional[s
             status_code=503,
             detail="Price history store is not available.",
         )
+    cache_key = (sku, store_id)
+    entry = _fake_discount_cache.get(cache_key)
+    if entry is not None:
+        stamped, cached = entry
+        if time.monotonic() - stamped < _FAKE_DISCOUNT_CACHE_TTL_SECONDS:
+            return cached
     try:
         async with ts_pool.acquire() as conn:
-            return await analyze_discount_for_sku(conn, sku, store_id)
+            verdict = await analyze_discount_for_sku(conn, sku, store_id)
     except HTTPException:
         raise
-    except Exception as exc:  # noqa: BLE001 - surface a clean 500, not a stack trace
+    except Exception:  # noqa: BLE001 - surface a clean 500, not a stack trace
+        # Log the full error server-side; return a generic detail so internal
+        # exception text (SQL, connection strings) never reaches the client.
+        logger.exception("Failed to analyze discount for %s", sku)
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to analyze discount for {sku}: {exc}",
-        ) from exc
+            detail="Failed to analyze discount for this product.",
+        ) from None
+    # Cache only successful verdicts; bound the cache by clearing it when it
+    # grows past the cap (simple, good enough for an advisory signal).
+    if len(_fake_discount_cache) >= _FAKE_DISCOUNT_CACHE_MAX_ENTRIES:
+        _fake_discount_cache.clear()
+    _fake_discount_cache[cache_key] = (time.monotonic(), verdict)
+    return verdict
 
 
 @router.post("/intelligence/cross-store/{product_id}")

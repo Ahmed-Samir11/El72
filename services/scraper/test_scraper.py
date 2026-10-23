@@ -12,6 +12,7 @@ from services.scraper.scraper import (
     check_alerts_for_sku,
     check_in_stock,
     check_in_stock_from_page,
+    extract_original_price_from_page,
     extract_price,
     extract_price_from_page,
     extract_product_title,
@@ -56,6 +57,46 @@ async def test_extract_price_from_page():
 
     page.query_selector_all.return_value = []
     assert await extract_price_from_page(page) == 0.0
+
+
+@pytest.mark.asyncio
+async def test_extract_original_price_picks_highest_strikethrough_candidate():
+    # Multiple strikethrough elements: the highest plausible value wins
+    # (the advertised original is the largest price in the price block),
+    # and non-price selectors must not be consulted (review finding:
+    # "only considers the first strikethrough element").
+    page = AsyncMock()
+    el_low = AsyncMock()
+    el_low.inner_text.return_value = "EGP 1,200.00"
+    el_high = AsyncMock()
+    el_high.inner_text.return_value = "EGP 1,800.00"
+    el_noise = AsyncMock()
+    el_noise.inner_text.return_value = "EGP 5.00"  # below the >= 10 floor
+    # del -> two candidates; s -> a low/noise one; everything else empty.
+    page.query_selector_all.side_effect = [
+        [el_low, el_high],  # del
+        [el_noise],  # s
+        [],  # span.price-was
+        [],  # .was-price
+        [],  # .original-price
+        [],  # .basisPrice
+    ]
+    assert await extract_original_price_from_page(page) == 1800.0
+
+    # No strikethrough anywhere -> 0.0
+    page.query_selector_all.side_effect = [[] for _ in range(6)]
+    assert await extract_original_price_from_page(page) == 0.0
+
+
+@pytest.mark.asyncio
+async def test_extract_original_price_never_uses_current_price_selectors():
+    # The current-price selectors (.a-text-price ...) must not be tried:
+    # they hold the current price, not the advertised original.
+    page = AsyncMock()
+    page.query_selector_all = AsyncMock(return_value=[])
+    await extract_original_price_from_page(page)
+    called_selectors = [c.args[0] for c in page.query_selector_all.call_args_list]
+    assert not any("a-text-price" in s for s in called_selectors)
 
 
 @pytest.mark.asyncio

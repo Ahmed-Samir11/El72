@@ -200,6 +200,21 @@ class BaseScraper(ABC):
                 logger.warning(f"Failed to extract price from {actual_url}")
                 return None
 
+            # A strikethrough "was" price must be at least the current price;
+            # a smaller (or non-positive) value is a parsing artifact (wrong
+            # <del> node, currency symbol misread) and is dropped rather than
+            # stored (review findings: original price extraction is not
+            # validated against the current price).
+            if original_price is not None and original_price < price:
+                logger.debug(
+                    "Dropping implausible original_price %.2f < current %.2f "
+                    "from %s",
+                    original_price,
+                    price,
+                    actual_url,
+                )
+                original_price = None
+
             return ScrapeResult(
                 store=self.store_id,
                 canonical_product_id=canonical_product_id,

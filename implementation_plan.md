@@ -169,7 +169,7 @@ graph TD
 - [NEW] `services/api/middleware/rate_limit.py` — Rate limiting
 - [MODIFY] [api/main.py](file:///e:/repos/El72/services/api/main.py) — Replace print(), register new routers
 - [MODIFY] [docker-compose.yml](file:///e:/repos/El72/docker-compose.yml) — Secret externalization
-- [MODIFY] [schema.sql](file:///e:/repos/El72/infra/sql/schema.sql) — New tables
+- [MODIFY] [schema/postgres.sql](file:///e:/repos/El72/infra/sql/schema/postgres.sql) — New tables
 
 ---
 
@@ -220,7 +220,7 @@ graph TD
 - [NEW] `services/analyzer/seed_data.py` — Synthetic data generator
 - [NEW] `services/analyzer/routers/analytics.py` — B2B analytics API
 - [NEW] `services/analyzer/routers/intelligence.py` — Cross-store API
-- [MODIFY] [schema.sql](file:///e:/repos/El72/infra/sql/schema.sql) — Analytics tables (coordinate with Engineer B)
+- [MODIFY] [schema/postgres.sql](file:///e:/repos/El72/infra/sql/schema/postgres.sql) — Analytics tables (coordinate with Engineer B)
 
 ---
 

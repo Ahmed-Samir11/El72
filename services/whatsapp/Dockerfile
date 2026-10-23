@@ -15,5 +15,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy service code
 COPY sender.py .
 
+ENV METRICS_PORT=8000
+
+EXPOSE 8000
+
 # Run the service
 CMD ["python", "sender.py"]

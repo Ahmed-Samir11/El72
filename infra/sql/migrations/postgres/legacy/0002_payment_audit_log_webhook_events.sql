@@ -1,11 +1,11 @@
 -- Migration 0002: extend payment_audit_log for Feature 4 (webhook & credit
 -- granting).
 --
--- New installs get this schema directly from infra/sql/schema.sql; this file
+-- New installs get this schema directly from infra/sql/schema/postgres.sql; this file
 -- only upgrades EXISTING deployments that already have the payment_audit_log
 -- table. Safe to run multiple times (idempotent).
 --
--- Apply with:  psql "$DATABASE_URL" -f infra/sql/migrations/0002_payment_audit_log_webhook_events.sql
+-- Apply with:  psql "$DATABASE_URL" -f infra/sql/migrations/postgres/legacy/0002_payment_audit_log_webhook_events.sql
 
 BEGIN;
 

@@ -4,8 +4,10 @@ Wraps the pure :func:`services.analyzer.fake_discount.detect_fake_discount`
 with a human-readable ``stats`` block and a plain-English ``summary`` so the
 API can return something like:
 
-    "The product has typically sold for ~1,200–1,250 EGP. The current
-     1,180 EGP price is only ~2–6% below its normal price."
+    "The product has typically sold for ~1,200–1,250. The current
+     1,180 price is only ~2–6% below its normal price."
+
+(Prices are in the market's local currency — EGP for the tracked stores.)
 
 The core detection math is NOT duplicated here — it lives in
 ``fake_discount.py`` and is unchanged. This module only formats.
@@ -50,7 +52,11 @@ def _build_summary(inputs: DiscountInputs, detection: Dict[str, Any]) -> str:
         return "Insufficient price data to assess this discount."
 
     # Range of "how far below normal" across the 30d and 90d medians.
-    below = [
+    # "How far below normal" across the 30d and 90d medians. Only positive
+    # values mean "below"; a non-positive gap means the current price is at
+    # or above normal, which needs its own wording (review finding: the
+    # summary could render nonsensical negative percentages).
+    below_all = [
         p
         for p in (
             _pct_below(inputs.median_30d, current),
@@ -58,12 +64,20 @@ def _build_summary(inputs: DiscountInputs, detection: Dict[str, Any]) -> str:
         )
         if p is not None
     ]
+    below = [p for p in below_all if p > 0]
+    at_or_above = bool(below_all) and not below
     below_lo = min(below) if below else None
     below_hi = max(below) if below else None
 
     typical = f"~{low:,.0f}–{high:,.0f}" if low != high else f"~{low:,.0f}"
 
     if detection.get("is_suspicious"):
+        if at_or_above:
+            return (
+                f"The product has typically sold for {typical}. The current "
+                f"{current:,.0f} price is at or above its normal price, "
+                "which is not a real deal."
+            )
         if below_lo is not None and below_hi is not None:
             spread = (
                 f"only ~{below_lo:.0f}–{below_hi:.0f}% below its normal price"
@@ -71,12 +85,12 @@ def _build_summary(inputs: DiscountInputs, detection: Dict[str, Any]) -> str:
                 else f"only ~{below_lo:.0f}% below its normal price"
             )
             return (
-                f"The product has typically sold for {typical} EGP. The current "
-                f"{current:,.0f} EGP price is {spread}, which is not a real deal."
+                f"The product has typically sold for {typical}. The current "
+                f"{current:,.0f} price is {spread}, which is not a real deal."
             )
         return (
-            f"The product has typically sold for {typical} EGP, so the current "
-            f"{current:,.0f} EGP price is not a genuine discount."
+            f"The product has typically sold for {typical}, so the current "
+            f"{current:,.0f} price is not a genuine discount."
         )
 
     # Not suspicious — describe the genuine discount.
@@ -87,12 +101,12 @@ def _build_summary(inputs: DiscountInputs, detection: Dict[str, Any]) -> str:
             else f"~{below_lo:.0f}% below its normal price"
         )
         return (
-            f"The product has typically sold for {typical} EGP. The current "
-            f"{current:,.0f} EGP price is {spread} — a genuine discount."
+            f"The product has typically sold for {typical}. The current "
+            f"{current:,.0f} price is {spread} — a genuine discount."
         )
     return (
-        f"The product has typically sold for {typical} EGP. The current "
-        f"{current:,.0f} EGP price looks like a genuine discount."
+        f"The product has typically sold for {typical}. The current "
+        f"{current:,.0f} price looks like a genuine discount."
     )
 
 

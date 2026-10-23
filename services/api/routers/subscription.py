@@ -106,7 +106,7 @@ def create_subscription_endpoint(
     existing = (
         db.query(Subscription)
         .filter(
-            Subscription.user_id == str(user.id),
+            Subscription.user_id == user.id,
             Subscription.status == "active",
         )
         .first()
@@ -140,7 +140,7 @@ def create_subscription_endpoint(
     subscription_id = _paymob_subscription_id(sub_resp)
     subscription = Subscription(
         id=str(uuid.uuid4()),
-        user_id=str(user.id),
+        user_id=user.id,
         paymob_subscription_id=subscription_id,
         card_payment_method_id=method["id"],
         package=body.package,
@@ -158,7 +158,7 @@ def create_subscription_endpoint(
     record_payment_event(
         db,
         event_type="subscription_created",
-        user_id=str(user.id),
+        user_id=user.id,
         payment_ref=subscription_id,
         detail=sanitize_for_log(f"package={body.package}"),
         ip_address=_client_ip(request),
@@ -214,7 +214,7 @@ def cancel_subscription_endpoint(
     subscription = (
         db.query(Subscription).filter(Subscription.id == body.subscription_id).first()
     )
-    if subscription is None or subscription.user_id != str(user.id):
+    if subscription is None or subscription.user_id != user.id:
         # Do not reveal whether the id exists for another user.
         raise HTTPException(status_code=404, detail="Subscription not found")
     if subscription.status != "active":
@@ -234,7 +234,7 @@ def cancel_subscription_endpoint(
     record_payment_event(
         db,
         event_type="subscription_canceled",
-        user_id=str(user.id),
+        user_id=user.id,
         payment_ref=subscription.paymob_subscription_id,
         detail=sanitize_for_log("reason=user_canceled"),
         ip_address=_client_ip(request),
@@ -260,7 +260,7 @@ def get_subscription_status(
     subscription = (
         db.query(Subscription)
         .filter(
-            Subscription.user_id == str(user.id),
+            Subscription.user_id == user.id,
             Subscription.status == "active",
         )
         .first()

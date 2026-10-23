@@ -41,7 +41,7 @@ from sqlalchemy import (
     text,
 )
 
-from services.api.models import Base
+from .models import Base, OperationalIdType
 
 
 def _utcnow() -> datetime:
@@ -54,7 +54,9 @@ class Subscription(Base):
 
     id = Column(String(36), primary_key=True)
     user_id = Column(
-        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+        OperationalIdType(),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
     )
     # The Paymob subscription id (unique; plan 7.6). Set at creation.
     paymob_subscription_id = Column(String(255), unique=True, nullable=False)

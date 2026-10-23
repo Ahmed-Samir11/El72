@@ -1,628 +1,467 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Elhaq — Price Intelligence</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
-    <script src="https://unpkg.com/lucide@latest"></script>
-    <style>
-        :root {
-            --bg-dark: #070f14;
-            --bg-card: rgba(16, 25, 33, 0.7);
-            --bg-card-hover: rgba(22, 34, 46, 0.9);
-            --text-main: #f0f4f8;
-            --text-muted: #8b9eb0;
-            --accent-green: #10b981;
-            --accent-green-dark: #059669;
-            --accent-gold: #f59e0b;
-            --accent-red: #ef4444;
-            --border: rgba(16, 185, 129, 0.2);
-            --border-muted: rgba(255, 255, 255, 0.08);
-            --font-sans: 'Inter', sans-serif;
-            --font-mono: 'JetBrains Mono', monospace;
-        }
-
-        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
-
-        body {
-            background-color: var(--bg-dark);
-            color: var(--text-main);
-            font-family: var(--font-sans);
-            overflow: hidden;
-            width: 100vw;
-            height: 100vh;
-            background-image: 
-                radial-gradient(circle at 0% 0%, rgba(16, 185, 129, 0.03), transparent 30%),
-                radial-gradient(circle at 100% 100%, rgba(245, 158, 11, 0.02), transparent 30%);
-        }
-
-        .presentation {
-            position: relative;
-            width: 100%;
-            height: 100%;
-        }
-
-        .slide {
-            position: absolute;
-            top: 0; left: 0; width: 100%; height: 100%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            opacity: 0;
-            pointer-events: none;
-            transition: opacity 0.5s ease-in-out, transform 0.5s ease;
-            transform: translateY(15px);
-            padding: 5vw;
-        }
-
-        .slide.active {
-            opacity: 1;
-            pointer-events: auto;
-            transform: translateY(0);
-        }
-
-        .content {
-            width: 100%;
-            max-width: 1200px;
-        }
-
-        /* Typography */
-        h1 {
-            font-size: clamp(2.5rem, 4.5vw, 4rem);
-            font-weight: 800;
-            line-height: 1.1;
-            margin-bottom: 24px;
-            letter-spacing: -0.02em;
-        }
-
-        h2 {
-            font-size: clamp(2rem, 3.5vw, 3rem);
-            font-weight: 700;
-            margin-bottom: 24px;
-            letter-spacing: -0.02em;
-        }
-
-        p {
-            font-size: clamp(1.1rem, 1.5vw, 1.3rem);
-            color: var(--text-muted);
-            line-height: 1.6;
-            margin-bottom: 20px;
-        }
-
-        .text-green { color: var(--accent-green); }
-        .text-gold { color: var(--accent-gold); }
-        .text-white { color: var(--text-main); }
-
-        /* Layouts */
-        .grid-2 {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 60px;
-            align-items: center;
-        }
-
-        .grid-4 {
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 24px;
-            margin-top: 40px;
-        }
-
-        /* UI Elements */
-        .card {
-            background: var(--bg-card);
-            border: 1px solid var(--border-muted);
-            border-radius: 16px;
-            padding: 32px;
-            backdrop-filter: blur(10px);
-            transition: border-color 0.3s ease;
-        }
-        
-        .card.highlight {
-            border-color: var(--border);
-        }
-
-        .badge {
-            display: inline-block;
-            padding: 6px 14px;
-            border-radius: 20px;
-            font-size: 0.85rem;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            margin-bottom: 24px;
-            background: rgba(16, 185, 129, 0.1);
-            color: var(--accent-green);
-            border: 1px solid rgba(16, 185, 129, 0.2);
-        }
-
-        /* Code Block */
-        .code-block {
-            background: #0d131a;
-            border: 1px solid var(--border-muted);
-            border-radius: 12px;
-            padding: 24px;
-            font-family: var(--font-mono);
-            font-size: 0.95rem;
-            line-height: 1.6;
-            color: #ccc;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
-            overflow-x: auto;
-        }
-        .code-block .keyword { color: #ff7ab2; font-weight: 700; }
-        .code-block .string { color: #ff8170; }
-        .code-block .comment { color: #6c7986; font-style: italic; }
-        .code-block .function { color: #daba8b; }
-        .code-block .variable { color: #9ab2c8; }
-
-        /* CSS WhatsApp Mockup */
-        .wa-mockup {
-            background: #0b141a;
-            border-radius: 20px;
-            width: 100%;
-            max-width: 350px;
-            margin: 0 auto;
-            border: 1px solid var(--border-muted);
-            overflow: hidden;
-            box-shadow: 0 20px 40px rgba(0,0,0,0.5);
-        }
-        .wa-header {
-            background: #202c33;
-            padding: 16px;
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-        .wa-avatar {
-            width: 40px; height: 40px;
-            background: var(--accent-green);
-            border-radius: 50%;
-            display: flex; align-items: center; justify-content: center;
-            font-weight: bold; color: #fff;
-        }
-        .wa-body {
-            padding: 20px;
-            background-image: url('data:image/svg+xml;utf8,<svg opacity="0.05" xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100" fill="none"/><path d="M0,0 L100,100 M100,0 L0,100" stroke="%23ffffff" stroke-width="1"/></svg>');
-        }
-        .wa-bubble {
-            background: #005c4b;
-            color: #e9edef;
-            padding: 12px 16px;
-            border-radius: 12px;
-            border-top-left-radius: 2px;
-            font-size: 0.95rem;
-            margin-bottom: 12px;
-            line-height: 1.4;
-            box-shadow: 0 1px 2px rgba(0,0,0,0.3);
-        }
-        .wa-meta {
-            display: flex;
-            justify-content: flex-end;
-            align-items: center;
-            gap: 4px;
-            font-size: 0.75rem;
-            color: rgba(255,255,255,0.6);
-            margin-top: 4px;
-        }
-
-        /* Fake Chart / UI Elements */
-        .fake-chart {
-            display: flex;
-            align-items: flex-end;
-            gap: 12px;
-            height: 200px;
-            padding: 20px;
-            border-bottom: 2px solid var(--border-muted);
-            border-left: 2px solid var(--border-muted);
-        }
-        .bar {
-            flex: 1;
-            background: var(--border-muted);
-            border-top-left-radius: 4px;
-            border-top-right-radius: 4px;
-            transition: background 0.3s;
-        }
-        .bar.active { background: var(--accent-green); }
-        .bar.danger { background: var(--accent-red); }
-
-        /* Architecture Nodes */
-        .arch-grid {
-            display: flex;
-            flex-direction: column;
-            gap: 20px;
-        }
-        .arch-row {
-            display: flex;
-            align-items: center;
-            gap: 20px;
-        }
-        .arch-node {
-            background: var(--bg-card);
-            border: 1px solid var(--border-muted);
-            padding: 16px 24px;
-            border-radius: 12px;
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            font-weight: 500;
-            flex: 1;
-        }
-        .arch-node i { color: var(--accent-green); }
-        .arch-arrow { color: var(--border-muted); }
-
-        /* Metrics */
-        .metric-value {
-            font-size: 3.5rem;
-            font-weight: 800;
-            color: var(--accent-green);
-            line-height: 1;
-            margin-bottom: 8px;
-            letter-spacing: -0.05em;
-        }
-        .metric-label {
-            font-size: 1rem;
-            font-weight: 500;
-            color: var(--text-main);
-        }
-
-        /* Lists */
-        .feature-list { list-style: none; margin-top: 24px; }
-        .feature-list li {
-            font-size: 1.15rem; margin-bottom: 16px;
-            display: flex; align-items: flex-start; gap: 12px;
-        }
-        .feature-list i { color: var(--accent-gold); margin-top: 4px; }
-
-        /* Navigation */
-        .nav-controls {
-            position: fixed; bottom: 30px; right: 40px;
-            display: flex; gap: 10px; z-index: 100;
-        }
-        .nav-dot {
-            width: 10px; height: 10px; border-radius: 50%;
-            background: rgba(255,255,255,0.2); cursor: pointer;
-            border: none; transition: all 0.3s ease;
-        }
-        .nav-dot.active {
-            background: var(--accent-green);
-            box-shadow: 0 0 10px var(--accent-green);
-            transform: scale(1.2);
-        }
-        .progress {
-            position: fixed; top: 0; left: 0; height: 3px;
-            background: var(--accent-green); transition: width 0.3s ease; z-index: 100;
-        }
-        
-        /* Logo / Title Block */
-        .logo-box {
-            display: inline-flex; align-items: center; justify-content: center;
-            width: 64px; height: 64px; border-radius: 16px;
-            background: linear-gradient(135deg, var(--accent-green), var(--accent-green-dark));
-            color: white; font-weight: 800; font-size: 24px;
-            margin-bottom: 32px; box-shadow: 0 10px 20px rgba(16,185,129,0.3);
-        }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>El72 — Real-Time Price Intelligence</title>
+<link rel="stylesheet" href="css/apple-theme.css">
 </head>
 <body>
 
-<div class="progress" id="progress"></div>
+<!-- 01 · COLD OPEN -->
+<section class="slide" data-rise>
+  <div class="kicker">A story from last week</div>
+  <h1 class="headline">The 40k &ldquo;deal&rdquo; was 42k.</h1>
+  <blockquote class="pullquote">
+    <p>&ldquo;I waited three weeks for the sale price. The day I finally bought it, it went back up.&rdquo;</p>
+    <cite>&mdash; a real buyer (placeholder)</cite>
+  </blockquote>
+  <p class="turn">The problem isn't scraping &mdash; it's that <b>nobody verifies the price.</b></p>
+</section>
 
-<div class="presentation">
-
-    <!-- Slide 1: Hero -->
-    <div class="slide active">
-        <div class="content">
-            <div class="grid-2">
-                <div>
-                    <div class="logo-box">72</div>
-                    <h1>Real-Time<br>Price Intelligence.</h1>
-                    <p style="font-size: 1.4rem; color: var(--text-main);">Elhaq protects Egyptian consumers from fake discounts using autonomous, AI-verified monitoring.</p>
-                    <p>Event-driven architecture. Delivered via WhatsApp.</p>
-                </div>
-                <div>
-                    <!-- Pure CSS Abstract Graphic -->
-                    <div style="position:relative; height: 400px; display:flex; align-items:center; justify-content:center;">
-                        <div style="position:absolute; width: 300px; height: 300px; border-radius: 50%; border: 1px dashed var(--border); animation: spin 20s linear infinite;"></div>
-                        <div style="position:absolute; width: 200px; height: 200px; border-radius: 50%; background: radial-gradient(circle, rgba(16,185,129,0.1) 0%, transparent 70%);"></div>
-                        <div class="card highlight" style="position:relative; z-index:2; text-align:center; padding: 24px 40px;">
-                            <i data-lucide="activity" style="width:48px; height:48px; color:var(--accent-green); margin-bottom:16px;"></i>
-                            <div style="font-size: 1.2rem; font-weight: 600; color: white;">Market Stream Active</div>
-                            <div style="font-size: 0.9rem; color: var(--text-muted); font-family: var(--font-mono); margin-top:8px;">Listening for anomalies...</div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
+<!-- 02 · THE GRAVEYARD -->
+<section class="slide" data-rise>
+  <div class="eyebrow">The pain, made real</div>
+  <h1 class="headline">Two trackers. Both dead.</h1>
+  <div class="pr-split">
+    <div class="pr-col">
+      <div class="pr-code">
+        <div class="ln"><span class="c"># the bait-and-switch</span></div>
+        <div class="ln">week 1&nbsp;&nbsp;42,000 EGP <span class="c"># real price</span></div>
+        <div class="ln">week 2&nbsp;&nbsp;50,000 EGP <span class="c"># inflated</span></div>
+        <div class="ln">week 3&nbsp;&nbsp;&ldquo;40,000 SALE&rdquo; <span class="c"># 50% off &mdash; above real</span></div>
+      </div>
+      <div class="pr-note">Static scrapers read the number on the page. They can't tell a genuine drop from a pre-sale inflation.</div>
+      <div class="pr-fix"><b>the fix</b> &rarr; a historical baseline + a cross-store check flags it as <b>suspicious</b> before you buy.</div>
     </div>
-
-    <!-- Slide 2: The Problem -->
-    <div class="slide">
-        <div class="content">
-            <div class="grid-2">
-                <div>
-                    <!-- Pure CSS Fake Chart showing a fake discount -->
-                    <div class="card" style="padding: 24px;">
-                        <h3 style="font-size:1rem; color:var(--text-muted); margin-bottom:24px; text-transform:uppercase; letter-spacing:1px;">The "Fake Discount" Pattern</h3>
-                        <div class="fake-chart">
-                            <div class="bar" style="height: 30%;"></div>
-                            <div class="bar" style="height: 35%;"></div>
-                            <div class="bar" style="height: 32%;"></div>
-                            <!-- Price artificially inflated -->
-                            <div class="bar danger" style="height: 80%; position:relative;">
-                                <div style="position:absolute; top:-25px; left:50%; transform:translateX(-50%); font-size:12px; color:var(--accent-red); font-weight:bold;">+150%</div>
-                            </div>
-                            <div class="bar danger" style="height: 85%;"></div>
-                            <!-- "Discounted" but still higher than original -->
-                            <div class="bar active" style="height: 50%; position:relative;">
-                                <div style="position:absolute; top:-25px; left:50%; transform:translateX(-50%); font-size:12px; color:var(--accent-green); font-weight:bold;">"Sale"</div>
-                            </div>
-                            <div class="bar active" style="height: 48%;"></div>
-                        </div>
-                        <div style="display:flex; justify-content:space-between; margin-top:12px; font-size:0.8rem; color:var(--text-muted);">
-                            <span>Week 1</span>
-                            <span>Week 2 (Inflation)</span>
-                            <span>Week 3 (Fake Sale)</span>
-                        </div>
-                    </div>
-                </div>
-                <div>
-                    <div class="badge">The Problem</div>
-                    <h2>Why bots fail.</h2>
-                    <p>Static scrapers only read HTML. They cannot distinguish a genuine deal from artificial pre-sale price inflation.</p>
-                    <p>The Egyptian e-commerce market is plagued by fabricated discounts. Previous platforms that relied on basic scraping have failed because they required too much manual engineering to maintain.</p>
-                    <ul class="feature-list">
-                        <li><i data-lucide="x-circle"></i>Yaoota returns 503 errors (Dead).</li>
-                        <li><i data-lucide="pause-circle"></i>Kanbkam is dormant (Last active 2022).</li>
-                    </ul>
-                </div>
-            </div>
+    <div class="pr-col">
+      <div class="pr-receipt" style="padding:1.4vh 1.6vw;">
+        <div style="display:flex;justify-content:space-between;font-family:var(--mono);font-size:1.2vh;border-bottom:1px solid var(--hairline);padding-bottom:1vh;">
+          <span>Yaoota</span><span class="bad">503 &middot; dead</span>
         </div>
-    </div>
-
-    <!-- Slide 3: What we built -->
-    <div class="slide">
-        <div class="content">
-            <div class="badge">Architecture</div>
-            <h2>An event-driven platform.</h2>
-            <p style="max-width: 900px;">We built a fault-tolerant microservices architecture that tracks, analyzes, and alerts autonomously. No polling loops, no blocking I/O.</p>
-            
-            <div class="grid-4" style="margin-bottom: 40px;">
-                <div class="card">
-                    <div class="metric-value">7</div>
-                    <div class="metric-label">Microservices</div>
-                </div>
-                <div class="card">
-                    <div class="metric-value">30<span style="font-size:1.5rem">s</span></div>
-                    <div class="metric-label">Scraping Interval</div>
-                </div>
-                <div class="card">
-                    <div class="metric-value">4</div>
-                    <div class="metric-label">Store Scrapers</div>
-                </div>
-                <div class="card">
-                    <div class="metric-value">97<span style="font-size:1.5rem">%</span></div>
-                    <div class="metric-label">Test Coverage</div>
-                </div>
-            </div>
-
-            <!-- CSS Architecture Flow -->
-            <div class="arch-grid">
-                <div class="arch-row">
-                    <div class="arch-node"><i data-lucide="download"></i> Scraper (Playwright)</div>
-                    <i data-lucide="arrow-right" class="arch-arrow"></i>
-                    <div class="arch-node highlight"><i data-lucide="database"></i> Redis Streams (Ingest)</div>
-                    <i data-lucide="arrow-right" class="arch-arrow"></i>
-                    <div class="arch-node"><i data-lucide="brain-circuit"></i> Analyzer (ML Models)</div>
-                    <i data-lucide="arrow-right" class="arch-arrow"></i>
-                    <div class="arch-node"><i data-lucide="smartphone"></i> WhatsApp Notification</div>
-                </div>
-            </div>
+        <div style="display:flex;justify-content:space-between;font-family:var(--mono);font-size:1.2vh;padding-top:1vh;">
+          <span>Kanbkam</span><span class="bad">dormant &middot; 2022</span>
         </div>
+      </div>
+      <div class="pr-kicker">
+        <div class="big">2</div>
+        <div class="cap">active price trackers left in Egypt</div>
+      </div>
     </div>
+  </div>
+  <div class="footnote">Passive comparison sites failed because they can't see across stores. <b>Someone has to verify.</b></div>
+</section>
 
-    <!-- Slide 4: AI Layer -->
-    <div class="slide">
-        <div class="content">
-            <div class="grid-2">
-                <div>
-                    <div class="badge">Machine Learning</div>
-                    <h2>How we verify deals.</h2>
-                    <p>A two-tiered anomaly detection system ensures alerts are only triggered for genuine market shifts, saving API costs and maintaining user trust.</p>
-                    
-                    <ul class="feature-list" style="margin-top: 32px;">
-                        <li>
-                            <i data-lucide="zap"></i>
-                            <div>
-                                <strong class="text-white">Layer 1: MAD (Fast Path)</strong><br>
-                                <span style="font-size:0.95rem;">Median Absolute Deviation. Sub-millisecond execution. Catches 99% of straightforward price drops.</span>
-                            </div>
-                        </li>
-                        <li>
-                            <i data-lucide="network"></i>
-                            <div>
-                                <strong class="text-white">Layer 2: Isolation Forest (Deep)</strong><br>
-                                <span style="font-size:0.95rem;">Pre-trained unsupervised model. Analyzes historical TimescaleDB data for subtle manipulation.</span>
-                            </div>
-                        </li>
-                    </ul>
-                </div>
-                <div>
-                    <!-- Actual code snippet styling -->
-                    <div class="code-block">
-<span class="comment"># ml_detector.py</span>
-<span class="keyword">def</span> <span class="function">score_prices</span>(window, method=<span class="string">"isolation"</span>):
-    <span class="comment"># Pre-loaded model — no retraining at request time</span>
-    scores = _loaded_model.decision_function(
-        window.reshape(-1, 1)
-    )
-    
-    <span class="comment"># Normalize to [0,1] confidence score</span>
-    <span class="keyword">return</span> <span class="variable">float</span>(
-        np.clip((np.tanh(-scores[-1])+1)/2, 0, 1)
-    )
+<!-- 03 · TITLE -->
+<section class="slide" data-rise>
+  <img src="assets/el72-logo.svg" alt="El72" style="height:9vh;margin-bottom:3vh;" />
+  <div class="brand">El72 &middot; Price Intelligence</div>
+  <h1 class="headline">Seize the deal<br />before it's gone.</h1>
+  <p class="lede">Real-time price tracking + <b class="accent">AI-verified deals</b> for the Egyptian market &mdash; delivered on WhatsApp, not email.</p>
+  <div class="cred"><b>Elhaq</b> &middot; real-time price tracking &amp; deal detection</div>
+</section>
 
-<span class="comment"># Threshold configured for 0.01 USD idempotency</span>
-<span class="keyword">if</span> score > <span class="string">0.85</span> <span class="keyword">and</span> is_genuine_drop:
-    <span class="keyword">await</span> redis.xadd(<span class="string">"stream:alerts"</span>, payload)
-                    </div>
-                </div>
-            </div>
-        </div>
+<!-- 04 · INTRO (13s) -->
+<section class="slide">
+  <iframe class="intro-frame" src="intro/index.html?embed&v=13s-2" data-intro frameborder="0" allow="autoplay; fullscreen"></iframe>
+</section>
+
+<!-- 05 · THE REVEAL -->
+<section class="slide" data-rise>
+  <div class="eyebrow">The reveal</div>
+  <h1 class="headline">Watch it work.</h1>
+  <p class="lede">A live price drop &mdash; detected, graded, and delivered as a <b class="accent">WhatsApp alert in seconds</b>.</p>
+  <div class="footnote">&rarr; live demo &middot; the alert is the moment &middot; (fallback: replay)</div>
+</section>
+
+<!-- 06 · LIVE DEMO -->
+<section class="slide demo-slide" data-rise>
+  <div class="demo-head">
+    <div class="eyebrow">Live demo</div>
+    <h1 class="headline">Elhaq, on a real product.</h1>
+    <p class="lede">A flagship GPU tracked across Amazon, Noon, and Jumia. A quick tour, then the alert lands.</p>
+  </div>
+  <div class="demo-stage">
+    <div class="demo-start">&gt;&nbsp;watch it run</div>
+    <div class="demo-frame-wrap"><div class="demo-frame-wrap-inner"><iframe class="demo-frame" data-app="http://localhost:3000" data-demo></iframe></div></div>
+    <div class="demo-exit">&times; exit demo</div>
+  </div>
+</section>
+
+<!-- 07 · THE PROOF -->
+<section class="slide" data-rise>
+  <div class="eyebrow">It actually works</div>
+  <h1 class="headline">It caught a real deal &mdash; and rejected a fake one.</h1>
+  <p class="sub">Every alert is scored and explained. <span class="mono">(placeholder data)</span></p>
+  <div class="proof-split">
+    <div class="proof-mutations">
+      <div class="mutation">
+        <div class="mut-feedback">RTX 5080 dropped 50,000 &rarr; 41,000.</div>
+        <div class="mut-arrow">&darr; the score says</div>
+        <div class="mut-added">Deal score 88 (Excellent) &mdash; alert sent.</div>
+      </div>
+      <div class="mutation">
+        <div class="mut-feedback">&ldquo;50% off&rdquo; at 40,000 &mdash; the reference was 50,000.</div>
+        <div class="mut-arrow">&darr; the check says</div>
+        <div class="mut-added">Flagged suspicious (only 8% below median) &mdash; no alert.</div>
+      </div>
+      <div class="mutation">
+        <div class="mut-feedback">Lowest price in 4 months, cheapest of 3 stores.</div>
+        <div class="mut-arrow">&darr; the score says</div>
+        <div class="mut-added">Deal score 91 (Excellent) &mdash; alert sent.</div>
+      </div>
     </div>
-
-    <!-- Slide 5: WhatsApp -->
-    <div class="slide">
-        <div class="content">
-            <div class="grid-2">
-                <div>
-                    <!-- Pure CSS WhatsApp Mockup -->
-                    <div class="wa-mockup">
-                        <div class="wa-header">
-                            <div class="wa-avatar">E</div>
-                            <div>
-                                <div style="color:white; font-weight:600; font-size:1rem;">Elhaq Alerts <i data-lucide="badge-check" style="display:inline; width:14px; height:14px; color:var(--accent-green); margin-left:4px; vertical-align:middle;"></i></div>
-                                <div style="color:var(--text-muted); font-size:0.8rem;">Official Business Account</div>
-                            </div>
-                        </div>
-                        <div class="wa-body">
-                            <div class="wa-bubble">
-                                🔔 <strong>Verified Deal Detected</strong><br><br>
-                                <strong>Logitech MX Master 3S</strong><br>
-                                Current: <span style="text-decoration:line-through; color:rgba(255,255,255,0.6)">5,200 EGP</span><br>
-                                Drop: <strong style="color:#69f0ae">4,100 EGP</strong> (-21%)<br><br>
-                                <em>Lowest price in 4 months. Verified by Elhaq ML.</em>
-                                <div class="wa-meta">10:42 AM <i data-lucide="check-check" style="width:14px; height:14px; color:#53bdeb;"></i></div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                <div>
-                    <div class="badge">Delivery</div>
-                    <h2>Cost-effective alerts.</h2>
-                    <p>Email open rates in Egypt are ~3%. WhatsApp open rates are 98%. Delivery via WhatsApp Cloud API is mandatory, but expensive if done wrong.</p>
-                    <p>By structuring our alerts purely as user-triggered transactional messages, we qualify for Meta's Utility rate rather than the Marketing rate.</p>
-                    
-                    <div class="card" style="margin-top: 24px; display:flex; justify-content:space-between; align-items:center;">
-                        <div>
-                            <div style="font-size:0.9rem; color:var(--text-muted);">Marketing Rate</div>
-                            <div style="font-size:1.5rem; color:var(--accent-red); font-weight:700;">$0.1073</div>
-                        </div>
-                        <div style="color:var(--border-muted);">VS</div>
-                        <div style="text-align:right;">
-                            <div style="font-size:0.9rem; color:var(--text-muted);">Utility Rate (Elhaq)</div>
-                            <div style="font-size:1.5rem; color:var(--accent-green); font-weight:700;">$0.0036</div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
+    <div class="proof-right">
+      <div class="proof-stat"><span class="num">88</span><span class="cap">deal score, Excellent grade</span></div>
+      <div class="proof-stat"><span class="num">0</span><span class="cap">fake discounts let through</span></div>
+      <div class="proof-stat"><span class="num">3</span><span class="cap">stores compared per product</span></div>
     </div>
-
-    <!-- Slide 6: Revenue -->
-    <div class="slide">
-        <div class="content">
-            <div class="badge">Business Model</div>
-            <h2>Revenue Streams.</h2>
-            <p style="max-width: 800px;">Multi-stream revenue designed for Egyptian consumer behavior and B2B data demands.</p>
-            
-            <div class="grid-2" style="margin-top: 48px;">
-                <div class="card highlight">
-                    <div style="display:flex; align-items:center; gap:12px; margin-bottom:20px;">
-                        <i data-lucide="users" style="color:var(--text-main); width:28px; height:28px;"></i>
-                        <h3 style="font-size: 1.5rem; color:var(--text-main); margin:0;">B2C</h3>
-                    </div>
-                    
-                    <div style="margin-bottom: 24px;">
-                        <h4 style="font-size:1.1rem; color:var(--text-muted); margin-bottom:8px;">Pay-As-You-Track</h4>
-                        <p style="font-size:0.95rem; margin:0;">Tracking credits via Vodafone Cash, mirroring local "fakka card" micro-recharge habits.</p>
-                    </div>
-                    <div>
-                        <h4 style="font-size:1.1rem; color:var(--accent-gold); margin-bottom:8px;"><i data-lucide="zap" style="width:16px; height:16px; display:inline; margin-right:6px; vertical-align:-2px;"></i>Premium Fast-Lane</h4>
-                        <p style="font-size:0.95rem; margin:0;">Zero-delay routing for highly competitive hardware drops (where 15 minutes means sold out).</p>
-                    </div>
-                </div>
-                
-                <div class="card">
-                    <div style="display:flex; align-items:center; gap:12px; margin-bottom:20px;">
-                        <i data-lucide="briefcase" style="color:var(--text-main); width:28px; height:28px;"></i>
-                        <h3 style="font-size: 1.5rem; color:var(--text-main); margin:0;">B2B</h3>
-                    </div>
-                    
-                    <div style="margin-bottom: 24px;">
-                        <h4 style="font-size:1.1rem; color:var(--text-muted); margin-bottom:8px;">Affiliate Integration</h4>
-                        <p style="font-size:0.95rem; margin:0;">Auto-appended parameters yield 2-7% affiliate commission on converted sales.</p>
-                    </div>
-                    <div>
-                        <h4 style="font-size:1.1rem; color:var(--accent-green); margin-bottom:8px;"><i data-lucide="bar-chart-2" style="width:16px; height:16px; display:inline; margin-right:6px; vertical-align:-2px;"></i>Demand Intelligence</h4>
-                        <p style="font-size:0.95rem; margin:0;">Anonymized, aggregate tracking data packaged for retailers showing exact consumer price targets.</p>
-                    </div>
-                </div>
-            </div>
-        </div>
+  </div>
+  <div class="footnote"><b>Placeholder data</b> &mdash; numbers are illustrative until a real capture is wired in.</div>
+</section>
+<!-- 08 · PROOF AT SCALE -->
+<section class="slide" data-rise>
+  <div class="eyebrow">It actually works &mdash; at scale</div>
+  <h1 class="headline">It holds up across the market.</h1>
+  <div class="bench-split">
+    <div class="bench-panel">
+      <div class="bench-head"><div class="bench-name">Volume</div><div class="bench-tag">what it tracks</div></div>
+      <svg class="bench-chart" id="bench-volume-chart" viewBox="0 0 460 220"></svg>
+      <div class="bench-cap" id="bench-volume-cap"></div>
     </div>
-
-    <!-- Slide 7: End -->
-    <div class="slide">
-        <div class="content" style="text-align: center;">
-            <div class="logo-box" style="margin: 0 auto 32px auto; transform: scale(1.5);">72</div>
-            <h1>Elhaq</h1>
-            <p style="font-size: 1.5rem;">Seize the deal before it's gone.</p>
-        </div>
+    <div class="bench-panel">
+      <div class="bench-head"><div class="bench-name">Detection</div><div class="bench-tag">what it decides</div></div>
+      <svg class="bench-chart" id="bench-detection-chart" viewBox="0 0 460 220"></svg>
+      <div class="bench-cap" id="bench-detection-cap"></div>
     </div>
+  </div>
+  <div class="footnote"><b>Placeholder data</b> &mdash; from the seeded demo dataset.</div>
+</section>
 
+<!-- 08b · TRUST, MADE REAL -->
+<section class="slide" data-rise>
+  <div class="eyebrow">It actually works &mdash; with trust</div>
+  <h1 class="headline">Not every &ldquo;deal&rdquo; is a deal.</h1>
+  <p class="sub">The verification stack scores every observation. <span class="mono">(placeholder data)</span></p>
+  <div class="pilot-dist">
+    <div class="pilot-col">
+      <div class="pilot-colhead">Deal quality</div>
+      <div class="pilot-bar"><span class="pilot-barlabel">Excellent</span><div class="pilot-track"><div class="pilot-fill" style="width:30%"></div></div><span class="pilot-val">30%</span></div>
+      <div class="pilot-bar"><span class="pilot-barlabel">Good</span><div class="pilot-track"><div class="pilot-fill" style="width:45%"></div></div><span class="pilot-val">45%</span></div>
+      <div class="pilot-bar"><span class="pilot-barlabel">Fair</span><div class="pilot-track"><div class="pilot-fill" style="width:18%"></div></div><span class="pilot-val">18%</span></div>
+      <div class="pilot-bar"><span class="pilot-barlabel">No deal</span><div class="pilot-track"><div class="pilot-fill" style="width:7%"></div></div><span class="pilot-val">7%</span></div>
+    </div>
+    <div class="pilot-col">
+      <div class="pilot-colhead">Suspicious flag</div>
+      <div class="pilot-bar"><span class="pilot-barlabel">Clean</span><div class="pilot-track"><div class="pilot-fill" style="width:70%"></div></div><span class="pilot-val">70%</span></div>
+      <div class="pilot-bar"><span class="pilot-barlabel">Watch</span><div class="pilot-track"><div class="pilot-fill" style="width:22%"></div></div><span class="pilot-val">22%</span></div>
+      <div class="pilot-bar"><span class="pilot-barlabel">Flagged</span><div class="pilot-track"><div class="pilot-fill" style="width:8%"></div></div><span class="pilot-val">8%</span></div>
+    </div>
+    <div class="pilot-col">
+      <div class="pilot-colhead">Cross-store rank</div>
+      <div class="pilot-bar"><span class="pilot-barlabel">Cheapest</span><div class="pilot-track"><div class="pilot-fill" style="width:40%"></div></div><span class="pilot-val">40%</span></div>
+      <div class="pilot-bar"><span class="pilot-barlabel">Competitive</span><div class="pilot-track"><div class="pilot-fill" style="width:45%"></div></div><span class="pilot-val">45%</span></div>
+      <div class="pilot-bar"><span class="pilot-barlabel">Above</span><div class="pilot-track"><div class="pilot-fill" style="width:15%"></div></div><span class="pilot-val">15%</span></div>
+    </div>
+    <div class="pilot-col">
+      <div class="pilot-colhead">Historical low</div>
+      <div class="pilot-bar"><span class="pilot-barlabel">Yes</span><div class="pilot-track"><div class="pilot-fill" style="width:22%"></div></div><span class="pilot-val">22%</span></div>
+      <div class="pilot-bar"><span class="pilot-barlabel">No</span><div class="pilot-track"><div class="pilot-fill" style="width:78%"></div></div><span class="pilot-val">78%</span></div>
+    </div>
+  </div>
+  <div class="footnote"><b>Placeholder data</b> &middot; the verification stack is the moat.</div>
+</section>
+
+<!-- 09 · WHY NOT A COMPARISON SITE -->
+<section class="slide" data-rise>
+  <div class="eyebrow">Your question, answered</div>
+  <h1 class="headline">A comparison site is a snapshot.<br /><span class="accent">We're a detector.</span></h1>
+  <div class="arch-compare">
+    <div class="arch-card">
+      <div class="arch-card-head">A comparison site</div>
+      <div class="arch-card-tag">stateless &middot; one page</div>
+      <div class="arch-list">
+        <div>f(price) &rarr; snapshot &mdash; a pure read</div>
+        <div>no history, no baseline</div>
+        <div>can't see the competitor's price</div>
+        <div>shows the number; can't verify it</div>
+      </div>
+    </div>
+    <div class="arch-card us">
+      <div class="arch-card-head">A detector</div>
+      <div class="arch-card-tag">stateful &middot; cross-store</div>
+      <div class="arch-list">
+        <div>state: historical baseline (TimescaleDB)</div>
+        <div>verification: MAD + Isolation Forest + deal score</div>
+        <div>cross-store: sees all three stores</div>
+        <div>delivers: WhatsApp, cost-controlled</div>
+      </div>
+    </div>
+  </div>
+  <div class="footnote">A comparison site shows you a price. El72 verifies it's real &mdash; and tells you when it's not.</div>
+</section>
+
+<!-- 09b · VS. THE FIELD -->
+<section class="slide" data-rise>
+  <div class="eyebrow">The other question</div>
+  <h1 class="headline">Every tracker is a snapshot.<br />Only this one verifies.</h1>
+  <p class="tech-note">The question isn't &ldquo;app or not&rdquo; &mdash; Yaoota, Kanbkam, and the big platforms all show prices. The question is: <b>does it verify the price and see across stores?</b> None of them do.</p>
+  <table class="compare">
+    <thead><tr><th>Capability</th><th>Yaoota</th><th>Kanbkam</th><th>&ldquo;Notify me&rdquo;</th><th>generic scraper</th><th>Ours</th></tr></thead>
+    <tbody>
+      <tr><td>Cross-store intelligence</td><td class="bad">&times;</td><td class="bad">&times;</td><td class="bad">&times;</td><td class="bad">&times;</td><td class="good">&check;</td></tr>
+      <tr><td>Historical baseline</td><td class="bad">&times;</td><td class="bad">&times;</td><td class="warn">partial</td><td class="bad">&times;</td><td class="good">&check;</td></tr>
+      <tr><td>Fake-discount detection</td><td class="bad">&times;</td><td class="bad">&times;</td><td class="bad">&times;</td><td class="bad">&times;</td><td class="good">&check;</td></tr>
+      <tr><td>ML anomaly scoring</td><td class="bad">&times;</td><td class="bad">&times;</td><td class="bad">&times;</td><td class="bad">&times;</td><td class="good">&check;</td></tr>
+      <tr><td>WhatsApp delivery</td><td class="bad">&times;</td><td class="bad">&times;</td><td class="bad">&times;</td><td class="bad">&times;</td><td class="good">&check;</td></tr>
+      <tr><td>Cost-controlled alerts</td><td class="bad">&times;</td><td class="bad">&times;</td><td class="bad">&times;</td><td class="bad">&times;</td><td class="good">&check;</td></tr>
+    </tbody>
+  </table>
+  <div class="footnote">Snapshot trackers plateau. This is the only one whose output <b>gets smarter with every observation</b>.</div>
+</section>
+
+<!-- 10 · HOW IT WORKS -->
+<section class="slide" data-rise>
+  <div class="eyebrow">The engine, shown not explained</div>
+  <h1 class="headline">The loop under the hood.</h1>
+  <div class="loop">
+    <div class="node">Scraper (Playwright) &rarr; <b>Redis Streams</b><br /><span class="tag">price_ingest</span></div>
+    <div class="arrow">&rarr;</div>
+    <div class="node">live <b>ML analysis</b><br /><span class="tag">anomaly + deal score</span></div>
+    <div class="arrow">&rarr;</div>
+    <div class="node"><b>fake-discount check</b><br /><span class="tag">suspicious &rarr; suppress</span></div>
+    <div class="arrow">&rarr;</div>
+    <div class="branch">
+      <div class="node reward">confirmed deal<br /><span class="tag">the alert</span></div>
+      <div class="node">cross-store<br /><span class="tag">cheapest of N</span></div>
+    </div>
+    <div class="arrow">&rarr;</div>
+    <div class="node"><b>WhatsApp</b><br /><span class="tag">utility-rate message</span></div>
+  </div>
+  <div class="footnote">Event-driven. No polling loops, no blocking I/O.</div>
+</section>
+
+<!-- 11 · WHERE THE INTELLIGENCE SITS -->
+<section class="slide" data-rise>
+  <div class="eyebrow">The platform, and where the intelligence sits</div>
+  <h1 class="headline">A pipeline is scrape &rarr; store &rarr; alert.<br /><span class="accent">El72 is the intelligence that wraps it.</span></h1>
+  <div class="diagram-split">
+    <figure class="diagram">
+      <img src="assets/el72-pipeline.svg" alt="The static pipeline" />
+      <figcaption>The <b>pipeline</b>: scraper &rarr; Redis &rarr; TimescaleDB &rarr; notification. It moves data. It does <b>not</b> decide what's real.</figcaption>
+    </figure>
+    <figure class="diagram">
+      <img src="assets/el72-intelligence.svg" alt="The intelligence layer" />
+      <figcaption>The same pipeline, wrapped in the <b>intelligence layer</b>: MAD + Isolation Forest detect, the deal score grades, fake-discount flags, cross-store ranks. <b>That's the part that's defensible.</b></figcaption>
+    </figure>
+  </div>
+  <div class="footnote">White = the pipeline (any scraper + DB). Orange = El72 &mdash; the verification + intelligence layer. Swap the scraper; keep the intelligence.</div>
+</section>
+
+<!-- 12 · ANOMALY DETECTION -->
+<section class="slide" data-rise>
+  <div class="eyebrow">Technical depth &middot; 1 of 4</div>
+  <h1 class="headline">Detection is a function,<br />not a guess.</h1>
+  <div class="tech-split">
+    <div class="tech-col">
+      <h3><span class="tag">Layer 1 &middot; MAD</span> The fast path</h3>
+      <pre class="formula">MAD = median(|x &minus; median(x)|)
+score = price z vs. MAD
+sub-millisecond &middot; catches most drops</pre>
+      <div class="tech-note">A cheap, fast check on every observation. If the price is far from the median, flag it.</div>
+    </div>
+    <div class="tech-col">
+      <h3><span class="tag">Layer 2 &middot; Isolation Forest</span> The deep check</h3>
+      <pre class="formula">scores = model.decision_function(window)
+score = clip((tanh(&minus;s)+1)/2, 0, 1)
+score &gt; 0.85 &rarr; confirmed deal</pre>
+      <div class="worked">Worked example &middot; RTX 5080<br />50,000 &rarr; 41,000 drop<br />score = 0.91 &rarr; deal</div>
+    </div>
+  </div>
+  <div class="footnote">Real code: <span class="mono">services/analyzer/ml_detector.py</span></div>
+</section>
+
+<!-- 12b · DEAL SCORING -->
+<section class="slide" data-rise>
+  <div class="eyebrow">Technical depth &middot; 2 of 4</div>
+  <h1 class="headline">Every deal gets a score.</h1>
+  <div class="tech-split">
+    <div class="tech-col">
+      <h3><span class="tag">deal score &middot; [0,100]</span> What a deal is worth</h3>
+      <pre class="formula">score =  35 &middot; discount
+       + 25 &middot; percentile
+       + 20 &middot; cross_store
+       + 15 &middot; hist_low
+       +  5 &middot; duration
+       &minus; 30 &middot; suspicious</pre>
+      <div class="weight-grid">
+        <div class="weight"><div class="wname">discount</div><div class="wval">35</div></div>
+        <div class="weight"><div class="wname">percentile</div><div class="wval">25</div></div>
+        <div class="weight"><div class="wname">cross-store</div><div class="wval">20</div></div>
+        <div class="weight neg"><div class="wname">penalty</div><div class="wval">&minus;30</div></div>
+      </div>
+      <div class="tech-note">Grades: 80 Excellent &middot; 60 Good &middot; 40 Fair &middot; 20 Weak &middot; 0 No deal.</div>
+    </div>
+    <div class="tech-col">
+      <h3><span class="tag">the maps</span> How signals become a score</h3>
+      <pre class="formula">// historical discount
+capped at 30% off the median
+// cross-store advantage
+capped at 15% below competitors
+// suspicious penalty
+up to &minus;30 from the fake-discount signal</pre>
+      <div class="worked">Worked example &middot; RTX 5080<br />21% drop, cheapest of 3, 7-day hold:<br />35&middot;0.7 + 25&middot;0.8 + 20&middot;0.6 + 15&middot;1 + 5&middot;1 &minus; 0 = <b>88 (Excellent)</b></div>
+    </div>
+  </div>
+  <div class="footnote">Real code: <span class="mono">services/analyzer/deal_scorer.py</span></div>
+</section>
+
+<!-- 13 · FAKE-DISCOUNT DETECTION -->
+<section class="slide" data-rise>
+  <div class="eyebrow">Technical depth &middot; 3 of 4</div>
+  <h1 class="headline">It's honest about<br />fake discounts.</h1>
+  <div class="tech-split">
+    <div class="tech-col">
+      <h3><span class="tag">the signal</span> When a &ldquo;deal&rdquo; is suspicious</h3>
+      <pre class="formula">reference &ge; 10% above median
+  AND current &lt; 8% below median
+  AND competitors &ge; 3% cheaper
+  AND not near historical min
+&rarr; suspicious</pre>
+      <h3>The penalty</h3>
+      <pre class="formula">suspicious &rarr; up to &minus;30 off the deal score
+a signal, not a fraud verdict</pre>
+    </div>
+    <div class="tech-col">
+      <h3><span class="tag">worked</span> The bait-and-switch</h3>
+      <div class="worked">50,000 &ldquo;reference&rdquo; (10% above median)<br />40,000 &ldquo;sale&rdquo; (only 8% below median)<br />competitors at 38,000<br />&rarr; flagged suspicious, no alert</div>
+      <div class="worked">Real deal<br />41,000 (21% below median, cheapest)<br />&rarr; score 88, alert sent</div>
+    </div>
+  </div>
+  <div class="footnote">Real code: <span class="mono">services/analyzer/fake_discount.py</span></div>
+</section>
+
+<!-- 14 · CROSS-STORE INTELLIGENCE -->
+<section class="slide" data-rise>
+  <div class="eyebrow">Technical depth &middot; 4 of 4</div>
+  <h1 class="headline">The data no single<br />store will show you.</h1>
+  <div class="tech-split">
+    <div class="tech-col">
+      <h3><span class="tag">cross-store</span> One product, three stores</h3>
+      <pre class="formula">cheapest / most expensive store
+market min &middot; max &middot; average
+spread = (max &minus; min) / min
+store rank + gap vs. average</pre>
+      <div class="tech-note">A single store will never tell you its competitor has it cheaper. El72 sees all three.</div>
+    </div>
+    <div class="tech-col">
+      <h3><span class="tag">historical lows</span> Two kinds of &ldquo;lowest&rdquo;</h3>
+      <pre class="formula">is_historical_low
+  &rarr; market min near the all-time low
+store_historical_lows
+  &rarr; each store near its own low</pre>
+      <div class="worked">Worked example &middot; RTX 5080<br />Amazon 41,000 &middot; Noon 43,500 &middot; Jumia 42,000<br />cheapest: Amazon &middot; market low: yes</div>
+    </div>
+  </div>
+  <div class="footnote">Real code: <span class="mono">services/analyzer/cross_store.py</span></div>
+</section>
+<!-- 15 · THE BUSINESS CASE -->
+<section class="slide" data-rise>
+  <div class="eyebrow">The business case</div>
+  <h1 class="headline">Where it pays off.</h1>
+  <div class="pipeline">
+    <div class="pipe-stage">User<br /><span class="pipe-cap">sets a tracker</span></div>
+    <div class="pipe-arrow">&rarr;</div>
+    <div class="pipe-stage us">Verified deal<br /><span class="pipe-cap">ML + cross-store</span></div>
+    <div class="pipe-arrow">&rarr;</div>
+    <div class="pipe-stage">WhatsApp<br /><span class="pipe-cap">utility-rate alert</span></div>
+    <div class="pipe-arrow">&rarr;</div>
+    <div class="pipe-stage">Purchase<br /><span class="pipe-cap">the deal is seized</span></div>
+  </div>
+  <div class="pipe-loop">&#8635; every observation feeds the baseline &mdash; the data compounds</div>
+  <div class="compound-row">
+    <div class="compound"><div class="c-name">Credits</div><div class="c-arrow">&#8595;</div><div class="c-val">pay-as-you-track via Vodafone Cash &mdash; zero commitment, mimics fakka cards</div></div>
+    <div class="compound"><div class="c-name">Fast-Lane</div><div class="c-arrow">&#8595;</div><div class="c-val">zero-delay routing for high-demand drops &mdash; 15 min means sold out</div></div>
+    <div class="compound"><div class="c-name">B2B data</div><div class="c-arrow">&#8593;</div><div class="c-val">the highest margin: anonymized demand feeds sold to retailers</div></div>
+  </div>
+  <div class="footnote">WhatsApp utility rate keeps cost ~<b>$0.0036/msg</b> (vs. $0.1073 marketing). One alert, near-zero cost.</div>
+</section>
+
+<!-- 16 · COST & TRUST BY DESIGN -->
+<section class="slide" data-rise>
+  <div class="eyebrow">Every principle is a function in the repo</div>
+  <h1 class="headline">Cost and trust by design.</h1>
+  <table class="principle">
+    <thead><tr><th>Principle</th><th>Real code</th></tr></thead>
+    <tbody>
+      <tr><td>Cost control</td><td><span class="mono">notification</span> &mdash; utility-rate templates, rate limiting</td></tr>
+      <tr><td>Trust / verification</td><td><span class="mono">fake_discount.py</span> &mdash; suspicious-discount penalty</td></tr>
+      <tr><td>Explainability</td><td><span class="mono">deal_scorer.py</span> &mdash; every alert has a score + reasons</td></tr>
+      <tr><td>Data sovereignty</td><td>local TimescaleDB / PostgreSQL &mdash; your data, your infra</td></tr>
+      <tr><td>Reliability</td><td>Redis Streams + consumer groups + dead-letter handling</td></tr>
+      <tr><td>Security</td><td>JWT auth + HMAC-validated webhooks (Paymob)</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- 17 · THE NUMBERS -->
+<section class="slide" data-rise>
+  <div class="eyebrow">Built, not slideware</div>
+  <h1 class="headline">The numbers.</h1>
+  <div class="numbers-row">
+    <div class="number"><span class="num">7</span><span class="cap">microservices</span></div>
+    <div class="number"><span class="num">30s</span><span class="cap">scrape interval</span></div>
+    <div class="number"><span class="num">4</span><span class="cap">store scrapers</span></div>
+    <div class="number"><span class="num">97%</span><span class="cap">test coverage</span></div>
+  </div>
+  <div class="footnote"><b>Placeholder data</b> &mdash; platform metrics from the seeded dataset.</div>
+</section>
+
+<!-- 18 · ROADMAP -->
+<section class="slide" data-rise>
+  <div class="eyebrow">Where it goes next</div>
+  <h1 class="headline">Roadmap.</h1>
+  <div class="roadmap">
+    <div class="step"><div class="step-tag">Phase 1</div><div class="step-name">Done</div><div class="step-desc">Auth, scraping, ML deal detection, WhatsApp notifications.</div></div>
+    <div class="step"><div class="step-tag">Phase 2</div><div class="step-name">Billing &amp; dashboard</div><div class="step-desc">Credits system, analytics dashboard, mobile companion, Arabic/RTL.</div></div>
+    <div class="step"><div class="step-tag">Next</div><div class="step-name">Deeper ML</div><div class="step-desc">LSTM/GAN models, multi-region, rate limiting, B2B data product.</div></div>
+  </div>
+</section>
+
+<!-- 19 · CLOSE -->
+<section class="slide" data-rise>
+  <img src="assets/el72-logo.svg" alt="El72" style="height:8vh;margin-bottom:2vh;" />
+  <div class="eyebrow">The close</div>
+  <h1 class="headline">Seize the deal<br />before it's gone.</h1>
+  <p class="subhead">Real-time price intelligence, <b class="accent">verified</b>, delivered on WhatsApp.</p>
+  <div class="cred"><b>Elhaq</b> &middot; real-time price tracking &amp; deal detection</div>
+</section>
+
+<!-- 20 · THE TEAM -->
+<section class="slide" data-rise>
+  <div class="eyebrow">The team</div>
+  <h1 class="headline">The people behind it.</h1>
+  <div class="team">
+    <figure><img src="assets/team/samir.jpg" alt="Ahmed Samir" /><figcaption><span class="name">Ahmed Samir</span><span class="role">AI Engineer</span></figcaption></figure>
+    <figure><img src="assets/team/hany.jpg" alt="Mohammed Hany" /><figcaption><span class="name">Mohammed Hany</span><span class="role">Data &amp; ML Engineer</span></figcaption></figure>
+    <figure><img src="assets/team/loay.jpg" alt="Loay Medhat" /><figcaption><span class="name">Loay Medhat</span><span class="role">Computer Vision Engineer</span></figcaption></figure>
+  </div>
+</section>
+
+<div class="chrome">
+  <div class="progress"><div class="progress-fill"></div></div>
+  <div class="counter">01 / 23</div>
+  <div class="nav-hint">click or use &larr; &rarr;</div>
+  <div class="nav-zone prev"></div>
+  <div class="nav-zone next"></div>
 </div>
 
-<div class="nav-controls" id="nav"></div>
-
-<script>
-    lucide.createIcons();
-
-    const slides = document.querySelectorAll('.slide');
-    const nav = document.getElementById('nav');
-    const progress = document.getElementById('progress');
-    let current = 0;
-
-    slides.forEach((_, i) => {
-        const dot = document.createElement('button');
-        dot.className = `nav-dot ${i === 0 ? 'active' : ''}`;
-        dot.onclick = () => goTo(i);
-        nav.appendChild(dot);
-    });
-
-    function updateProgress() {
-        progress.style.width = `${((current + 1) / slides.length) * 100}%`;
-    }
-    updateProgress();
-
-    function goTo(index) {
-        if (index < 0 || index >= slides.length) return;
-        
-        slides[current].classList.remove('active');
-        nav.children[current].classList.remove('active');
-        
-        current = index;
-        
-        slides[current].classList.add('active');
-        nav.children[current].classList.add('active');
-        updateProgress();
-    }
-
-    document.addEventListener('keydown', (e) => {
-        if (e.key === 'ArrowRight' || e.key === ' ') goTo(current + 1);
-        if (e.key === 'ArrowLeft') goTo(current - 1);
-    });
-
-    let touchStartX = 0;
-    document.addEventListener('touchstart', e => touchStartX = e.touches[0].clientX);
-    document.addEventListener('touchend', e => {
-        const touchEndX = e.changedTouches[0].clientX;
-        if (touchStartX - touchEndX > 50) goTo(current + 1);
-        if (touchStartX - touchEndX < -50) goTo(current - 1);
-    });
-</script>
-
+<script src="js/deck.js"></script>
+<script src="js/data.js"></script>
+<script src="js/gsap.min.js"></script>
+<script src="js/motion.js"></script>
+<script src="js/demo.js"></script>
+</body>
+</html>
 </body>
 </html>

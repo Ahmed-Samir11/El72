@@ -576,9 +576,9 @@ def test_list_tracked_items_exposes_fetch_status(client, db_session):
     assert by_id["bad-link-item"]["fetch_error"] == "no price found on page"
     assert by_id["blocked-item"]["fetch_status"] == "blocked"
     assert by_id["blocked-item"]["fetch_error"] == "HTTP 521 from server"
-    # No status yet (fetch in flight) -> reported ok / no error; the UI keeps
-    # its "fetching" state when lowest_price is still absent.
-    assert by_id["fresh-item"]["fetch_status"] == "ok"
+    # No status yet (fetch in flight) -> null status / no error; the app
+    # shows its fetching spinner while fetch_status is null.
+    assert by_id["fresh-item"]["fetch_status"] is None
     assert by_id["fresh-item"]["fetch_error"] is None
 
 

@@ -1,4 +1,3 @@
-import uuid
 from datetime import datetime
 
 from sqlalchemy import create_engine
@@ -16,7 +15,7 @@ Base.metadata.create_all(bind=engine)
 def test_payment_log_creation():
     db = SessionLocal()
     payment = PaymentLog(
-        user_id=uuid.uuid4(),
+        user_id=42,  # operational user ids are integers (OperationalIdType)
         paymob_order_id="order123",
         amount=100.0,
         currency="EGP",
@@ -31,7 +30,7 @@ def test_payment_log_creation():
 
 
 def test_payment_log_attributes():
-    user_id = uuid.uuid4()
+    user_id = 42
     payment = PaymentLog(
         user_id=user_id,
         paymob_order_id="order456",
@@ -47,7 +46,7 @@ def test_payment_log_attributes():
 
 def test_payment_log_defaults():
     payment = PaymentLog(
-        user_id=uuid.uuid4(),
+        user_id=42,
         paymob_order_id="order789",
         amount=200.0,
         status="success",

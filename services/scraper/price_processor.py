@@ -12,30 +12,24 @@ from typing import Dict, List, Optional, Tuple
 
 import asyncpg
 
+from services.common.currency import EXCHANGE_RATES
 from services.scraper.store_scrapers import ScrapeResult
 
 logger = logging.getLogger(__name__)
 
 
-# Exchange rates (should be fetched from API in production)
-EXCHANGE_RATES = {
-    "EGP": 0.032,  # 1 EGP = 0.032 USD (approximate)
-    "USD": 1.0,
-    "AED": 0.27,  # UAE Dirham
-    "SAR": 0.27,  # Saudi Riyal
-}
-
-
 class PriceProcessor:
     """Handles price conversion, comparison, and storage."""
 
-    def __init__(self, db_pool: asyncpg.Pool):
+    def __init__(self, db_pool: asyncpg.Pool, timescale_pool: asyncpg.Pool):
         """Initialize processor with database pool.
 
         Args:
-            db_pool: Asyncpg connection pool for database operations
+            db_pool: Asyncpg connection pool for operational database operations
+            timescale_pool: Asyncpg connection pool for price history operations
         """
         self.db_pool = db_pool
+        self.timescale_pool = timescale_pool
 
     @staticmethod
     def convert_to_usd(price: float, currency: str) -> float:
@@ -95,18 +89,19 @@ class PriceProcessor:
 
             # Insert price history only if price changed
             if price_changed:
-                await self._insert_price_history(
-                    conn,
-                    tracked_item_id,
-                    result.store,
-                    result.canonical_product_id,
-                    price_usd,
-                    result.price,
-                    result.currency,
-                    result.in_stock,
-                    result.image_url,
-                    result.original_price,
-                )
+                async with self.timescale_pool.acquire() as history_conn:
+                    await self._insert_price_history(
+                        history_conn,
+                        tracked_item_id,
+                        result.store,
+                        result.canonical_product_id,
+                        price_usd,
+                        result.price,
+                        result.currency,
+                        result.in_stock,
+                        result.image_url,
+                        result.original_price,
+                    )
 
             # Recalculate lowest price across stores
             is_lowest = await self._update_lowest_price(
@@ -213,15 +208,23 @@ class PriceProcessor:
         image_url: Optional[str] = None,
         original_price: Optional[float] = None,
     ):
-        """Insert price into TimescaleDB price_history table.
+        """Insert an observed price into the TimescaleDB price_history table.
 
         Note: Uses current timestamp. TimescaleDB will handle deduplication
         if the same price is inserted multiple times at the same timestamp.
         """
         query = """
             INSERT INTO price_history (
-                time, sku, store_id, price_usd, price_local, in_stock,
-                image_url, advertised_price
+                time, sku, store_id, price_usd, price_local,
+                currency, in_stock, image_url, advertised_price
+            )
+            VALUES (NOW(), $1, $2, $3, $4, $5, $6, $7, $8)
+            ON CONFLICT (time, sku, store_id) DO NOTHING
+        """
+        fallback_query = """
+            INSERT INTO price_history (
+                time, sku, store_id, price_usd, price_local,
+                currency, in_stock, image_url
             )
             VALUES (NOW(), $1, $2, $3, $4, $5, $6, $7)
             ON CONFLICT (time, sku, store_id) DO NOTHING
@@ -234,21 +237,49 @@ class PriceProcessor:
             else price_usd / EXCHANGE_RATES.get("EGP", 0.032)
         )
         advertised = (
-            float(original_price)
-            if original_price not in (None, 0, 0.0)
-            else None
+            float(original_price) if original_price not in (None, 0, 0.0) else None
         )
 
-        await conn.execute(
-            query,
-            sku,
-            store_id,
-            price_usd,
-            local_price,
-            in_stock,
-            image_url,
-            advertised,
-        )
+        try:
+            await conn.execute(
+                query,
+                sku,
+                store_id,
+                price_usd,
+                local_price,
+                currency,
+                in_stock,
+                image_url,
+                advertised,
+            )
+        except Exception as exc:
+            # Only fall back when the failure is the missing advertised_price
+            # column (pre-migration schemas); re-raise anything else so real
+            # insert failures are never masked. This pool is asyncpg, so
+            # check the precise exception type; the class-name check covers
+            # drivers that re-wrap the DBAPI error under the same name.
+            if not (
+                isinstance(exc, asyncpg.exceptions.UndefinedColumnError)
+                or type(exc).__name__ == "UndefinedColumnError"
+            ):
+                raise
+            logger.warning(
+                "price_history missing advertised_price column; inserting "
+                "without it (sku=%s store=%s): %s",
+                sku,
+                store_id,
+                exc,
+            )
+            await conn.execute(
+                fallback_query,
+                sku,
+                store_id,
+                price_usd,
+                local_price,
+                currency,
+                in_stock,
+                image_url,
+            )
 
     async def _update_lowest_price(
         self, conn: asyncpg.Connection, tracked_item_id: int, current_url: str

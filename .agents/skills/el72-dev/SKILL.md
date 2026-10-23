@@ -156,7 +156,7 @@ await client.xack("stream:price_alerts", "cg_alert_handler", msg_id)
 
 ### Steps
 
-1. **Edit the canonical schema**: [schema.sql](file:///e:/repos/El72/infra/sql/schema.sql)
+1. **Edit the canonical schema**: [schema/postgres.sql](file:///e:/repos/El72/infra/sql/schema/postgres.sql)
 
 2. **Follow existing conventions**:
    - Use `UUID` primary keys: `id UUID PRIMARY KEY DEFAULT gen_random_uuid()`
@@ -171,9 +171,9 @@ await client.xack("stream:price_alerts", "cg_alert_handler", msg_id)
 
 4. **Apply schema**:
 ```bash
-psql -U elhaq -d elhaq -f infra/sql/schema.sql
-# or
-docker exec -i el72-postgres-1 psql -U elhaq -d elhaq < infra/sql/schema.sql
+psql -U elhaq -d elhaq -f infra/sql/schema/postgres.sql
+# TimescaleDB schema
+psql -U elhaq -d elhaq_ts -f infra/sql/schema/timescaledb.sql
 ```
 
 5. **Create hypertables** for time-series data:
@@ -182,7 +182,7 @@ SELECT create_hypertable('new_time_series_table', 'time');
 ```
 
 ### Key Files
-- [schema.sql](file:///e:/repos/El72/infra/sql/schema.sql) — Canonical schema (v1.0)
+- [schema/postgres.sql](file:///e:/repos/El72/infra/sql/schema/postgres.sql) — Canonical schema (v1.0)
 - [models.py](file:///e:/repos/El72/services/api/models.py) — SQLAlchemy User/Alert
 - [tracked_items_models.py](file:///e:/repos/El72/services/api/tracked_items_models.py) — SQLAlchemy TrackedItem/etc.
 

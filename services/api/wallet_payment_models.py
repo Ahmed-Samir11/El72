@@ -25,6 +25,8 @@ from sqlalchemy import (
 
 from services.api.models import Base
 
+from .models import OperationalIdType
+
 
 def _utcnow() -> datetime:
     """Timezone-aware UTC now."""
@@ -36,7 +38,10 @@ class WalletPayment(Base):
 
     id = Column(Integer, primary_key=True)
     user_id = Column(
-        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+        OperationalIdType(),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
     )
     # Set at /payment/confirm. Unique — one Paymob payment per record.
     paymob_payment_id = Column(String(255), unique=True, nullable=True)

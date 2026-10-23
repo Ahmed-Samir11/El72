@@ -1,11 +1,13 @@
 import json
 import logging
 import os
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from fastapi import Depends, FastAPI, HTTPException, Request
+from prometheus_client import Counter, Histogram, make_asgi_app
 from pydantic import BaseModel
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -62,6 +64,18 @@ def _webhook_rate_limit_key(request) -> str:
     return request.client.host if request.client else "unknown"
 
 
+HTTP_REQUESTS = Counter(
+    "el72_billing_http_requests_total",
+    "HTTP requests handled by the billing service",
+    ["method", "route", "status_code"],
+)
+
+HTTP_REQUEST_DURATION = Histogram(
+    "el72_billing_http_request_duration_seconds",
+    "HTTP request duration in seconds",
+    ["method", "route"],
+)
+
 app = FastAPI(title="Elhaq Billing")
 
 # Multi-instance deployments should set PAYMOB_RATE_LIMIT_REDIS so the
@@ -74,6 +88,37 @@ if RATE_LIMIT_STORAGE_URI:
 limiter = Limiter(**limiter_kwargs)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+@app.middleware("http")
+async def observe_http_requests(request: Request, call_next):
+    if request.url.path == "/metrics":
+        return await call_next(request)
+
+    start = time.perf_counter()
+    status_code = 500
+
+    try:
+        response = await call_next(request)
+        status_code = response.status_code
+        return response
+    finally:
+        route = request.scope.get("route")
+        route_path = getattr(route, "path", "unmatched")
+
+        HTTP_REQUESTS.labels(request.method, route_path, str(status_code)).inc()
+
+        HTTP_REQUEST_DURATION.labels(request.method, route_path).observe(
+            time.perf_counter() - start
+        )
+
+
+app.mount("/metrics", make_asgi_app())
+
+
+@app.get("/health", include_in_schema=False)
+async def health() -> dict:
+    return {"status": "ok"}
 
 
 # Pydantic models

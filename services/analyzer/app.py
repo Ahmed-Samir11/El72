@@ -13,16 +13,14 @@ from prometheus_client import Gauge
 from pythonjsonlogger import jsonlogger
 
 from services.analyzer import ml_detector
+from services.analyzer.analytics import record_deal_evaluation, record_price_observation
 from services.analyzer.intent_upsert import upsert_retailer_analytics_batch
 from services.analyzer.routers.intelligence import router as intelligence_router
 from services.analyzer.settings import AnalyzerSettings
+from services.common.currency import EGP_TO_USD, EXCHANGE_RATES
 from services.common.redis_client import RedisStreamClient
 
 settings = AnalyzerSettings()
-
-# 1 EGP = 0.032 USD (approximate). Used to populate the NOT NULL price_usd
-# column from the EGP ingest price. Mirrors seed_data.EGP_TO_USD.
-EGP_TO_USD = 0.032
 
 # Structured JSON logging
 trace_id_var: contextvars.ContextVar = contextvars.ContextVar("trace_id", default=None)
@@ -404,17 +402,36 @@ async def insert_price_history(conn: asyncpg.Connection, event: Dict[str, Any]) 
     - `conn`: an active asyncpg connection
     - `event`: mapping with keys `timestamp`, `sku`, `store`, `price`,
       `in_stock`, and optionally `original_price` (the advertised "was"
-      price; 0/None means no advertised price).
+      price; 0/None means no advertised price). Optional `price_usd` /
+      `price_local` override the conversion when the producer knows both
+      values. Without explicit values the ingest price is taken as the
+      event's `currency` (default EGP) and `price_usd` is derived via the
+      shared rate table.
     """
     original_price = event.get("original_price")
-    advertised = (
-        float(original_price)
-        if original_price not in (None, 0, 0.0)
-        else None
-    )
-    price_local = float(event.get("price"))
-    # price_usd is NOT NULL in the schema; the ingest price is EGP, so convert.
-    price_usd = round(price_local * EGP_TO_USD, 4)
+    advertised = float(original_price) if original_price not in (None, 0, 0.0) else None
+    # Honor explicit USD/local fields when the producer supplies them;
+    # otherwise the ingest price is in the event's currency (EGP by default
+    # for this platform) and is converted with the shared rate table.
+    price_local = float(event.get("price_local", event.get("price")))
+    if event.get("price_usd") is not None:
+        price_usd = float(event["price_usd"])
+    else:
+        # price_usd is NOT NULL in the schema; derive it from the local
+        # price. Use the event's currency when provided so non-EGP sources
+        # are not silently converted at the EGP rate; unknown currencies
+        # fall back to EGP (documented platform default).
+        currency = (event.get("currency") or "EGP").upper()
+        rate = EXCHANGE_RATES.get(currency, EGP_TO_USD)
+        if currency not in EXCHANGE_RATES:
+            logger.warning(
+                "No exchange rate for currency %r; assuming EGP to derive "
+                "price_usd (sku=%s store=%s)",
+                currency,
+                event.get("sku"),
+                event.get("store"),
+            )
+        price_usd = round(price_local * rate, 4)
     try:
         await conn.execute(
             """
@@ -431,9 +448,28 @@ async def insert_price_history(conn: asyncpg.Connection, event: Dict[str, Any]) 
             bool(event.get("in_stock", True)),
             advertised,
         )
-    except Exception:
-        # Fallback for DBs without the advertised_price column: still record
-        # the price row rather than losing it (keeps the ingest path alive).
+    except Exception as exc:
+        # Only fall back when the failure is the missing advertised_price
+        # column (pre-migration schemas); re-raise anything else so real
+        # insert failures (connection drops, constraint violations) are
+        # never masked. This pool is asyncpg, so check the precise
+        # exception type; the class-name check covers drivers that re-wrap
+        # the DBAPI error under the same name.
+        if not (
+            isinstance(exc, asyncpg.exceptions.UndefinedColumnError)
+            or type(exc).__name__ == "UndefinedColumnError"
+        ):
+            raise
+        # Log the original error (not the client) so the schema gap is
+        # visible in the ingest path, then fall back: still record the price
+        # row rather than losing it (keeps the ingest path alive).
+        logger.warning(
+            "price_history missing advertised_price column; inserting "
+            "without it (sku=%s store=%s): %s",
+            event.get("sku"),
+            event.get("store"),
+            exc,
+        )
         await conn.execute(
             """
             INSERT INTO price_history
@@ -462,7 +498,7 @@ async def fetch_recent_prices(
         "ORDER BY time DESC LIMIT $3"
     )
     rows = await conn.fetch(query, sku, store, limit)
-    return [float(r["price_local"]) for r in rows]
+    return [float(r.get("price_local", r.get("price_egp"))) for r in rows]
 
 
 async def find_alerting_users(
@@ -552,6 +588,14 @@ async def consume_loop():  # noqa: C901
                     try:
                         async with ts_pool.acquire() as conn:
                             await insert_price_history(conn, payload)
+                            await record_price_observation(
+                                conn,
+                                sku=sku,
+                                store=store,
+                                price=float(payload.get("price")),
+                                price_usd=payload.get("price_usd"),
+                                in_stock=bool(payload.get("in_stock", True)),
+                            )
                             # Build window and score using same connection to
                             # avoid double-acquire
                             recent = await fetch_recent_prices(
@@ -576,6 +620,16 @@ async def consume_loop():  # noqa: C901
 
                         # If anomaly, handle monetization and publish
                         if score > settings.ml_threshold:
+                            async with ts_pool.acquire() as conn:
+                                deal_key = await record_deal_evaluation(
+                                    conn,
+                                    sku=sku,
+                                    store=store,
+                                    price=float(payload.get("price")),
+                                    prices=recent,
+                                    score=float(score),
+                                    model_version=f"{settings.ml_method}-v1",
+                                )
                             # Find users who have alerts for this SKU
                             async with pg_pool.acquire() as conn:
                                 alerting = await find_alerting_users(conn, sku)
@@ -597,6 +651,9 @@ async def consume_loop():  # noqa: C901
                                 "price": payload.get("price"),
                                 "timestamp": payload.get("timestamp"),
                                 "anomaly_score": score,
+                                "deal_key": deal_key,
+                                "event_type": "deal.detected",
+                                "schema_version": "1",
                                 "trace_id": trace_id,
                                 "orig_stream": stream,
                                 "orig_msg_id": msg_id,

@@ -1,14 +1,28 @@
--- El72 Unified Schema (v1.0)
--- Uses UUID throughout for distributed system compatibility
+-- El72 Unified Schema (v1.0) — LEGACY MERGED ARTIFACT.
+--
+-- Relationship to the canonical schemas (important):
+-- * infra/sql/schema/postgres.sql is the CANONICAL baseline for a fresh
+--   operational install; scripts/db-bootstrap.sh applies it plus the
+--   numbered migrations (feature migrations 0007-0010 add the remaining
+--   tables: cash payments, dispute/refund, subscriptions).
+-- * This file is a historical merged artifact kept for reference; it is
+--   NOT applied by the bootstrap. It intentionally still contains the
+--   feature tables (refunds, subscriptions, ...) inline, so do not treat
+--   table-presence differences between this file and schema/postgres.sql
+--   as drift — treat schema/postgres.sql + migrations as the source of
+--   truth.
+--
+-- Operational tables use INTEGER primary keys (matching the operational
+-- ORM models); payment/audit rows keep UUID primary keys for compatibility.
 -- Merges ddl.sql and alerts.sql into a single canonical schema
 
 -- Enable required extensions
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE EXTENSION IF NOT EXISTS timescaledb;
 
--- Users table (UUID-based)
+-- Users table (integer primary key; matches the operational ORM models)
 CREATE TABLE IF NOT EXISTS users (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id SERIAL PRIMARY KEY,
     phone VARCHAR(20) UNIQUE NOT NULL,
     name VARCHAR(100) NOT NULL DEFAULT 'Customer',
     preferred_language VARCHAR(10) NOT NULL DEFAULT 'en',
@@ -16,20 +30,23 @@ CREATE TABLE IF NOT EXISTS users (
     salt VARCHAR(32) NOT NULL,
     tier VARCHAR(20) NOT NULL DEFAULT 'free',
     valid_until TIMESTAMP WITH TIME ZONE,
+    status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE'
+        CHECK (status IN ('ACTIVE', 'DELETED')),
+    deleted_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
 -- Alerts table (merged from ddl.sql and alerts.sql)
 CREATE TABLE IF NOT EXISTS alerts (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+
     -- Original ddl.sql columns
     target_url TEXT,
     target_price NUMERIC(10, 2),
     active_status BOOLEAN DEFAULT TRUE,
-    
+
     -- alerts.sql columns (more granular tracking)
     sku TEXT,
     store_id TEXT,
@@ -43,10 +60,10 @@ CREATE TABLE IF NOT EXISTS alerts (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Tracked Items (UUID-based)
+-- Tracked Items (integer primary key; references users.id as INTEGER)
 CREATE TABLE IF NOT EXISTS tracked_items (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     canonical_product_id TEXT NOT NULL,
     specs JSONB,
     target_price NUMERIC(10, 2),
@@ -57,8 +74,8 @@ CREATE TABLE IF NOT EXISTS tracked_items (
 
 -- Tracked Item Store Mappings
 CREATE TABLE IF NOT EXISTS tracked_item_stores (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tracked_item_id UUID NOT NULL REFERENCES tracked_items(id) ON DELETE CASCADE,
+    id SERIAL PRIMARY KEY,
+    tracked_item_id INTEGER NOT NULL REFERENCES tracked_items(id) ON DELETE CASCADE,
     store_id TEXT NOT NULL,
     store_sku TEXT NOT NULL,
     store_url TEXT NOT NULL,
@@ -68,7 +85,7 @@ CREATE TABLE IF NOT EXISTS tracked_item_stores (
 
 -- Current Prices (Materialized snapshots)
 CREATE TABLE IF NOT EXISTS current_prices (
-    tracked_item_id UUID NOT NULL REFERENCES tracked_items(id) ON DELETE CASCADE,
+    tracked_item_id INTEGER NOT NULL REFERENCES tracked_items(id) ON DELETE CASCADE,
     store_id TEXT NOT NULL,
     price_usd NUMERIC(10, 4) NOT NULL,
     price_local NUMERIC(10, 2) NOT NULL,
@@ -80,7 +97,7 @@ CREATE TABLE IF NOT EXISTS current_prices (
 
 -- Lowest Prices Cache
 CREATE TABLE IF NOT EXISTS lowest_prices (
-    tracked_item_id UUID PRIMARY KEY REFERENCES tracked_items(id) ON DELETE CASCADE,
+    tracked_item_id INTEGER PRIMARY KEY REFERENCES tracked_items(id) ON DELETE CASCADE,
     store_id TEXT NOT NULL,
     price_usd NUMERIC(10, 4) NOT NULL,
     price_local NUMERIC(10, 2) NOT NULL,
@@ -116,25 +133,25 @@ WHERE NOT EXISTS (
 -- Payment Logs (UUID-based)
 CREATE TABLE IF NOT EXISTS payment_logs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
     paymob_order_id VARCHAR(255) UNIQUE NOT NULL,
     amount NUMERIC(10, 2) NOT NULL,
     currency VARCHAR(10) NOT NULL DEFAULT 'EGP',
-    status VARCHAR(20) NOT NULL DEFAULT 'pending',
+    status VARCHAR(50) NOT NULL DEFAULT 'pending',
     tier VARCHAR(20) NOT NULL,
     metadata JSONB,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS user_credits (
-    user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
     balance INTEGER NOT NULL DEFAULT 0 CHECK (balance >= 0),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS credit_transactions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     amount INTEGER NOT NULL,
     reason VARCHAR(50) NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
@@ -143,9 +160,8 @@ CREATE TABLE IF NOT EXISTS credit_transactions (
 -- Separate admin credentials (not user tiers). Provisioned out-of-band.
 -- id is VARCHAR(36) (dashed UUID string) to match the SQLAlchemy models
 -- and allow FKs from payment_audit_log / manual_payments on both engines.
--- NOTE: users.id is UUID in this canonical DDL, while the SQLAlchemy
--- models map user ids as VARCHAR(36) dashed-UUID strings (pre-existing
--- convention); Postgres accepts dashed UUID literals for the uuid type.
+-- NOTE: users.id is INTEGER (SERIAL) in this DDL, matching the operational
+-- ORM models; admin ids remain VARCHAR(36) strings by design.
 CREATE TABLE IF NOT EXISTS admins (
     id VARCHAR(36) PRIMARY KEY,
     username VARCHAR(50) UNIQUE NOT NULL,
@@ -156,11 +172,11 @@ CREATE TABLE IF NOT EXISTS admins (
 -- Manual payments (bridge flow, pre-Paymob): user submits "I've paid",
 -- admin verifies the transfer and approves/rejects. Approval grants credits.
 CREATE TABLE IF NOT EXISTS manual_payments (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id SERIAL PRIMARY KEY,
     order_ref VARCHAR(32) UNIQUE NOT NULL,
     -- SET NULL (not CASCADE): payment history is a financial record and
     -- must survive user deletion for auditing.
-    user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
     -- Snapshot of the payer's phone at creation time so the row keeps
     -- forensic attribution even if the user account is later deleted.
     user_phone VARCHAR(20),
@@ -189,7 +205,8 @@ CREATE INDEX IF NOT EXISTS idx_manual_payments_status_created
 -- amounts (PCI-DSS: card data is tokenized on-device and never reaches us).
 CREATE TABLE IF NOT EXISTS card_payments (
     id SERIAL PRIMARY KEY,
-    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    -- SET NULL (not CASCADE): payment records survive user deletion.
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
     -- Set at /payment/confirm; unique — one Paymob payment per record.
     paymob_payment_id VARCHAR(255) UNIQUE,
     package VARCHAR(20) NOT NULL
@@ -208,7 +225,8 @@ CREATE INDEX IF NOT EXISTS idx_card_payments_user_created
 -- only the wallet TYPE is kept for audit/ledger purposes (plan 2.8).
 CREATE TABLE IF NOT EXISTS wallet_payments (
     id SERIAL PRIMARY KEY,
-    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    -- SET NULL (not CASCADE): payment records survive user deletion.
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
     -- Set at /payment/confirm; unique — one Paymob payment per record.
     paymob_payment_id VARCHAR(255) UNIQUE,
     wallet_type VARCHAR(30) NOT NULL,
@@ -233,7 +251,8 @@ CREATE INDEX IF NOT EXISTS idx_wallet_payments_user_created
 -- identifies the payment, not the user) and expires after 24 h.
 CREATE TABLE IF NOT EXISTS cash_payments (
     id SERIAL PRIMARY KEY,
-    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    -- SET NULL (not CASCADE): cash payment records survive user deletion.
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
     -- Set at /payment/confirm; unique — one Paymob payment per record.
     paymob_payment_id VARCHAR(255) UNIQUE,
     -- Random single-use code shown to the user (8 unambiguous chars,
@@ -259,7 +278,7 @@ CREATE INDEX IF NOT EXISTS idx_cash_payments_user_created
 -- `detail` is sanitized free-form text — never raw card data, gateway
 -- tokens or OTPs. No UPDATE/DELETE path exists in the application.
 CREATE TABLE IF NOT EXISTS payment_audit_log (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id SERIAL PRIMARY KEY,
     action VARCHAR(50) NOT NULL
         CHECK (action IN ('approve', 'reject', 'reveal_contact',
             'refund', 'adjust_credits',
@@ -277,7 +296,7 @@ CREATE TABLE IF NOT EXISTS payment_audit_log (
     actor_username VARCHAR(50),
     -- SET NULL (not CASCADE): audit rows are forensic records and must
     -- survive user deletion.
-    target_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    target_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
     -- Snapshot of the target user's phone at action time.
     target_user_phone VARCHAR(20),
     order_ref VARCHAR(32) NOT NULL,
@@ -395,7 +414,7 @@ CREATE TRIGGER subscription_renewals_append_only
 
 -- Affiliate clicks for merchant revenue attribution
 CREATE TABLE IF NOT EXISTS affiliate_clicks (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id SERIAL PRIMARY KEY,
     store_id VARCHAR(32) NOT NULL,
     sku VARCHAR(255),
     deal_id VARCHAR(255),
@@ -406,7 +425,7 @@ CREATE TABLE IF NOT EXISTS affiliate_clicks (
 
 -- Retailer Analytics (Aggregated B2B metrics, no PII)
 CREATE TABLE IF NOT EXISTS retailer_analytics (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id SERIAL PRIMARY KEY,
     store_id TEXT NOT NULL,
     metric_name VARCHAR(100) NOT NULL,
     metric_value NUMERIC(15, 4) NOT NULL,
@@ -433,6 +452,7 @@ CREATE INDEX IF NOT EXISTS idx_current_prices_last_updated ON current_prices(las
 
 CREATE INDEX IF NOT EXISTS idx_price_history_sku ON price_history(sku);
 CREATE INDEX IF NOT EXISTS idx_price_history_store_id ON price_history(store_id);
+CREATE INDEX IF NOT EXISTS idx_price_history_sku_time ON price_history(sku, time);
 
 CREATE INDEX IF NOT EXISTS idx_payment_logs_user_id ON payment_logs(user_id);
 CREATE INDEX IF NOT EXISTS idx_payment_logs_status ON payment_logs(status);
@@ -445,6 +465,10 @@ CREATE INDEX IF NOT EXISTS idx_affiliate_clicks_clicked_at ON affiliate_clicks(c
 
 CREATE INDEX IF NOT EXISTS idx_retailer_analytics_store_id ON retailer_analytics(store_id);
 CREATE INDEX IF NOT EXISTS idx_retailer_analytics_period ON retailer_analytics(period_start, period_end);
+
+-- NOTE: The analytical tables (analytics.*) have been moved to the
+-- TimescaleDB canonical schema (infra/sql/schema/timescaledb.sql).
+-- They are no longer part of the operational PostgreSQL schema.
 
 -- Functions for updating timestamps
 CREATE OR REPLACE FUNCTION update_updated_at_column()

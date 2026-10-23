@@ -54,7 +54,7 @@ a bounded extraction problem.
    - `fetch_failed`: network-level failure after both fetch methods.
 
 **C. Visible status (fixes E7)**
-1. Schema (`infra/sql/schema.sql`, canonical) + ORM (`tracked_items_models.py`):
+1. Schema (`infra/sql/schema/postgres.sql`, canonical) + ORM (`tracked_items_models.py`):
    - `tracked_item_stores.last_fetch_status TEXT NULL` (`ok|no_price_found|blocked|fetch_failed`) + `last_fetch_error TEXT NULL` — set by the background task on every run (success or final failure).
    - `current_prices.image_url TEXT NULL` + `lowest_prices.image_url TEXT NULL` — the image travels with the price row so the list/detail endpoints no longer depend on the best-effort `price_history` lookup (that lookup stays as a fallback for older rows).
 2. `create_tables.py`: dialect-aware `ADD COLUMN IF NOT EXISTS` for the new columns so existing dev SQLite DBs upgrade in place (Postgres supports `IF NOT EXISTS` natively).
@@ -100,7 +100,7 @@ services/api/test_fixtures/              ← NEW: real saved pages
     alfrensia_homepage.html              (copied; non-product fixture)
     relative_og_image.html               (hand-made fixture)
     woocommerce_product.html             (hand-made fixture)
-infra/sql/schema.sql                     ← canonical: new columns
+infra/sql/schema/postgres.sql       ← canonical PostgreSQL schema: new columns
 flutter-app/lib/l10n/app_en.arb, app_ar.arb   ← new status strings (priceFetchFailed, notAProductPage, priceRefreshFailed)
 flutter-app/lib/src/data/models/tracked_item_model.dart  ← fetch_status/fetch_error
 flutter-app/lib/src/ui/widgets/tracker_card.dart         ← failed vs fetching state

@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>El72 — How do you know a deal is real? (deep dive)</title>
+<link rel="stylesheet" href="css/apple-theme.css" />
+<style>
+/* Companion-only: the 4-checks list + the score bands. */
+.checks-list{display:flex;flex-direction:column;gap:1.2vh;max-width:760px;width:100%}
+.check-row{display:flex;align-items:center;gap:1.2vw;background:var(--card);border:1px solid var(--card-border);border-radius:14px;padding:1.6vh 1.6vw}
+.check-row .n{font-family:var(--mono);font-size:14px;color:var(--accent);font-weight:700;min-width:2ch}
+.check-row .t{font-size:clamp(14px,1.2vw,18px);color:var(--fg)}
+.check-row .d{font-size:clamp(12px,1vw,15px);color:var(--fg-dim);margin-left:auto;text-align:right;max-width:40%}
+.bands{display:flex;gap:1vw;max-width:820px;width:100%}
+.band{flex:1;background:var(--card);border:1px solid var(--card-border);border-radius:16px;padding:2vh 1.4vw;text-align:center}
+.band .r{font-family:var(--mono);font-size:clamp(14px,1.2vw,18px);font-weight:700}
+.band .l{font-size:clamp(12px,1vw,15px);color:var(--fg-dim);margin-top:.8vh}
+.band.deal .r{color:var(--good)}
+.band.watch .r{color:var(--warn)}
+.band.ignore .r{color:var(--fg-faint)}
+.sig{display:flex;gap:1.4vw;max-width:820px;width:100%}
+.sig-card{flex:1;background:var(--card);border:1px solid var(--card-border);border-radius:16px;padding:2vh 1.6vw}
+.sig-card .k{font-family:var(--mono);font-size:12px;color:var(--accent);letter-spacing:.06em;margin-bottom:1vh}
+.sig-card .t{font-size:clamp(15px,1.3vw,19px);font-weight:600}
+.sig-card .d{font-size:clamp(12px,1vw,15px);color:var(--fg-dim);margin-top:.8vh;line-height:1.4}
+</style>
+</head>
+<body>
+<div class="counter"></div>
+<div class="hint">→ / Space</div>
+
+<!-- 1 · Cold open -->
+<section class="slide" data-rise>
+  <div class="inner">
+    <div class="eyebrow">The deep dive</div>
+    <h1 class="headline">How do you know<br />a deal is <span class="acc">real</span>?</h1>
+    <p class="sub">This is the engine room of El72 — the verification that turns a price drop into a deal you can trust.</p>
+  </div>
+</section>
+
+<!-- 2 · The problem -->
+<section class="slide" data-rise>
+  <div class="inner">
+    <div class="eyebrow">The problem</div>
+    <h1 class="headline">Fake discounts are<br />everywhere.</h1>
+    <p class="sub">Bait-and-switch "was" prices, spike-then-drop games, prices that are too good to be true. A naive "it's cheaper than before" check walks right into all of it.</p>
+  </div>
+</section>
+
+<!-- 3 · The naive approach -->
+<section class="slide" data-rise>
+  <div class="inner">
+    <div class="eyebrow">The naive approach</div>
+    <h1 class="headline">"Just compare<br />the prices."</h1>
+    <p class="sub">Compare today's price to last week's. Problem: last week's price might be fake, the history might be stale, and "cheaper" doesn't mean "a real deal." Naive comparison alerts you to bait.</p>
+  </div>
+</section>
+
+<!-- 4 · The El72 approach -->
+<section class="slide" data-rise>
+  <div class="inner">
+    <div class="eyebrow">The El72 approach</div>
+    <h1 class="headline">Verify against<br />history.</h1>
+    <p class="sub">Every price is checked against a 30-day baseline, with two independent signals that have to agree. If they do, it's a real drop. If a fake-discount pattern shows up, it's flagged before you're ever alerted.</p>
+  </div>
+</section>
+
+<!-- 5 · Anomaly detection -->
+<section class="slide" data-rise>
+  <div class="inner">
+    <div class="eyebrow">Anomaly detection</div>
+    <h1 class="headline">Two signals.<br />Both have to agree.</h1>
+    <div class="sig">
+      <div class="sig-card">
+        <div class="k">MAD</div>
+        <div class="t">Median Absolute Deviation</div>
+        <div class="d">How far the price is from its robust baseline, in median-deviation units. A z of 14 means 14× the normal noise.</div>
+      </div>
+      <div class="sig-card">
+        <div class="k">ISOLATION FOREST</div>
+        <div class="t">Anomaly score</div>
+        <div class="d">A second, independent lens. 0.97 means "almost certainly not normal." Two signals agreeing is far stronger than one.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 6 · The 4 checks -->
+<section class="slide" data-rise>
+  <div class="inner">
+    <div class="eyebrow">Fake-discount detection</div>
+    <h1 class="headline">Four checks catch<br />the bait.</h1>
+    <div class="checks-list">
+      <div class="check-row"><span class="n">1</span><span class="t">Price below baseline?</span><span class="d">Is the drop real, or just noise?</span></div>
+      <div class="check-row"><span class="n">2</span><span class="t">Fake "was" price?</span><span class="d">Was the old price inflated to fake the discount?</span></div>
+      <div class="check-row"><span class="n">3</span><span class="t">Spike-then-drop?</span><span class="d">A temporary spike followed by a "discount" — a classic game.</span></div>
+      <div class="check-row"><span class="n">4</span><span class="t">Too good to be true?</span><span class="d">So far below history that it's probably a data error.</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- 7 · The deal score -->
+<section class="slide" data-rise>
+  <div class="inner">
+    <div class="eyebrow">Deal scoring</div>
+    <h1 class="headline">One number:<br />0 to 100.</h1>
+    <p class="sub">Magnitude, persistence, and historical depth combine into a single score. It's not "is it cheap" — it's "is this a deal worth your attention, right now."</p>
+    <div class="bands">
+      <div class="band deal"><div class="r">80–100</div><div class="l">DEAL — alert now</div></div>
+      <div class="band watch"><div class="r">50–79</div><div class="l">WATCH — keep an eye on it</div></div>
+      <div class="band ignore"><div class="r">0–49</div><div class="l">IGNORE — not a deal</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- 8 · Close -->
+<section class="slide" data-rise>
+  <div class="inner">
+    <div class="eyebrow">Why it's trustworthy</div>
+    <h1 class="headline">Two signals, four checks,<br />one calibrated score.</h1>
+    <p class="sub">That's the verification. It's not a black box — it's a chain of checks you can inspect, each one catching a different way a "deal" can be fake. That's how El72 turns a price drop into a deal you can trust.</p>
+    <p class="foot" style="margin-top:2.4vh">El72 · real-time price intelligence</p>
+  </div>
+</section>
+
+<script src="js/motion.js" defer></script>
+<script src="js/deck.js" defer></script>
+</body>
+</html>
