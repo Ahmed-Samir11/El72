@@ -512,14 +512,24 @@ table.compare thead th.ours { background: var(--accent-soft); }
 }
 /* Proof split: mutations (left) + charts (right) */
 .proof-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1.65fr) minmax(220px, 0.75fr);
+  align-items: start;
+  gap: 3vw;
   width: 100%;
-  max-width: 940px;
+  max-width: 1080px;
   margin-top: 3vh;
 }
 .proof-mutations {
   display: flex;
   flex-direction: column;
   gap: 2.2vh;
+}
+.proof-right {
+  display: flex;
+  flex-direction: column;
+  gap: 2.8vh;
+  padding-top: 1vh;
 }
 .mutation {
   background: var(--card);
@@ -562,10 +572,12 @@ table.compare thead th.ours { background: var(--accent-soft); }
   letter-spacing: -0.02em;
   color: var(--good);
   line-height: 1;
+  flex: 0 0 auto;
 }
-.proof-stat .lbl {
+.proof-stat .cap {
   font-size: clamp(12px, 1vw, 15px);
   color: var(--fg-dim);
+  line-height: 1.35;
 }
 .proof-charts svg { width: 100%; height: auto; display: block; }
 .proof-charts .cap {
@@ -1161,35 +1173,59 @@ table.principle tbody tr:last-child td { border-bottom: none; }
 .arch-compare {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 3vw;
+  gap: 3.5vw;
   width: 100%;
   max-width: 1240px;
-  margin-top: 2.4vh;
+  margin-top: 3.2vh;
 }
 .arch-card {
   background: var(--card);
   border: 1px solid var(--card-border);
   border-radius: 18px;
-  padding: 2.4vh 2vw;
+  min-height: 238px;
+  padding: 3.4vh 2.8vw;
 }
-.arch-card.us { border-color: var(--accent); background: var(--accent-soft); }
-.arch-card .a-head { font-size: clamp(15px, 1.3vw, 21px); font-weight: 600; color: var(--fg); }
-.arch-card.us .a-head { color: var(--accent); }
-.arch-card .a-sub { font-size: clamp(11px, 0.95vw, 15px); color: var(--fg-faint); margin-top: 0.6vh; }
-.arch-card ul { list-style: none; margin-top: 1.8vh; display: flex; flex-direction: column; gap: 1.1vh; }
-.arch-card li {
-  font-size: clamp(12px, 1vw, 16px);
+.arch-card-head {
+  font-size: clamp(20px, 1.9vw, 30px);
+  font-weight: 650;
+  letter-spacing: -0.015em;
+  color: var(--fg);
+}
+.arch-card-tag {
+  font-size: clamp(14px, 1.15vw, 18px);
+  color: var(--fg-faint);
+  margin-top: 0.9vh;
+}
+.arch-list {
+  margin-top: 2.6vh;
+  display: flex;
+  flex-direction: column;
+  gap: 1.4vh;
+}
+.arch-list div {
+  font-size: clamp(16px, 1.35vw, 21px);
   color: var(--fg-dim);
   line-height: 1.4;
-  display: flex;
-  gap: 0.7vw;
-  align-items: flex-start;
 }
-.arch-card li .mk { flex: none; font-weight: 700; }
-.arch-card li .mk.no { color: var(--fg-faint); }
-.arch-card li .mk.yes { color: var(--good); }
-.arch-card.us li .mk.yes { color: var(--accent); }
-.arch-card li b { color: var(--fg); font-weight: 600; }
+.arch-list b { color: var(--fg); font-weight: 650; }
+.arch-card--legacy .arch-list b { color: var(--fg-dim); }
+.arch-callout {
+  width: min(100%, 940px);
+  margin-top: 2.4vh;
+  padding: 1.2vh 1.6vw;
+  border: 1px solid rgba(247, 148, 29, 0.52);
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--fg-dim);
+  font-size: clamp(14px, 1.15vw, 18px);
+  line-height: 1.35;
+  text-align: center;
+}
+.arch-callout-label {
+  color: var(--accent);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
 
 /* ------------------------------------------------------------------ */
 /*  Responsive fallbacks                                               */
@@ -1551,21 +1587,26 @@ body.demo-live .progress { opacity: 0; }
   justify-self: center;
   margin: 0;
   text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
 }
 .award-photo img {
   display: block;
   width: auto;
-  height: min(62vh, 620px);
+  height: min(54vh, 500px);
   max-width: 100%;
   object-fit: contain;
   border: 1px solid var(--card-border);
   border-radius: 18px;
 }
 .award-photo figcaption {
-  margin-top: 1vh;
+  margin: 1vh auto 0;
+  width: fit-content;
   color: var(--fg-dim);
   font-size: clamp(12px, 1vw, 15px);
   letter-spacing: 0.04em;
+  text-align: center;
 }
 @media (max-height: 760px) {
   .slide { padding-top: 4vh; padding-bottom: 6vh; }
@@ -1599,7 +1640,26 @@ body.demo-live .progress { opacity: 0; }
     transform-origin: top center;
     margin-bottom: -70px;
   }
-  .slide--proof .proof-split { transform: scale(0.68); margin-bottom: -125px; }
+  .slide--proof .proof-split { transform: none; margin-bottom: 0; }
   .slide--how .loop { transform: none; margin-bottom: 0; }
   .slide--how .loop .node { padding-top: 0.55vh; padding-bottom: 0.55vh; }
 }
+
+  @media (max-width: 900px) {
+    .proof-split {
+      grid-template-columns: 1fr;
+      gap: 2vh;
+    }
+    .proof-right {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 2vw;
+      padding-top: 0;
+    }
+    .proof-stat {
+      align-items: center;
+    }
+    .proof-stat .cap {
+      font-size: clamp(11px, 1.6vw, 14px);
+    }
+  }

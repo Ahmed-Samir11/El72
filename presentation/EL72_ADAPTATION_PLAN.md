@@ -131,7 +131,7 @@ El72 keeps the **exact same spine** but swaps the subject from "PR review agent"
 | 12b | Selection (Thompson Sampling) | **Deal scoring** (tech 2/4) | Beta-posterior/Thompson → **Deal Quality Score 0–100** with the real weights: historical discount (35), percentile (25), cross-store advantage (20), historical low (15), duration (5), **suspicious-discount penalty (−30)**. Grades 80→Excellent … 0→No deal. | `deal_scorer.py` |
 | 13 | The Confidence Gate | **Fake-discount detection** (tech 3/4) | Confidence/ECE → **The suspicious-discount signal**: reference price ≥10% above median, current <8% below median, competitors ≥3% cheaper, not near historical min, recent spike ≥10%. "A signal, not a fraud verdict." | `fake_discount.py` |
 | 14 | Self-Improve | **Cross-store intelligence** (tech 4/4) | Prompt mutation → **cross-store comparison**: cheapest/most expensive store, market min/max/avg, spread, historical-low status (market-wide + per-store). "The data no single store will show you." | `cross_store.py` |
-| 15 | The Whole Story (business) | **The business case** | Pipeline + compounding → **Revenue streams**: `.pipeline` = user → tracker → verified deal → **WhatsApp** → purchase. `.compound-row` = (a) **Credits** (pay-as-you-track), (b) **Fast-Lane** (zero-delay), (c) **B2B demand data** (highest margin). Footnote: WhatsApp utility rate keeps cost ~$0.0036/msg. | `business_research.md` |
+| 15 | The Whole Story (business) | **The business case** | Pipeline + compounding → **Revenue streams**: `.pipeline` = user → credits → verified deal → **WhatsApp** → purchase/affiliate attribution. `.compound-row` = (a) **Tracking credits** (3 free, then 10 for 30 EGP or 30 for 90 EGP), (b) **Affiliate revenue** (allowlisted merchant redirects), (c) **B2B demand data** (highest-margin expansion). Footnote: WhatsApp utility rate keeps cost ~$0.0036/msg. | `business_research.md`, `ENGINEER_B_STATUS.md` |
 | 16 | Responsible AI | **Cost & trust by design** | Principle→code table → **Principle → real code**: cost control (utility-rate templates, rate limiting → `billing`/`notification`), trust (fake-discount penalty → `fake_discount.py`), data sovereignty (local TimescaleDB/Postgres), transparency (every alert is explainable → `deal_scorer.py` reasons). | none |
 | 17 | The Numbers | **The numbers** | 105 tests / 1 GPU / 3 min / 8192 → **7** microservices · **30s** scrape interval · **4** store scrapers · **97%** test coverage · **$0.0036** per alert. | `README`, `platform_metrics` |
 | 18 | Roadmap | **Roadmap** | Pilot/Tune/Extend → **Phase 1 (done)**: auth, scraping, ML detection, WhatsApp. **Phase 2**: billing/credits, analytics dashboard, mobile companion, multi-language (Arabic/RTL). **Next**: LSTM/GAN models, multi-region, rate limiting. | `README` roadmap |
@@ -230,7 +230,8 @@ it recolors for free. Only the **data** changes.
 
 - HGM voice: research, "the loop," "your team's feedback," ICLR/HGM.
 - El72 voice: **product + market + money.** Lead with the consumer pain (fake discounts),
-  the moat (cross-store + verification + WhatsApp), and the revenue (credits, fast-lane,
+  the moat (cross-store + verification + WhatsApp), and the revenue (credits, affiliate
+  attribution,
   B2B data).
 - Keep the deck's signature moves: one idea per slide, huge numbers, a "killer" comparison
   slide (vs. the field), and a business-case close.

@@ -6,7 +6,7 @@ The day-of checklist for presenting the El72 deck. Runtime ≈ 13 minutes + Q&A.
 
 ## Pre-flight (the night before)
 
-- [ ] Open `index.html` in Chrome/Edge, full-screen. Verify all 24 slides
+- [ ] Open `index.html` in Chrome/Edge, full-screen. Verify all 19 slides
       render, the intro plays, and the charts animate.
 - [ ] Confirm the **placeholder numbers** are acceptable, or swap in real
       values in `js/data.js` + `index.html`.
@@ -39,10 +39,10 @@ The day-of checklist for presenting the El72 deck. Runtime ≈ 13 minutes + Q&A.
 | 2:00 | 6 | **Demo.** Enter/→ to start; narrate the clip. |
 | 4:00 | 7–8 | Proof + scale. Point at the charts. |
 | 5:30 | 9–11 | Trust + the two objection slides. |
-| 7:00 | 12–17 | How it works + the four engines. |
-| 9:30 | 18–20 | Business case + cost + numbers. |
-| 11:00 | 21–22 | Roadmap + close. |
-| 12:00 | 23 | Team + Q&A. |
+| 7:00 | 12–15 | How it works + the two AI engines. |
+| 8:45 | 16–18 | Quality harness + funding + business case. |
+| 10:15 | 17–18 | Roadmap + close. |
+| 11:00 | 19 | Team + Q&A. |
 
 ---
 

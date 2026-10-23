@@ -106,30 +106,13 @@
       if (reward) tl.fromTo(reward, { boxShadow: "0 0 0 0 rgba(10,132,255,0)" }, { boxShadow: "0 0 0 10px rgba(10,132,255,0.28)", duration: 0.5, yoyo: true, repeat: 3, ease: "sine.inOut" }, ">-0.1");
     },
 
-    "The Reward Function": function (tl, s) {
-      tl.from($$(s, ".weight-cell"), { y: 30, opacity: 0, duration: 0.5, stagger: 0.1, ease: "back.out(2)" }, 0.4);
-      $$(s, ".weight-cell .v").forEach(function (v, i) { countUp(tl, v, 0.45 + i * 0.1, 0.8); });
-      tl.from($$(s, ".worked .w-line"), { x: -14, opacity: 0, duration: 0.35, stagger: 0.18 }, 0.9);
-      $$(s, ".worked .res").forEach(function (r) { countUp(tl, r, 1.5, 0.9); });
+    "AI Deal Intelligence": function (tl, s) {
+      tl.from($$(s, ".tech-col"), { y: 24, opacity: 0, duration: 0.5, stagger: 0.16, ease: EASE }, 0.35);
+      tl.from($$(s, ".worked"), { x: 18, opacity: 0, duration: 0.4 }, 0.95);
     },
 
-    "Selection": function (tl, s) {
-      tl.from($$(s, ".worked"), { y: 30, opacity: 0, duration: 0.5, stagger: 0.2, ease: EASE }, 0.4);
-      $$(s, ".worked .res").forEach(function (r) { countUp(tl, r, 0.6, 1.0); });
-      var scale = s.querySelector(".scale-line b");
-      if (scale) {
-        // "800 evals · 56 prompt variants" — two numbers in one line.
-        var final = scale.textContent, o = { a: 0, b: 0 };
-        tl.to(o, { a: 800, b: 56, duration: 1.2, ease: "power2.out", onUpdate: function () {
-          scale.textContent = Math.round(o.a) + " evals · " + Math.round(o.b) + " prompt variants";
-        } }, 0.9);
-        active.restore.push(function () { scale.textContent = final; });
-      }
-    },
-
-    "The Confidence Gate": function (tl, s) {
+    "AI Confidence Gate": function (tl, s) {
       tl.from($$(s, ".formula"), { opacity: 0, y: 20, duration: 0.5, stagger: 0.15 }, 0.35);
-      $$(s, ".res").forEach(function (r) { countUp(tl, r, 0.8, 1.0); });
       tl.from($$(s, ".worked"), { opacity: 0, y: 20, duration: 0.5 }, 1.0);
     },
 

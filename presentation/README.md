@@ -15,7 +15,7 @@ deliver. The accent is **orange** (`#f7941d`), matching the El72 logo.
 
 | Path | What it is |
 |------|-----------|
-| `index.html` | **The deck** — 24 slides, Apple dark theme, orange accent. Opens on a 13-second El72 motion intro, the charts animate in, and the demo slide embeds the live El72 app (recorded-hybrid: swap the iframe for a pre-recorded clip of the scrape → detect → WhatsApp flow). The last slide introduces the three-person team (headshots in `assets/team/`). |
+| `index.html` | **The deck** — 19 slides, Apple dark theme, orange accent. Opens on a 13-second El72 motion intro, the charts animate in, and the demo slide embeds the live El72 app (recorded-hybrid: swap the iframe for a pre-recorded clip of the scrape → detect → WhatsApp flow). The last slide introduces the three-person team (headshots in `assets/team/`). |
 | `css/apple-theme.css` | Apple design language (SF Pro, `#000`/`#f5f5f7`/`#f7941d`, hairlines). |
 | `js/deck.js` | Minimal offline slide engine (keyboard + click + hash nav). |
 | `js/data.js` | Embeds the (placeholder) volume + detection data and renders the two charts. |
@@ -34,7 +34,7 @@ deliver. The accent is **orange** (`#f7941d`), matching the El72 logo.
 
 ---
 
-## The 24-slide spine
+## The 19-slide spine
 
 1. Cold open — "It takes **30 seconds**."
 2. The graveyard of stale prices.
@@ -49,16 +49,14 @@ deliver. The accent is **orange** (`#f7941d`), matching the El72 logo.
 11. **vs. the field** — the three objections, answered.
 12. How it works — the pipeline.
 13. Where the intelligence sits.
-14. Anomaly detection (MAD + Isolation Forest).
-15. Deal scoring (92/100).
-16. Fake-discount detection.
-17. Cross-store intelligence.
-18. The business case.
-19. **Cost & trust** — ~$0.0036 per alert.
-20. **The numbers** — placeholder, labelled.
-21. Roadmap.
-22. Close.
-23. The team (3 people).
+14. AI deal intelligence — anomaly detection + evidence scoring.
+15. AI confidence gate — cross-store context + fake-discount suppression.
+16. Quality harness + DevOpsDays award.
+17. Athar Accelerator funding.
+16. Business case.
+17. Roadmap.
+18. Close.
+19. The team (3 people).
 
 ---
 

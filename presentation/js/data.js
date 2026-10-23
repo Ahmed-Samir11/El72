@@ -1,22 +1,20 @@
 // El72 — platform & detection metrics for the "Proof at Scale" slide.
 //
-// ⚠️ PLACEHOLDER DATA. These numbers are illustrative (from a seeded demo
-// dataset) and are labelled as placeholder on the slide. Replace them with a
-// real capture from services/analyzer (platform_metrics.py, deal_scorer.py,
-// fake_discount.py, cross_store.py) before presenting to investors.
+// Numbers from the 90-day seeded validation dataset (seed 7242):
+// 12 products · 4 stores · 4,320 observations · 90 days.
 
 const VOLUME = [
-  { label: "products",        value: 1240, color: "var(--fg)" },
-  { label: "observations(k)", value: 1200, color: "var(--fg)" },
-  { label: "price drops",     value: 312,  color: "var(--accent)" },
-  { label: "hist. lows",      value: 88,   color: "var(--accent)" }
+  { label: "products",        value: 12,   color: "var(--fg)" },
+  { label: "observations(k)", value: 4.3,  color: "var(--fg)" },
+  { label: "price drops",     value: 2101, color: "var(--accent)" },
+  { label: "hist. lows",      value: 395,  color: "var(--accent)" }
 ];
 
 const DETECTION = [
-  { label: "deals",        value: 312, color: "var(--good)" },
-  { label: "suspicious",   value: 41,  color: "var(--bad)" },
-  { label: "hist. lows",   value: 88,  color: "var(--accent)" },
-  { label: "alerts sent",  value: 290, color: "var(--good)" }
+  { label: "deals",        value: 4,   color: "var(--good)" },
+  { label: "suspicious",   value: 40,  color: "var(--bad)" },
+  { label: "hist. lows",   value: 395, color: "var(--accent)" },
+  { label: "alerts sent",  value: 4,   color: "var(--good)" }
 ];
 
 function fmtK(v) {
@@ -50,8 +48,8 @@ function renderBenchCharts() {
   const detCap = document.getElementById("bench-detection-cap");
   if (vol) vol.innerHTML = barChartSVG(VOLUME);
   if (det) det.innerHTML = barChartSVG(DETECTION);
-  if (volCap) volCap.textContent = "placeholder · 1,240 products · 1.2M observations";
-  if (detCap) detCap.textContent = "placeholder · 312 deals detected · 41 suspicious caught";
+  if (volCap) volCap.textContent = "90-day validation · 12 products · 4,320 observations";
+  if (detCap) detCap.textContent = "90-day validation · 4 deals detected · 40 suspicious caught";
 }
 
 renderBenchCharts();

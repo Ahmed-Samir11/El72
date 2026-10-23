@@ -1,7 +1,7 @@
 # El72 Deck — Strategy
 
 The investor/product story for **El72 / El72**: real-time price tracking and
-deal detection for Egypt. The deck is 24 slides, one idea per slide, Apple dark
+deal detection for Egypt. The deck is 19 slides, one idea per slide, Apple dark
 theme with an **orange** accent. Runtime ≈ 12–14 minutes + Q&A.
 
 **The through-line:** the market is full of fake discounts; El72 verifies every
@@ -10,7 +10,7 @@ seconds — on your infrastructure, at near-zero cost.
 
 ---
 
-## The 24-slide spine (with the job of each)
+## The 19-slide spine (with the job of each)
 
 | # | Slide | Job |
 |---|-------|-----|
@@ -27,16 +27,14 @@ seconds — on your infrastructure, at near-zero cost.
 | 11 | **vs. the field** | Objections #2 and #3, answered. |
 | 12 | How it works | The pipeline diagram. |
 | 13 | Where the intelligence sits | The four engines in the analyzer. |
-| 14 | Anomaly detection | MAD + Isolation Forest, in plain English. |
-| 15 | Deal scoring | The 0–100 score → DEAL/WATCH/IGNORE. |
-| 16 | Fake-discount detection | The 4 checks that catch bait-and-switch. |
-| 17 | Cross-store intelligence | Cheapest of N stores + B2B signals. |
-| 18 | The business case | Why it wins on every axis. |
-| 19 | **Cost & trust** | ~$0.0036/alert + the trust line. |
-| 20 | **The numbers** | The placeholder metrics, labelled. |
-| 21 | Roadmap | Where it's going. |
-| 22 | Close | The ask / the vision. |
-| 23 | The team (3 people) | Ahmed Samir, Mohammed Hany, Loay Medhat. |
+| 14 | AI deal intelligence | MAD + Isolation Forest become an explainable evidence score. |
+| 15 | AI confidence gate | Cross-store context and fake-discount suppression decide whether to alert. |
+| 16 | Quality harness + award | Production discipline and external proof. |
+| 17 | Athar funding | External validation and infrastructure runway. |
+| 16 | Business case | Credits, affiliate attribution, B2B expansion, and utility-rate economics. |
+| 17 | Roadmap | Product depth and intelligence expansion. |
+| 18 | Close | Value, next steps, and the ask. |
+| 19 | The team (3 people) | Ahmed Samir, Mohammed Hany, Loay Medhat. |
 
 ---
 
@@ -65,7 +63,16 @@ them with real values from:
 - `services/analyzer/ml_detector.py` — anomaly detection precision.
 - `docs/platform_metrics.md` — volume, latency, cost.
 
-The one number to lead with: **~$0.0036 per alert** (WhatsApp utility rate).
+The current revenue story to lead with:
+- **Tracking credits:** 3 free credits, then 10 credits for 30 EGP or 30 credits
+  for 90 EGP. One credit tracks one item for one week.
+- **Affiliate attribution:** allowlisted Amazon Egypt, Noon, and Jumia redirects
+  attribute purchases without charging the user an extra fee.
+- **B2B demand intelligence:** anonymized and aggregated demand signals for
+  retailers and distributors; this is the higher-margin expansion.
+
+The operating-cost proof point remains **~$0.0036 per alert** (WhatsApp utility
+rate, approximately 0.17 EGP/message).
 
 ---
 
@@ -77,10 +84,10 @@ The one number to lead with: **~$0.0036 per alert** (WhatsApp utility rate).
 - 2:00–4:00 — **demo** (slide 6) — narrate the recorded clip.
 - 4:00–5:30 — proof + scale (slides 7–8).
 - 5:30–7:00 — trust + objections (slides 9–11).
-- 7:00–9:30 — how it works + the four engines (slides 12–17).
-- 9:30–11:00 — business case + cost + numbers (slides 18–20).
-- 11:00–12:00 — roadmap + close (slides 21–22).
-- 12:00+ — team + Q&A (slide 24).
+- 7:00–8:45 — how it works + the two AI engines (slides 12–15).
+- 8:45–10:15 — quality harness, funding, and current business model (slides 16–18).
+- 10:15–11:00 — roadmap + close.
+- 11:00+ — team + Q&A (slide 19).
 
 ---
 
@@ -90,7 +97,9 @@ The one number to lead with: **~$0.0036 per alert** (WhatsApp utility rate).
   price-below-baseline, fake "was" price, spike-then-drop, too-good-to-be-true.
 - **How accurate is the deal score?** Placeholder — replace with the real
   precision/recall from `deal_scorer.py` tests.
-- **What's the cost per user?** ~$0.0036 per WhatsApp alert (utility rate).
+- **What's the cost per user?** Tracking is credit-based: 3 free, then 10
+  credits for 30 EGP or 30 for 90 EGP. Each credit tracks one item for one
+  week; utility alerts cost about $0.0036 each.
 - **What's the moat?** The cross-store + B2B intelligence layer and the
   fake-discount filtering — not the scraping.
 - **Can it scale to more stores?** Yes — the scraper is pluggable; the

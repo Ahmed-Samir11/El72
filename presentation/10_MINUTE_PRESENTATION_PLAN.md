@@ -1,6 +1,6 @@
 # El72 — 10-Minute Presentation Plan
 
-**Objective:** Fit the existing 24-slide deck into a tight 10-minute window while explicitly addressing all five evaluation criteria.
+**Objective:** Fit the existing 19-slide deck into a tight 10-minute window while explicitly addressing all five evaluation criteria.
 
 **Total Runtime:** 10 minutes (600 seconds) + Q&A
 
@@ -16,13 +16,13 @@
 | 0:45–1:30 | **Solution Reveal** | 3–5 | Name, one-liner, trust line, and the single-pipeline architecture. |
 | 1:30–2:45 | **Live Demo** | 6 | Narrated scrape → detect → deal → WhatsApp flow (or fallback replay). |
 | 2:45–4:00 | **Proof & Trust** | 7–9 | One real graded drop, fake-discount detection, trust made real. |
-| 4:00–5:00 | **Responsible AI Principles (30%)** | 10–16 | **Criterion 1** — fairness, transparency, privacy, responsible AI. |
-| 5:00–5:45 | **Innovation & Technical Excellence (25%)** | 12–17 | **Criterion 2** — originality, ML quality, technical architecture. |
-| 5:45–6:45 | **Social Impact & Inclusivity (25%)** | 17–18 | **Criterion 3** — real-world problem, diverse communities, WhatsApp-native. |
-| 6:45–7:15 | **Feasibility & Scalability (15%)** | 18–21 | **Criterion 4** — practicality, resources, scaling path. |
-| 7:15–8:00 | **Business Case & Cost (5%)** | 18–20 | **Criterion 5** — clarity, communication, documentation. |
-| 8:00–8:45 | **Roadmap & Close** | 21–22 | Where it's going; the ask. |
-| 8:45–10:00 | **Team & Q&A** | 23 | Introduce team; open for questions. |
+| 4:00–5:00 | **Responsible AI Principles (30%)** | 9–15 | **Criterion 1** — fairness, transparency, privacy, responsible AI. |
+| 5:00–5:45 | **Innovation & Technical Excellence (25%)** | 10–15 | **Criterion 2** — originality, ML quality, technical architecture. |
+| 5:45–6:45 | **Social Impact & Inclusivity (25%)** | 16–18 | **Criterion 3** — real-world problem, diverse communities, WhatsApp-native. |
+| 6:45–7:15 | **Feasibility & Scalability (15%)** | 16–17 | **Criterion 4** — practicality, resources, scaling path. |
+| 7:15–8:00 | **Business Case & Cost (5%)** | 18 | **Criterion 5** — clarity, communication, documentation. |
+| 8:00–8:45 | **Roadmap & Close** | 17–18 | Where it's going; the ask. |
+| 8:45–10:00 | **Team & Q&A** | 19 | Introduce team; open for questions. |
 
 ---
 
@@ -52,7 +52,7 @@
 
 ---
 
-### Criterion 2: Innovation & Technical Excellence (25%) — ~50 seconds (slides 12–17)
+### Criterion 2: Innovation & Technical Excellence (25%) — ~50 seconds (slides 10–15)
 
 **Key message:** The innovation is not scraping; it's **cross-store intelligence + verification + WhatsApp-native distribution** — plus a **self-built quality harness** that lets a 3-person team ship at enterprise-grade rigor.
 
@@ -76,7 +76,7 @@
 
 ---
 
-### Criterion 3: Social Impact & Inclusivity (25%) — ~60 seconds (slides 17–18)
+### Criterion 3: Social Impact & Inclusivity (25%) — ~60 seconds (slides 9, 16, 18)
 
 **Key message:** El72 solves a concrete Egyptian-market problem using the channel everyone already uses.
 
@@ -86,7 +86,7 @@
 
 2. **Inclusivity via WhatsApp (slide 19):** In Egypt, WhatsApp is universal; email open rates are low. We deliver alerts via WhatsApp Business API at the utility rate (~$0.0036/msg ≈ 0.17 EGP) — 30x cheaper than marketing templates. This makes the service accessible to users who would never pay for SMS or email alerts.
 
-3. **Diverse communities (slide 6, 18):** The credit/pay-as-you-track model mimics Fakka recharge behavior — zero commitment, absolute control. Free tier tracks low-ticket items; tiered pricing scales with item value (free: <5,000 EGP; mid: <25,000 EGP; premium: high-ticket). Anyone can participate regardless of budget.
+3. **Diverse communities (slide 6, 18):** The credit/pay-as-you-track model mimics Fakka recharge behavior — zero commitment, absolute control. Everyone starts with 3 free credits; paid packages are 10 credits for 30 EGP or 30 credits for 90 EGP. Anyone can participate without a subscription.
 
 4. **Trust for the skeptical (slide 9):** Egyptian consumers are skeptical of automated platforms. Our four fake-discount checks and deal-quality scoring build trust by filtering out scams before they reach the user.
 
@@ -96,7 +96,7 @@
 
 ---
 
-### Criterion 4: Feasibility & Scalability (15%) — ~30 seconds (slides 18–21)
+### Criterion 4: Feasibility & Scalability (15%) — ~30 seconds (slides 16–17)
 
 **Key message:** The system is already built, tested, and designed to scale horizontally.
 
@@ -104,7 +104,7 @@
 
 1. **Practical implementation (slide 5, 12):** MVP is complete — 4 stores (Amazon, Noon, Jumia), 30-second scrape intervals, 4 alert types, full test suite. Docker Compose deployment is one command.
 
-2. **Resources available (slide 23):** Three engineers, existing codebase, open-source stack (Python, FastAPI, PostgreSQL, TimescaleDB, Redis, Playwright, scikit-learn). No proprietary dependencies.
+2. **Resources available (slide 19):** Three engineers, existing codebase, open-source stack (Python, FastAPI, PostgreSQL, TimescaleDB, Redis, Playwright, scikit-learn). No proprietary dependencies.
 
 3. **Scalability path (slide 21):**
    - Horizontal: multiple monitor instances
@@ -113,7 +113,7 @@
    - Pluggable scraper pattern — add new stores by implementing `BaseScraper`
    - Store-agnostic analyzer — ML works regardless of store
 
-4. **Revenue feasibility (slide 18–20):** Credits model + affiliate commissions + B2B data feed. WhatsApp utility rates keep margins high. Paymob integration for local payments (Vodafone Cash, Fawry, InstaPay).
+4. **Revenue feasibility (slide 16):** Implemented credits model + affiliate attribution + B2B demand-data expansion. WhatsApp utility rates keep margins high. Paymob supports local payments.
 
 **Judge-facing summary sentence:** *"It's not a concept — it's running code with tests. Scaling means adding instances and scrapers, not rebuilding the architecture."*
 
@@ -154,18 +154,18 @@
 > "The innovation isn't scraping — it's cross-store intelligence plus verification. Isolation Forest detects anomalies. A 0–100 deal score combines drop magnitude, history, and cross-store comparison. We know which store has the real best price — no single store will tell you that. **We also built our own PR review agent** — an automated LLM reviewer that runs on every pull request, enforcing our architecture boundaries and catching issues before merge. It's pushed our code quality to the maximum a 3-person team can do. And we won **2nd place at DevOpsDays Cairo Hackathon**, external validation of our architecture. 97% test coverage, async throughout, idempotent writes, AES-256 PII encryption."
 
 ### 5:45–6:45 | Social Impact & Inclusivity (Slides 17–18) **[25% of score]**
-> "WhatsApp is universal in Egypt. We deliver at utility rates — 30x cheaper than marketing. Our credit model mimics Fakka recharge: zero commitment, track what you can afford. Free tier for low-ticket items; tiered pricing scales with value. We build trust for skeptical consumers by filtering scams before they reach you."
+> "WhatsApp is universal in Egypt. We deliver at utility rates — about 30x cheaper than marketing. Our credit model mimics Fakka recharge: 3 free credits, then 10 for 30 EGP or 30 for 90. There is no subscription commitment. We build trust for skeptical consumers by filtering scams before they reach them."
 
 ### 6:45–7:15 | Feasibility & Scalability (Slides 18–21) **[15% of score]**
 > "This is running code, not a slideware. Docker Compose deploys it in one command. Three engineers, open-source stack. Scale horizontally: more monitor instances, Redis Cluster, read replicas. New stores plug in via the BaseScraper pattern. Revenue from credits, affiliates, and B2B data — all feasible today."
 
 ### 7:15–8:00 | Business Case & Cost (Slides 18–20) **[5% of score]**
-> "Cost per alert: $0.0036. Revenue model: pay-as-you-track credits, affiliate commissions on verified deals, and anonymized B2B demand intelligence for Egyptian retailers. The numbers are real — we'll swap in verified metrics from our test suite before presenting."
+> "Cost per alert is about $0.0036 for a utility WhatsApp message. The current revenue model is implemented pay-as-you-track credits — 3 free, then 10 for 30 EGP or 30 for 90 — with affiliate attribution on verified purchases. The higher-margin expansion is anonymized B2B demand intelligence for retailers and distributors."
 
 ### 8:00–8:45 | Roadmap & Close (Slides 21–22)
-> "Phase one is done. Phase two: billing, price-history charts, mobile app with real API integration. The vision: El72 becomes the trusted deal layer for Egypt's e-commerce market — verified, WhatsApp-native, and affordable."
+> "Phase one is done, including credits, Paymob billing, and affiliate attribution. Phase two adds the analytics dashboard, price-history views, mobile companion, Arabic/RTL, and broader store coverage. The vision: El72 becomes the trusted deal layer for Egypt's e-commerce market — verified, WhatsApp-native, and affordable."
 
-### 8:45–10:00 | Team & Q&A (Slide 23)
+### 8:45–10:00 | Team & Q&A (Slide 19)
 > "Ahmed Samir, Mohammed Hany, Loay Medhat. Three engineers who built this because the market needed a verifier, not another comparison tool. We're ready for your questions."
 
 ---
@@ -176,7 +176,7 @@
 |----------|--------|
 | **How do you catch fake discounts?** | Four checks in `fake_discount.py`: price-below-baseline, fake "was" price, spike-then-drop, too-good-to-be-true. Plus historical percentile comparison. |
 | **How accurate is the deal score?** | Placeholder — precision/recall from `deal_scorer.py` tests. We grade objectively; users decide. |
-| **What's the cost per user?** | ~$0.0036 per WhatsApp alert (utility rate). Rate-limited to one alert/item/day. |
+| **What's the cost per user?** | Tracking is credit-based: 3 free, then 10 credits for 30 EGP or 30 for 90 EGP. Each credit tracks one item for one week; utility alerts cost about $0.0036 each. |
 | **What's the moat?** | Cross-store intelligence + B2B signals + fake-discount filtering — not the scraping. Any store can add a notify button; none can replicate our verification layer. |
 | **Can it scale to more stores?** | Yes — pluggable scraper pattern; analyzer is store-agnostic. Horizontal scaling via multiple monitor instances. |
 
