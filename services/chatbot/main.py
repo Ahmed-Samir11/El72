@@ -263,6 +263,7 @@ async def send_message(
     intent_result = await search_service.search_with_intent(chat_request.message)
     query = intent_result["display_query"]
     max_price = intent_result["max_price"]
+    min_price = intent_result.get("min_price")
     results = intent_result["results"]
     language = intent_result["language"]
     _active_search_results[session_id] = results
@@ -272,11 +273,16 @@ async def send_message(
         _save_search_result(db, session_id, result)
 
     # Build bot response
-    price_filter = (
-        format_message("price_filter", language, max_price=max_price)
-        if max_price is not None
-        else ""
-    )
+    if min_price is not None and max_price is not None:
+        price_filter = format_message(
+            "price_range", language, min_price=min_price, max_price=max_price
+        )
+    elif min_price is not None:
+        price_filter = format_message("price_min", language, min_price=min_price)
+    elif max_price is not None:
+        price_filter = format_message("price_filter", language, max_price=max_price)
+    else:
+        price_filter = ""
     if not results:
         bot_message = format_message(
             "empty_query" if not query else "no_results",

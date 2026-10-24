@@ -61,10 +61,15 @@ LLM_EXTRA_BODY: Dict[str, Any] = (
 # Crawl4AI Configuration
 CRAWL_TIMEOUT = 30
 CRAWL_WAIT_FOR = "networkidle"
-MAX_TOKENS_EXTRACTION = 1500
+# Product titles and URLs on laptop/PC stores are long; a full answer needs
+# up to ~2000 tokens. A cut-off response is salvaged (complete products
+# kept), but the budget should normally fit the whole answer.
+MAX_TOKENS_EXTRACTION = 2500
+# Characters of page text sent to the LLM per store.
+LLM_INPUT_CHARS = 8000
 # Cap on products extracted per store page, keeping LLM output (and latency)
 # bounded.
-MAX_PRODUCTS_PER_STORE = 10
+MAX_PRODUCTS_PER_STORE = 6
 # Number of top-ranked matches each store contributes to the results.
 MAX_RESULTS_PER_STORE = 3
 # Overall budget for a multi-store search. Stores still pending when it expires
@@ -110,6 +115,10 @@ class SearchResultItem(BaseModel):
     currency: str = "EGP"
     image_url: Optional[str] = None
     in_stock: Optional[bool] = True
+    # Whether this is the kind of product the user searched for. Store pages
+    # pad (or replace, when nothing matches) results with featured items, so
+    # a "laptop" search can surface CPUs and monitors; those are dropped.
+    relevant: Optional[bool] = True
 
     @field_validator("price", mode="before")
     @classmethod
@@ -222,20 +231,43 @@ STORES: List[StoreConfig] = [
 # =============================================================================
 
 
+# An amount like "50000", "50,000", "40k" or "1.5k", optionally followed by a
+# currency. Group 1 is the number, group 2 an optional "k" (thousands).
+_AMOUNT = r"([\d,]+(?:\.\d+)?)\s*(k)?\s*(?:EGP|LE|pounds?)?"
+
+
+def _amount(number: str, k: Optional[str]) -> Optional[float]:
+    """The EGP value of an [_AMOUNT] match, or None if it is not a number."""
+    try:
+        value = float(number.replace(",", ""))
+    except ValueError:
+        return None
+    return value * 1000 if k else value
+
+
+def _remove_span(text: str, match: "re.Match[str]") -> str:
+    """[text] without [match], with whitespace collapsed."""
+    return re.sub(r"\s+", " ", text[: match.start()] + text[match.end() :]).strip()
+
+
 def _parse_english_intent(message: str) -> Dict[str, Any]:
     """Parse a user message into a search query and optional price filter.
 
-    Looks for price-related keywords (under, below, less than, max, etc.)
-    followed by a number. Returns the query (message minus price filter)
-    and an optional max_price.
+    Recognizes a price range ("from 40k to 70k", "between 40000 and 70000",
+    "in the range 40k egp to 70k egp"), a minimum ("over", "above", "more
+    than", "at least"), and a maximum ("under", "below", "less than",
+    "max"). Amounts may use a "k" suffix for thousands. Returns the query
+    (message minus price phrases), min_price and max_price.
 
     Examples:
         "gaming laptop under 50000 EGP"
-            -> {"query": "gaming laptop", "max_price": 50000}
-        "iPhone 15 Pro Max" -> {"query": "iPhone 15 Pro Max", "max_price": None}
-        "Samsung TV below 30000" -> {"query": "Samsung TV", "max_price": 30000}
+            -> {"query": "gaming laptop", "min_price": None, "max_price": 50000}
+        "laptops from 40k to 70k"
+            -> {"query": "laptops", "min_price": 40000, "max_price": 70000}
+        "iPhone 15 Pro Max" -> {"query": "iPhone 15 Pro Max", ...None, None}
     """
     msg = message.strip()
+    min_price: Optional[float] = None
     max_price: Optional[float] = None
     query = msg
 
@@ -251,41 +283,54 @@ def _parse_english_intent(message: str) -> Dict[str, Any]:
     )
     query = re.sub(r"\s+", " ", query).strip()
 
-    # Price filter patterns (case-insensitive)
-    patterns = [
-        r"\bunder\s+([\d,]+)\s*(?:EGP)?\b",
-        r"\bbelow\s+([\d,]+)\s*(?:EGP)?\b",
-        r"\bless than\s+([\d,]+)\s*(?:EGP)?\b",
-        r"\bmax\s+([\d,]+)\s*(?:EGP)?\b",
-        r"\bmaximum\s+([\d,]+)\s*(?:EGP)?\b",
-    ]
+    # A range sets both bounds; its lead-in words ("in the range", "priced
+    # between", "from") are removed along with the amounts.
+    range_match = re.search(
+        r"(?:\b(?:in\s+the\s+)?(?:price\s+)?range(?:\s+of)?\s+|\bpriced\s+|"
+        r"\bbetween\s+|\bfrom\s+)?\b"
+        + _AMOUNT
+        + r"\s*(?:to|and|-|–)\s*"
+        + _AMOUNT
+        + r"(?=\s|$)",
+        query,
+        re.IGNORECASE,
+    )
+    if range_match:
+        low = _amount(range_match.group(1), range_match.group(2))
+        high = _amount(range_match.group(3), range_match.group(4))
+        if low is not None and high is not None:
+            min_price, max_price = _ordered_range(low, high)
+            query = _remove_span(query, range_match)
 
-    for pattern in patterns:
-        match = re.search(pattern, query, re.IGNORECASE)
+    if min_price is None:
+        match = re.search(
+            r"\b(?:over|above|more than|at least|min(?:imum)?)\s+" + _AMOUNT,
+            query,
+            re.IGNORECASE,
+        )
         if match:
-            price_str = match.group(1).replace(",", "")
-            try:
-                max_price = float(price_str)
-            except ValueError:
-                continue
-            # Remove the matched price phrase from the query
-            query = query[: match.start()] + query[match.end() :]
-            query = re.sub(r"\s+", " ", query).strip()
-            break
+            min_price = _amount(match.group(1), match.group(2))
+            query = _remove_span(query, match)
 
-    # If no keyword pattern matched, check for a standalone number at the end
     if max_price is None:
-        standalone = re.search(r"\b([\d,]+)\s*(?:EGP)?\s*$", query, re.IGNORECASE)
+        match = re.search(
+            r"\b(?:under|below|less than|up to|max(?:imum)?)\s+" + _AMOUNT,
+            query,
+            re.IGNORECASE,
+        )
+        if match:
+            max_price = _amount(match.group(1), match.group(2))
+            query = _remove_span(query, match)
+
+    # No keyword: a standalone number at the end is a budget ceiling.
+    if min_price is None and max_price is None:
+        standalone = re.search(r"\b" + _AMOUNT + r"\s*$", query, re.IGNORECASE)
         if standalone:
-            price_str = standalone.group(1).replace(",", "")
-            try:
-                max_price = float(price_str)
-            except ValueError:
-                pass
-            else:
+            max_price = _amount(standalone.group(1), standalone.group(2))
+            if max_price is not None:
                 query = query[: standalone.start()].strip()
 
-    return {"query": query, "max_price": max_price}
+    return {"query": query, "min_price": min_price, "max_price": max_price}
 
 
 def parse_intent(message: str) -> Dict[str, Any]:
@@ -294,12 +339,15 @@ def parse_intent(message: str) -> Dict[str, Any]:
     Contract:
       - "query": The search query in English (what to send to stores).
       - "display_query": The user's original text (for display in UI).
+      - "min_price": Optional float price floor (English ranges/minimums
+        only; the Arabic fallback parses a ceiling only).
       - "max_price": Optional float price ceiling.
       - "language": "ar" or "en".
     """
     language = detect_language(message)
     if language == "ar":
         result = parse_arabic_intent(message)
+        result.setdefault("min_price", None)
         display_query = result["query"]
         result["query"] = translate_query_for_search(result["query"])
         result["search_query"] = result["query"]
@@ -319,18 +367,46 @@ def parse_intent(message: str) -> Dict[str, Any]:
 INTENT_EXTRACTION_PROMPT = """You are a product search assistant for an Egyptian e-commerce platform.
 
 Given the user's message (which may be in Egyptian Arabic, English, or a mix), extract:
-1. "query": The product search query in ENGLISH (translate if needed). Be specific (e.g. "27 inch 2K QHD monitor", not just "monitor").
-2. "max_price": The maximum price in EGP as a number, or null if no price constraint.
-3. "language": "ar" if the message is primarily Arabic, "en" if primarily English.
+1. "query": The product search query in ENGLISH (translate if needed), as a
+   shopper would type it into a store's search box: singular nouns
+   ("laptop", not "laptops"), no prices. Be specific when the user is
+   (e.g. "27 inch 2K QHD monitor").
+2. "min_price": The minimum price in EGP as a number, or null.
+3. "max_price": The maximum price in EGP as a number, or null.
+   "40k" / "40 ألف" means 40000. A range ("from 40k to 70k", "between",
+   "من 40 لـ 70 ألف") sets both; "under"/"أقل من" sets only max_price;
+   "over"/"more than"/"أكتر من" sets only min_price.
+4. "language": "ar" if the message is primarily Arabic, "en" if primarily English.
 
-Respond with ONLY a JSON object: {"query": "...", "max_price": 12000, "language": "ar"}
+Respond with ONLY a JSON object: {"query": "...", "min_price": null, "max_price": 12000, "language": "ar"}
 
 Examples:
-- "عايز شاشات 2k بسعر أقل من 12 ألف" → {"query": "2K monitor", "max_price": 12000, "language": "ar"}
-- "gaming laptop under 50000" → {"query": "gaming laptop", "max_price": 50000, "language": "en"}
-- "Samsung 27 inch 2K QHD" → {"query": "Samsung 27 inch 2K QHD monitor", "max_price": null, "language": "en"}
-- "لابتوب جيمينج ب 30 ألف" → {"query": "gaming laptop", "max_price": 30000, "language": "ar"}
+- "عايز شاشات 2k بسعر أقل من 12 ألف" → {"query": "2K monitor", "min_price": null, "max_price": 12000, "language": "ar"}
+- "gaming laptop under 50000" → {"query": "gaming laptop", "min_price": null, "max_price": 50000, "language": "en"}
+- "laptops in the range 40k egp to 70k egp" → {"query": "laptop", "min_price": 40000, "max_price": 70000, "language": "en"}
+- "Samsung 27 inch 2K QHD" → {"query": "Samsung 27 inch 2K QHD monitor", "min_price": null, "max_price": null, "language": "en"}
+- "لابتوب جيمينج من 30 لـ 45 ألف" → {"query": "gaming laptop", "min_price": 30000, "max_price": 45000, "language": "ar"}
 """
+
+
+def _coerce_price(raw: Any) -> Optional[float]:
+    """A non-negative price from an LLM JSON value, else None."""
+    if raw is None:
+        return None
+    try:
+        price = float(raw)
+    except (ValueError, TypeError):
+        return None
+    return price if price >= 0 else None
+
+
+def _ordered_range(
+    min_price: Optional[float], max_price: Optional[float]
+) -> tuple:
+    """(min, max) with the bounds swapped if given in reverse order."""
+    if min_price is not None and max_price is not None and min_price > max_price:
+        return max_price, min_price
+    return min_price, max_price
 
 
 async def llm_extract_intent(message: str) -> Optional[Dict[str, Any]]:
@@ -359,22 +435,17 @@ async def llm_extract_intent(message: str) -> Optional[Dict[str, Any]]:
             if raw.startswith("json"):
                 raw = raw[4:].strip()
         data = json.loads(raw)
-        # Validate and coerce max_price.
-        raw_price = data.get("max_price")
-        max_price: Optional[float] = None
-        if raw_price is not None:
-            try:
-                max_price = float(raw_price)
-                if max_price < 0:
-                    max_price = None
-            except (ValueError, TypeError):
-                max_price = None
+        min_price, max_price = _ordered_range(
+            _coerce_price(data.get("min_price")),
+            _coerce_price(data.get("max_price")),
+        )
         # Validate language.
         lang = data.get("language", "en")
         if lang not in ("ar", "en"):
             lang = "en"
         return {
             "query": data.get("query", ""),
+            "min_price": min_price,
             "max_price": max_price,
             "language": lang,
         }
@@ -427,7 +498,7 @@ URL: {url or 'unknown'}
                             "content": (
                                 f"{query_hint}"
                                 f"Extract product information from this page "
-                                f"content:\n\n{content[:8000]}"
+                                f"content:\n\n{content[:LLM_INPUT_CHARS]}"
                             ),
                         },
                     ],
@@ -443,11 +514,17 @@ URL: {url or 'unknown'}
                 parsed = json.loads(result)
                 return json.dumps(parsed)
             except json.JSONDecodeError:
-                import re as _re
-
-                json_match = _re.search(r"\{[\s\S]*\}", result)
+                json_match = re.search(r"\{[\s\S]*\}", result)
                 if json_match:
-                    return json_match.group()
+                    try:
+                        json.loads(json_match.group())
+                        return json_match.group()
+                    except json.JSONDecodeError:
+                        pass
+                salvaged = _salvage_products_json(result)
+                if salvaged is not None:
+                    logger.info("Recovered products from truncated LLM JSON")
+                    return salvaged
                 logger.warning(f"Could not parse LLM response as JSON: {result[:200]}")
                 return result
 
@@ -467,17 +544,133 @@ _PRICE_MARKER = re.compile(
 _LISTING_LEAD_CHARS = 1500
 
 
-def _focus_on_listings(content: str) -> str:
-    """Drop the page header/menus that precede the product listings.
+def _fits_budget(
+    price: Optional[float],
+    min_price: Optional[float],
+    max_price: Optional[float],
+) -> bool:
+    """Whether [price] is within the optional [min_price, max_price] range.
 
-    Store pages often start with thousands of characters of navigation, which
-    would otherwise fill the LLM's input window before any product appears.
-    The first price marks where the listings begin.
+    With any bound set, an unpriced item can't be shown to fit, so it is
+    excluded; without bounds every item fits.
     """
-    match = _PRICE_MARKER.search(content)
-    if not match:
+    if min_price is None and max_price is None:
+        return True
+    if price is None or price <= 0:
+        return False
+    if min_price is not None and price < min_price:
+        return False
+    if max_price is not None and price > max_price:
+        return False
+    return True
+
+
+def _focus_on_listings(content: str) -> str:
+    """Move the LLM's input window onto the product listings.
+
+    Store pages often start with thousands of characters of navigation, and
+    menus can carry a few prices of their own (featured products), so the
+    first price is not reliably where the listings begin. The product grid is
+    where prices are densest: start the window just before the first price of
+    the [LLM_INPUT_CHARS]-long stretch that holds the most prices.
+    """
+    positions = [m.start() for m in _PRICE_MARKER.finditer(content)]
+    if not positions:
         return content
-    return content[max(0, match.start() - _LISTING_LEAD_CHARS) :]
+    best_start, best_count = positions[0], 0
+    end = 0
+    for i, start in enumerate(positions):
+        # Two pointers: positions[i:end] all lie within the window at start.
+        end = max(end, i)
+        while end < len(positions) and positions[end] < start + LLM_INPUT_CHARS:
+            end += 1
+        if end - i > best_count:
+            best_start, best_count = start, end - i
+    return content[max(0, best_start - _LISTING_LEAD_CHARS) :]
+
+
+# Product cards put the image, link and title before the price; keep this
+# much text before (and a little after) each in-budget price.
+_CARD_LEAD_CHARS = 700
+_CARD_TAIL_CHARS = 150
+
+
+def _marker_amount(marker: str) -> Optional[float]:
+    """The number in a [_PRICE_MARKER] match, e.g. "EGP 55,799" -> 55799."""
+    m = re.search(r"\d[\d,]*(?:\.\d+)?", marker)
+    if not m:
+        return None
+    try:
+        return float(m.group().replace(",", ""))
+    except ValueError:
+        return None
+
+
+def _focus_on_budget(
+    content: str, min_price: Optional[float], max_price: Optional[float]
+) -> Optional[str]:
+    """Only the parts of the page around prices that fit the budget.
+
+    A store's first results page is sorted by relevance, so most of what
+    fits in the LLM's input window is out of budget (e.g. 90k-280k laptops
+    for a 40k-70k search) while in-budget products sit further down. Cut out
+    the text around each in-budget price (each product's card), merge
+    overlaps, and join them up to [LLM_INPUT_CHARS]. Returns None without a
+    budget or when no price on the page fits, so the caller falls back to
+    the whole listing.
+    """
+    if min_price is None and max_price is None:
+        return None
+    spans: List[List[int]] = []
+    for m in _PRICE_MARKER.finditer(content):
+        amount = _marker_amount(m.group())
+        if not _fits_budget(amount, min_price, max_price):
+            continue
+        start = max(0, m.start() - _CARD_LEAD_CHARS)
+        end = min(len(content), m.end() + _CARD_TAIL_CHARS)
+        if spans and start <= spans[-1][1]:
+            spans[-1][1] = max(spans[-1][1], end)
+        else:
+            spans.append([start, end])
+    if not spans:
+        return None
+    pieces: List[str] = []
+    total = 0
+    for start, end in spans:
+        piece = content[start:end]
+        if total + len(piece) > LLM_INPUT_CHARS and pieces:
+            break
+        pieces.append(piece)
+        total += len(piece) + 5
+    return "\n...\n".join(pieces)
+
+
+def _salvage_products_json(text: str) -> Optional[str]:
+    """Recover the complete products from a truncated extraction response.
+
+    Long product titles/URLs can exhaust the LLM's output budget mid-array,
+    leaving JSON that does not parse. Every product object that was fully
+    written is still usable, so decode them one by one and drop the cut-off
+    tail. Returns a ``{"products": [...]}`` JSON string, or None if no
+    complete product was found.
+    """
+    array = re.search(r'"products"\s*:\s*\[', text)
+    if not array:
+        return None
+    decoder = json.JSONDecoder()
+    products: List[Any] = []
+    pos = array.end()
+    while True:
+        brace = text.find("{", pos)
+        if brace == -1:
+            break
+        try:
+            obj, pos = decoder.raw_decode(text, brace)
+        except json.JSONDecodeError:
+            break  # The truncated last object.
+        if isinstance(obj, dict):
+            products.append(obj)
+    return json.dumps({"products": products}) if products else None
 
 
 # =============================================================================
@@ -527,7 +720,11 @@ class ChatbotSearchService:
             return None
 
     async def _extract_search_results(
-        self, query: str, store: StoreConfig
+        self,
+        query: str,
+        store: StoreConfig,
+        min_price: Optional[float] = None,
+        max_price: Optional[float] = None,
     ) -> Optional[SearchResultsSchema]:
         """Search for products on a specific store and extract results.
 
@@ -544,7 +741,9 @@ class ChatbotSearchService:
         if not content:
             return None
 
-        content = _focus_on_listings(content)
+        content = _focus_on_budget(content, min_price, max_price) or (
+            _focus_on_listings(content)
+        )
 
         try:
             strategy = LMStudioExtractionStrategy(
@@ -605,16 +804,23 @@ class ChatbotSearchService:
         return ranked[0] if ranked else None
 
     async def _search_one_store(
-        self, query: str, store: StoreConfig, max_price: Optional[float] = None
+        self,
+        query: str,
+        store: StoreConfig,
+        max_price: Optional[float] = None,
+        min_price: Optional[float] = None,
     ) -> List[Dict[str, Any]]:
         """Search a single store and return its top matches (may be empty).
 
         The price filter is applied before picking the top matches, so a store
-        whose best match is over budget can still contribute cheaper items.
+        whose best match is outside the budget can still contribute items
+        that fit it.
         """
         async with _search_semaphore:
             try:
-                extracted = await self._extract_search_results(query, store)
+                extracted = await self._extract_search_results(
+                    query, store, min_price=min_price, max_price=max_price
+                )
                 if not extracted or not extracted.products:
                     return []
 
@@ -622,11 +828,9 @@ class ChatbotSearchService:
                     p
                     for p in extracted.products
                     if p.title and p.url
-                    # With a budget, an unpriced item can't be shown to fit it.
-                    and (
-                        max_price is None
-                        or (p.price is not None and 0 < p.price <= max_price)
-                    )
+                    # Featured/suggested items the LLM marked off-topic.
+                    and getattr(p, "relevant", True) is not False
+                    and _fits_budget(p.price, min_price, max_price)
                 ]
                 matches = self._rank_matches(query, candidates)
                 matches = matches[:MAX_RESULTS_PER_STORE]
@@ -661,13 +865,17 @@ class ChatbotSearchService:
                 return []
 
     async def search(
-        self, query: str, max_price: Optional[float] = None
+        self,
+        query: str,
+        max_price: Optional[float] = None,
+        min_price: Optional[float] = None,
     ) -> List[Dict[str, Any]]:
         """Search for products across all stores.
 
         Args:
             query: Product search query
             max_price: Optional maximum price filter
+            min_price: Optional minimum price filter
 
         Returns:
             List of search result dicts, ranked by relevance
@@ -675,7 +883,9 @@ class ChatbotSearchService:
         # Fire concurrent searches across stores (bounded by semaphore), and
         # keep whatever has finished when the deadline expires.
         tasks = [
-            asyncio.ensure_future(self._search_one_store(query, store, max_price))
+            asyncio.ensure_future(
+                self._search_one_store(query, store, max_price, min_price)
+            )
             for store in self.stores
         ]
         done, pending = await asyncio.wait(tasks, timeout=SEARCH_DEADLINE)
@@ -722,6 +932,7 @@ class ChatbotSearchService:
         if llm_intent and llm_intent["query"]:
             query = llm_intent["query"]
             max_price = llm_intent["max_price"]
+            min_price = llm_intent.get("min_price")
             language = llm_intent["language"]
             display_query = message  # Show the user's original text.
         else:
@@ -729,6 +940,7 @@ class ChatbotSearchService:
             intent = parse_intent(message)
             query = intent["search_query"]
             max_price = intent["max_price"]
+            min_price = intent.get("min_price")
             language = intent["language"]
             display_query = intent["display_query"]
 
@@ -737,17 +949,19 @@ class ChatbotSearchService:
                 "query": "",
                 "search_query": "",
                 "display_query": display_query,
+                "min_price": min_price,
                 "max_price": max_price,
                 "results": [],
                 "language": language,
             }
 
-        results = await self.search(query, max_price)
+        results = await self.search(query, max_price, min_price)
 
         return {
             "query": query,
             "search_query": query,
             "display_query": display_query,
+            "min_price": min_price,
             "max_price": max_price,
             "results": results,
             "language": language,
@@ -769,6 +983,16 @@ For each product listing/card on the page, extract:
 4. Currency
 5. Image thumbnail URL
 6. Stock status (if indicated)
+7. "relevant": true only if the product IS the kind of product the user
+   searched for. A search for "laptop" matches laptops/notebooks only, not
+   CPUs, monitors, SSDs, bags or other accessories; a search for "2K
+   monitor" matches monitors, not graphics cards.
+
+Store pages often show "featured", "best seller" or "you may also like"
+products, and when nothing matches the search they show only those. Such
+products are not search results: mark them "relevant": false, or leave them
+out. If the page has no product that matches the search, return an empty
+"products" array.
 
 Also extract pagination info if visible:
 - Total results count
