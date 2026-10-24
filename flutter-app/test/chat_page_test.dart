@@ -90,9 +90,7 @@ void main() {
     expect(find.byType(TextField), findsOneWidget);
   });
 
-  testWidgets('chat survives leaving and returning to the tab', (
-    tester,
-  ) async {
+  testWidgets('chat survives leaving and returning to the tab', (tester) async {
     final container = _container(List.generate(2, _result));
     await tester.pumpWidget(_app(container, const ChatPage()));
 
