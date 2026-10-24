@@ -49,6 +49,8 @@ from services.chatbot.models import (
     HealthResponse,
     SearchResult,
 )
+from services.chatbot.arabic_nlp import detect_language, parse_add_command
+from services.chatbot.i18n import format_message
 from services.chatbot.search_service import ChatbotSearchService
 
 logger = logging.getLogger(__name__)
@@ -178,6 +180,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Singleton search service instance
 search_service = ChatbotSearchService()
+_active_search_results: dict[UUID, list[dict]] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -219,29 +222,71 @@ async def send_message(
     # Save user message
     _save_message(db, session_id, "user", chat_request.message)
 
+    # Arabic add commands act on the latest result set in this session.
+    language = detect_language(chat_request.message)
+    add_index = parse_add_command(chat_request.message) if language == "ar" else None
+    if add_index is not None:
+        cached_results = _active_search_results.get(session_id, [])
+        if 1 <= add_index <= len(cached_results):
+            return await _handle_add_to_feed(
+                AddToFeedRequest(
+                    session_id=session_id,
+                    user_id=user_id,
+                    result_id=cached_results[add_index - 1]["url"],
+                ),
+                db,
+                language=language,
+            )
+        message = format_message("no_search_results", language)
+        _save_message(db, session_id, "bot", message)
+        return ChatResponse(
+            message=message,
+            session_id=session_id,
+            search_results=[],
+            language=language,
+        )
+
     # Parse intent and search
     intent_result = await search_service.search_with_intent(chat_request.message)
-    query = intent_result["query"]
+    query = intent_result["display_query"]
     max_price = intent_result["max_price"]
     results = intent_result["results"]
+    language = intent_result["language"]
+    _active_search_results[session_id] = results
 
     # Save search results to chat_search_results (denormalized for quick reads)
     for result in results:
         _save_search_result(db, session_id, result)
 
     # Build bot response
+    price_filter = (
+        format_message("price_filter", language, max_price=max_price)
+        if max_price is not None
+        else ""
+    )
     if not results:
-        bot_message = (
-            f"I couldn't find any products matching '{query}' "
-            + (f" under {max_price} EGP" if max_price else "")
-            + ". Try a different search term."
+        bot_message = format_message(
+            "empty_query" if not query else "no_results",
+            language,
+            query=query,
+            price_filter=price_filter,
         )
     else:
         count = len(results)
-        price_filter = f" under {max_price} EGP" if max_price else ""
-        bot_message = (
-            f"I found {count} product{'s' if count > 1 else ''} "
-            f"matching '{query}'{price_filter}:"
+        plural = (
+            "s"
+            if language == "en" and count != 1
+            else "ات"
+            if language == "ar" and count > 2
+            else ""
+        )
+        bot_message = format_message(
+            "found_results",
+            language,
+            count=count,
+            plural=plural,
+            query=query,
+            price_filter=price_filter,
         )
 
     # Save bot message
@@ -266,6 +311,7 @@ async def send_message(
         message=bot_message,
         session_id=session_id,
         search_results=search_results,
+        language=language,
     )
 
 
@@ -291,6 +337,7 @@ async def add_to_feed(
             target_price=add_to_feed_request.target_price,
         ),
         db,
+        language="en",
     )
 
 
@@ -457,6 +504,7 @@ def _save_search_result(db: Session, session_id: UUID, result: dict):
 async def _handle_add_to_feed(
     request: AddToFeedRequest,
     db: Session,
+    language: str = "en",
 ) -> ChatResponse:
     """Handle an 'add to feed' action.
 
@@ -487,11 +535,13 @@ async def _handle_add_to_feed(
         ).fetchone()
 
     if not row:
-        _save_message(db, request.session_id, "bot", "No search results found to add.")
+        message = format_message("no_search_results", language)
+        _save_message(db, request.session_id, "bot", message)
         return ChatResponse(
-            message="No search results found to add to your feed.",
+            message=message,
             session_id=request.session_id,
             search_results=[],
+            language=language,
         )
 
     url = row.url
@@ -513,35 +563,27 @@ async def _handle_add_to_feed(
 
             if response.status_code == 402:
                 detail = response.json().get("detail", "Insufficient credits")
+                message = format_message(
+                    "insufficient_credits", language, detail=detail
+                )
                 _save_message(
-                    db,
-                    request.session_id,
-                    "bot",
-                    f"You don't have enough credits to create a tracker: {detail}. "
-                    "Consider upgrading your plan.",
+                    db, request.session_id, "bot", message
                 )
                 return ChatResponse(
-                    message=f"Insufficient credits: {detail}. "
-                    "Upgrade your plan to continue.",
+                    message=message,
                     session_id=request.session_id,
                     search_results=[],
+                    language=language,
                 )
 
             response.raise_for_status()
-            api_result = response.json()
+            response.json()
 
-        _save_message(
-            db,
-            request.session_id,
-            "bot",
-            f"I've added '{title}' to your tracking feed. "
-            f"I'll monitor the price and notify you when it changes.",
-        )
+        message = format_message("added_to_feed", language, title=title)
+        _save_message(db, request.session_id, "bot", message)
 
         return ChatResponse(
-            message=api_result.get(
-                "message", "Added to your tracking feed successfully."
-            ),
+            message=message,
             session_id=request.session_id,
             search_results=[
                 SearchResult(
@@ -555,21 +597,18 @@ async def _handle_add_to_feed(
                     in_stock=True,
                 )
             ],
+            language=language,
         )
 
     except httpx.HTTPError as e:
         logger.error(f"API call failed: {e}")
-        _save_message(
-            db,
-            request.session_id,
-            "bot",
-            "Sorry, I couldn't add this to your feed at the moment. "
-            "Please try again later.",
-        )
+        message = format_message("add_failed", language)
+        _save_message(db, request.session_id, "bot", message)
         return ChatResponse(
-            message="Failed to add to feed. Please try again later.",
+            message=message,
             session_id=request.session_id,
             search_results=[],
+            language=language,
         )
 
 

@@ -17,6 +17,12 @@ from crawl4ai.extraction_strategy import LLMExtractionStrategy
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 
+from services.chatbot.arabic_nlp import (
+    detect_language,
+    parse_arabic_intent,
+    translate_query_for_search,
+)
+
 logger = logging.getLogger(__name__)
 
 # Concurrency limit for multi-store search to avoid overwhelming the client.
@@ -146,7 +152,7 @@ STORES: List[StoreConfig] = [
 # =============================================================================
 
 
-def parse_intent(message: str) -> Dict[str, Any]:
+def _parse_english_intent(message: str) -> Dict[str, Any]:
     """Parse a user message into a search query and optional price filter.
 
     Looks for price-related keywords (under, below, less than, max, etc.)
@@ -198,6 +204,20 @@ def parse_intent(message: str) -> Dict[str, Any]:
                 query = msg[: standalone.start()].strip()
 
     return {"query": query, "max_price": max_price}
+
+
+def parse_intent(message: str) -> Dict[str, Any]:
+    """Parse English or Egyptian Arabic search intent."""
+    language = detect_language(message)
+    if language == "ar":
+        result = parse_arabic_intent(message)
+        result["search_query"] = translate_query_for_search(result["query"])
+    else:
+        result = _parse_english_intent(message)
+        result["search_query"] = result["query"]
+    result["display_query"] = result["query"]
+    result["language"] = language
+    return result
 
 
 # =============================================================================
@@ -472,23 +492,28 @@ class ChatbotSearchService:
             Dict with "query", "max_price", and "results" keys
         """
         intent = parse_intent(message)
-        query = intent["query"]
+        query = intent["search_query"]
         max_price = intent["max_price"]
 
         if not query:
             return {
                 "query": "",
+                "search_query": "",
+                "display_query": intent["display_query"],
                 "max_price": max_price,
                 "results": [],
-                "message": "Please enter a product to search for.",
+                "language": intent["language"],
             }
 
         results = await self.search(query, max_price)
 
         return {
             "query": query,
+            "search_query": query,
+            "display_query": intent["display_query"],
             "max_price": max_price,
             "results": results,
+            "language": intent["language"],
         }
 
 

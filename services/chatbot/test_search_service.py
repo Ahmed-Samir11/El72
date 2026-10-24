@@ -61,6 +61,15 @@ def test_parse_intent_empty_query():
     assert result["max_price"] == 50000.0
 
 
+def test_parse_arabic_intent():
+    """Test Arabic intent includes translated and display queries."""
+    result = parse_intent("عايز شاشات 2k بسعر أقل من 12 ألف")
+    assert result["query"] == "monitors 2k"
+    assert result["display_query"] == "شاشات 2k"
+    assert result["max_price"] == 12000.0
+    assert result["language"] == "ar"
+
+
 @pytest.mark.asyncio
 async def test_search_service_init(search_service):
     """Test that the search service initializes correctly."""

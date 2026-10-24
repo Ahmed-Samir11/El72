@@ -58,6 +58,7 @@ class ChatResponse(BaseModel):
     message: str
     session_id: UUID
     search_results: List[SearchResult] = Field(default_factory=list)
+    language: str = "en"
 
 
 class AddToFeedRequest(BaseModel):
