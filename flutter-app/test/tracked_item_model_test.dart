@@ -41,4 +41,32 @@ void main() {
       expect(item.fetchError, isNull);
     });
   });
+
+  group('TrackedItem.displayName', () {
+    test('prefers the scraped page title', () {
+      final item = TrackedItem.fromJson({
+        'id': 1,
+        'canonical_product_id': 'unknown:item',
+        'title': 'Logitech G102 Lightsync Gaming Mouse',
+      });
+      expect(item.displayName, 'Logitech G102 Lightsync Gaming Mouse');
+    });
+
+    test('falls back to the slug without the store prefix', () {
+      final item = TrackedItem.fromJson({
+        'id': 1,
+        'canonical_product_id': 'elbadr_eg:asus-tuf-gaming-27-inch-monitor',
+      });
+      expect(item.displayName, 'Asus Tuf Gaming 27 Inch Monitor');
+    });
+
+    test('blank title falls back to the slug', () {
+      final item = TrackedItem.fromJson({
+        'id': 1,
+        'canonical_product_id': 'iphone-15-pro',
+        'title': '  ',
+      });
+      expect(item.displayName, 'Iphone 15 Pro');
+    });
+  });
 }

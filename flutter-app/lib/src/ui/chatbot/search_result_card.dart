@@ -1,12 +1,17 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../../l10n/app_localizations.dart';
+import '../../core/format/price_format.dart';
+import '../../core/styles/app_colors.dart';
 import '../../data/models/chat_message_model.dart';
+import '../widgets/product_image.dart';
 
 /// A single product search result with an "Add to Feed" button.
 ///
-/// Tapping "Add to Feed" sends an `add to feed` message to the chatbot,
-/// which creates a tracked item (price monitor) via the API service.
+/// Shows the product image, title, store and price like the tracker/deal
+/// cards. Tapping the card opens the product page; tapping "Add to Feed"
+/// creates a tracked item (price monitor) via the chatbot service.
 class SearchResultCard extends StatelessWidget {
   const SearchResultCard({
     super.key,
@@ -22,27 +27,67 @@ class SearchResultCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context);
+    final colorScheme = Theme.of(context).colorScheme;
+    final locale = Localizations.localeOf(context);
 
     return Card(
-      margin: const EdgeInsets.symmetric(vertical: 8),
-      child: ListTile(
-        leading: result.imageUrl.isNotEmpty
-            ? Image.network(
-                result.imageUrl,
-                width: 60,
-                height: 60,
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => const Icon(Icons.shopping_cart),
-              )
-            : const Icon(Icons.shopping_cart),
-        title: Text(result.title, maxLines: 2, overflow: TextOverflow.ellipsis),
-        subtitle: Text(
-          '${result.storeName} • ${result.price.toStringAsFixed(0)} ${result.currency}',
-          style: Theme.of(context).textTheme.bodySmall,
-        ),
-        trailing: FilledButton(
-          onPressed: isEnabled ? onAddToFeed : null,
-          child: Text(l10n.addToFeed),
+      margin: const EdgeInsets.symmetric(vertical: 6),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () async {
+          final uri = Uri.tryParse(result.url);
+          if (uri == null || !await launchUrl(uri)) {
+            if (!context.mounted) return;
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(l10n.unableToOpen(result.title))),
+            );
+          }
+        },
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            children: [
+              ProductImage(imageUrl: result.imageUrl, size: 64),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      result.title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      result.storeName,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      result.price > 0
+                          ? formatPrice(result.price, locale: locale)
+                          : '—',
+                      style: AppColors.priceTextStyle(
+                        colorScheme.onSurface,
+                      ).copyWith(fontSize: 16, fontWeight: FontWeight.bold),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              FilledButton(
+                onPressed: isEnabled ? onAddToFeed : null,
+                child: Text(l10n.addToFeed),
+              ),
+            ],
+          ),
         ),
       ),
     );

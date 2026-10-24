@@ -22,6 +22,8 @@ from services.api.price_fetcher import (
     _extract_from_html,
     _extract_image_from_imgs,
     _extract_image_from_meta,
+    _extract_main_product_image,
+    _extract_title_from_markup,
     _extract_woocommerce_price,
     _first_image_url,
     _is_blocked_ip,
@@ -822,3 +824,60 @@ class TestSafeFetchError:
 
     def test_short_reasons_are_unchanged(self):
         assert _safe_fetch_error("HTTP 521") == "HTTP 521"
+
+
+# Amazon pages: no og:image, a 1x1 tracking beacon before the product photo.
+_AMAZON_BEACON = '<img src="https://fls-eu.amazon.eg/1/batch/1/OP/A1:2-3:" width="1">'
+
+
+def test_main_product_image_prefers_largest_dynamic_image():
+    html = (
+        _AMAZON_BEACON + '<img alt="Tea" id="landingImage" '
+        'src="https://m.media-amazon.com/images/I/a._AC_SX300_.jpg" '
+        'data-a-dynamic-image="{&quot;https://m.media-amazon.com/images/I/'
+        'a._AC_SX300_.jpg&quot;:[300,300],&quot;https://m.media-amazon.com/'
+        'images/I/a._AC_SL1500_.jpg&quot;:[1500,1500]}">'
+    )
+    assert (
+        _extract_main_product_image(html, "https://www.amazon.eg/dp/X")
+        == "https://m.media-amazon.com/images/I/a._AC_SL1500_.jpg"
+    )
+
+
+def test_main_product_image_prefers_old_hires():
+    html = (
+        '<img id="landingImage" src="https://m.media-amazon.com/s.jpg" '
+        'data-old-hires="https://m.media-amazon.com/big.jpg">'
+    )
+    assert (
+        _extract_main_product_image(html, "https://www.amazon.eg/dp/X")
+        == "https://m.media-amazon.com/big.jpg"
+    )
+
+
+def test_main_product_image_absent_returns_none():
+    assert _extract_main_product_image('<img src="/a.jpg">', "https://x.com") is None
+
+
+def test_img_scan_skips_amazon_tracking_beacon():
+    html = _AMAZON_BEACON + '<img src="https://m.media-amazon.com/p.jpg">'
+    assert (
+        _extract_image_from_imgs(html, "https://www.amazon.eg/dp/X")
+        == "https://m.media-amazon.com/p.jpg"
+    )
+
+
+def test_title_from_amazon_product_title_span():
+    html = (
+        "<title>Amazon.eg: iSiS Tea : Grocery</title>"
+        '<span id="productTitle" class="a-size-large">  iSiS Natural Peppermint'
+        " Tea &amp; Herbs, 20 Bags  </span>"
+    )
+    assert _extract_title_from_markup(html) == (
+        "iSiS Natural Peppermint Tea & Herbs, 20 Bags"
+    )
+
+
+def test_title_falls_back_to_title_tag_without_site_suffix():
+    html = "<title>\n  Logitech G102 Mouse : Amazon.eg </title>"
+    assert _extract_title_from_markup(html) == "Logitech G102 Mouse"

@@ -417,6 +417,70 @@ def test_persist_fetched_price_retry_logic(db_session, monkeypatch):
     )
     assert store_row.last_fetch_status == "ok"
     assert store_row.last_fetch_error is None
+    # The page's product name is kept as the tracker's display title.
+    saved = session.query(TrackedItem).filter(TrackedItem.id == item_id).first()
+    assert saved.specs["title"] == "Test Item"
+
+
+@pytest.mark.parametrize(
+    "url, expected",
+    [
+        # Amazon: slug before /dp/, never the ref= tracking segment.
+        (
+            "https://www.amazon.eg/-/en/iSiS-Natural-Regieme-Tea-Peppermint"
+            "/dp/B07FZP9STS/ref=sr_1_1_mod_primary_new?sbo=x",
+            ("amazon_eg", "iSiS-Natural-Regieme-Tea-Peppermint"),
+        ),
+        ("https://www.amazon.eg/dp/B07FZP9STS", ("amazon_eg", "B07FZP9STS")),
+        # ElBadr's current domain.
+        (
+            "https://elbadrgroupeg.store/asus-tuf-gaming-vg27aqml5f-monitor",
+            ("elbadr_eg", "asus-tuf-gaming-vg27aqml5f-monitor"),
+        ),
+        # Sigma: product slug lives in ?id=, the path is just /en/item.
+        (
+            "https://www.sigma-computer.com/en/item?id=logitech-g102-mouse",
+            ("sigma_eg", "logitech-g102-mouse"),
+        ),
+        (
+            "https://alfrensia.com/en/product/asus-a23-case/",
+            ("alfrensia_eg", "asus-a23-case"),
+        ),
+        ("https://example.com/p/widget-9000", ("unknown", "widget-9000")),
+    ],
+)
+def test_store_and_sku_from_url(url, expected):
+    from services.api.tracked_items_api import _store_and_sku_from_url
+
+    assert _store_and_sku_from_url(url) == expected
+
+
+def test_list_tracked_items_exposes_scraped_title(client):
+    api, session, user = client
+    session.add(
+        TrackedItem(
+            user_id=user.id,
+            canonical_product_id="amazon_eg:B07FZP9STS",
+            specs={"source_url": "https://amazon.eg/dp/B07FZP9STS", "title": "Tea"},
+            is_active=True,
+        )
+    )
+    session.commit()  # one item per commit: ids are generated per flush
+    session.add(
+        TrackedItem(
+            user_id=user.id,
+            canonical_product_id="spec-based",
+            specs=["not", "a", "dict"],
+            is_active=True,
+        )
+    )
+    session.commit()
+
+    resp = api.get("/tracked-items")
+    assert resp.status_code == 200
+    titles = {i["canonical_product_id"]: i["title"] for i in resp.json()}
+    assert titles["amazon_eg:B07FZP9STS"] == "Tea"
+    assert titles["spec-based"] is None
 
 
 def test_persist_fetched_price_retry_exhaustion(db_session, monkeypatch):

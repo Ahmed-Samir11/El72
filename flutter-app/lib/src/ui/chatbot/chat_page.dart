@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../l10n/app_localizations.dart';
+import '../../data/models/chat_conversation.dart';
 import '../../data/models/chat_message_model.dart';
 import '../../data/repositories/chatbot_repository.dart';
 import '../../data/providers.dart';
@@ -26,34 +27,49 @@ class ChatPage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final repository = ref.read(chatbotRepositoryProvider);
-    return _ChatPageBody(repository: repository);
+    final conversation = ref.read(chatConversationProvider);
+    return _ChatPageBody(repository: repository, conversation: conversation);
   }
 }
 
-/// Stateful UI for the chat page. Holds all mutable state (messages, input,
-/// session id, sending flag).
+/// Stateful UI for the chat page. The conversation itself (messages,
+/// results, draft, session, sending flag) lives in [ChatConversation] so it
+/// survives tab switches; this state only owns the text field controller.
 class _ChatPageBody extends StatefulWidget {
   final ChatbotRepository repository;
+  final ChatConversation conversation;
 
-  const _ChatPageBody({required this.repository});
+  const _ChatPageBody({required this.repository, required this.conversation});
 
   @override
   State<_ChatPageBody> createState() => _ChatPageBodyState();
 }
 
 class _ChatPageBodyState extends State<_ChatPageBody> {
-  final TextEditingController _controller = TextEditingController();
-  final List<ChatMessageModel> _messages = [];
-  final List<SearchResultModel> _searchResults = [];
-  bool _isSending = false;
-  String? _sessionId;
+  late final TextEditingController _controller;
 
   ChatbotRepository get _repository => widget.repository;
+  ChatConversation get _conversation => widget.conversation;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: _conversation.draft);
+    _controller.addListener(_saveDraft);
+    _conversation.addListener(_onConversationChanged);
+  }
 
   @override
   void dispose() {
+    _conversation.removeListener(_onConversationChanged);
     _controller.dispose();
     super.dispose();
+  }
+
+  void _saveDraft() => _conversation.draft = _controller.text;
+
+  void _onConversationChanged() {
+    if (mounted) setState(() {});
   }
 
   /// Generate a cryptographically secure random UUID v4 string.
@@ -87,76 +103,75 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
     final text = _controller.text.trim();
     if (text.isEmpty) return;
 
+    // Captured up front: the conversation outlives this page, so a reply that
+    // arrives after the user switched tabs is still recorded there; only the
+    // snackbars need a mounted page.
+    final conversation = _conversation;
+
     // Generate or reuse session ID
-    _sessionId ??= _generateSessionId();
+    final sessionId = conversation.sessionId ??= _generateSessionId();
 
     // Add user message optimistically — use UUID to avoid collisions
-    final userMsg = ChatMessageModel(
-      id: _generateUuid(),
-      sessionId: _sessionId!,
-      role: 'user',
-      content: text,
-      createdAt: DateTime.now(),
+    conversation.addMessage(
+      ChatMessageModel(
+        id: _generateUuid(),
+        sessionId: sessionId,
+        role: 'user',
+        content: text,
+        createdAt: DateTime.now(),
+      ),
     );
-    setState(() {
-      _messages.add(userMsg);
-      _searchResults.clear();
-      _isSending = true;
-    });
+    conversation.setSearchResults(const []);
+    conversation.isSending = true;
     _controller.clear();
 
     try {
       final response = await _repository.sendMessage(
-        sessionId: _sessionId!,
+        sessionId: sessionId,
         message: text,
       );
 
-      if (!mounted) return;
-
       // Adopt the server's session ID — the server may create a new session
       // if the client-generated ID didn't match an existing one.
-      _sessionId = response.sessionId;
+      conversation.sessionId = response.sessionId;
 
       // Add bot message — use UUID to avoid collisions
-      final botMsg = ChatMessageModel(
-        id: _generateUuid(),
-        sessionId: _sessionId!,
-        role: 'bot',
-        content: response.message,
-        createdAt: DateTime.now(),
-        language: response.language,
+      conversation.addMessage(
+        ChatMessageModel(
+          id: _generateUuid(),
+          sessionId: response.sessionId,
+          role: 'bot',
+          content: response.message,
+          createdAt: DateTime.now(),
+          language: response.language,
+        ),
       );
-      setState(() {
-        _messages.add(botMsg);
-        _searchResults.addAll(response.searchResults);
-        _isSending = false;
-      });
+      conversation.setSearchResults(response.searchResults);
+      conversation.isSending = false;
     } catch (e) {
-      if (!mounted) return;
-
       // Log the detailed error for debugging, show generic message to user
       debugPrint('Chatbot error: $e');
+      conversation.isSending = false;
 
       if (e is UnauthorizedException) {
         // Token expired or invalid — prompt re-authentication.
-        setState(() => _isSending = false);
+        if (!mounted) return;
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text(e.message)));
         return;
       }
 
-      final errorMsg = ChatMessageModel(
-        id: _generateUuid(),
-        sessionId: _sessionId ?? '',
-        role: 'bot',
-        content: 'Sorry, I couldn\'t process your request. Please try again.',
-        createdAt: DateTime.now(),
+      conversation.addMessage(
+        ChatMessageModel(
+          id: _generateUuid(),
+          sessionId: conversation.sessionId ?? '',
+          role: 'bot',
+          content: 'Sorry, I couldn\'t process your request. Please try again.',
+          createdAt: DateTime.now(),
+        ),
       );
-      setState(() {
-        _messages.add(errorMsg);
-        _isSending = false;
-      });
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('An error occurred. Please try again.')),
       );
@@ -167,23 +182,35 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
   Future<void> addToFeed(SearchResultModel result) async {
     if (!mounted) return;
 
+    final conversation = _conversation;
+
     // Defensive null guard: session ID must be set before adding to feed
-    if (_sessionId == null) {
+    final sessionId = conversation.sessionId;
+    if (sessionId == null) {
       debugPrint('addToFeed called without a session ID');
       return;
     }
 
-    setState(() => _isSending = true);
+    conversation.isSending = true;
 
     try {
-      await _repository.addToFeed(
-        sessionId: _sessionId!,
+      final response = await _repository.addToFeed(
+        sessionId: sessionId,
         productUrl: result.url,
       );
 
       if (!mounted) return;
 
-      // Show success
+      // The chatbot answers 200 even when the tracker could not be created;
+      // it only echoes the product back on success. Otherwise show its
+      // explanation (e.g. "couldn't add", "no credits").
+      if (response.searchResults.isEmpty) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(response.message)));
+        return;
+      }
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -216,15 +243,16 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
         );
       }
     } finally {
-      if (mounted) {
-        setState(() => _isSending = false);
-      }
+      conversation.isSending = false;
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context);
+    final messages = _conversation.messages;
+    final searchResults = _conversation.searchResults;
+    final isSending = _conversation.isSending;
 
     return Scaffold(
       appBar: AppBar(
@@ -234,11 +262,7 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
             icon: const Icon(Icons.refresh),
             onPressed: () {
               _controller.clear();
-              setState(() {
-                _messages.clear();
-                _searchResults.clear();
-                _sessionId = null;
-              });
+              _conversation.reset();
             },
           ),
         ],
@@ -247,7 +271,7 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
         children: [
           // Message list — Expanded so it fills available height
           Expanded(
-            child: _messages.isEmpty
+            child: messages.isEmpty
                 ? Center(
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
@@ -263,9 +287,9 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
                     ),
                   )
                 : ListView.builder(
-                    itemCount: _messages.length,
+                    itemCount: messages.length,
                     itemBuilder: (context, index) {
-                      final msg = _messages[index];
+                      final msg = messages[index];
                       return ChatMessageBubble(
                         message: msg,
                         isUser: msg.role == 'user',
@@ -276,7 +300,7 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
 
           // Search results from the last bot response.
           // Bounded height so it doesn't conflict with the Expanded message list.
-          if (_searchResults.isNotEmpty)
+          if (searchResults.isNotEmpty)
             Container(
               constraints: BoxConstraints(
                 maxHeight: MediaQuery.of(context).size.height * 0.3,
@@ -284,6 +308,7 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: Column(
+                  mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
@@ -291,16 +316,21 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
                       style: Theme.of(context).textTheme.titleMedium,
                     ),
                     const SizedBox(height: 8),
-                    ListView.builder(
-                      itemCount: _searchResults.length,
-                      itemBuilder: (context, index) {
-                        final result = _searchResults[index];
-                        return SearchResultCard(
-                          result: result,
-                          onAddToFeed: () => addToFeed(result),
-                          isEnabled: !_isSending,
-                        );
-                      },
+                    // Flexible + shrinkWrap: a ListView inside a Column needs a
+                    // bounded height, otherwise it throws and renders nothing.
+                    Flexible(
+                      child: ListView.builder(
+                        shrinkWrap: true,
+                        itemCount: searchResults.length,
+                        itemBuilder: (context, index) {
+                          final result = searchResults[index];
+                          return SearchResultCard(
+                            result: result,
+                            onAddToFeed: () => addToFeed(result),
+                            isEnabled: !isSending,
+                          );
+                        },
+                      ),
                     ),
                   ],
                 ),
@@ -308,7 +338,7 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
             ),
 
           // Bot typing indicator
-          if (_isSending) BotTypingIndicator(),
+          if (isSending) BotTypingIndicator(),
 
           // Input area
           Padding(
@@ -332,7 +362,7 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
                 const SizedBox(width: 8),
                 IconButton(
                   icon: const Icon(Icons.send),
-                  onPressed: _isSending ? null : _sendMessage,
+                  onPressed: isSending ? null : _sendMessage,
                 ),
               ],
             ),

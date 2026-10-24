@@ -97,12 +97,16 @@ class ChatbotRepository {
     return await _storage.read(key: 'access_token');
   }
 
-  /// Add the Bearer token to request options if one is stored.
-  Future<void> _addAuthHeader(RequestOptions options) async {
+  /// Request [Options] carrying the Bearer token, if one is stored.
+  ///
+  /// Requests go through `_dio.get`/`_dio.post` with these options so the
+  /// client's `baseUrl` applies; a bare `RequestOptions` passed to
+  /// `_dio.fetch` has no host.
+  Future<Options> _authOptions() async {
     final token = await _getToken();
-    if (token != null) {
-      options.headers['Authorization'] = 'Bearer $token';
-    }
+    return Options(
+      headers: {if (token != null) 'Authorization': 'Bearer $token'},
+    );
   }
 
   /// Send a message to the chatbot and get the response with search results.
@@ -113,12 +117,7 @@ class ChatbotRepository {
     required String sessionId,
     required String message,
   }) async {
-    final headers = <String, dynamic>{};
-    final token = await _getToken();
-    if (token != null) {
-      headers['Authorization'] = 'Bearer $token';
-    }
-    final options = Options(headers: headers);
+    final options = await _authOptions();
 
     try {
       final response = await _dio.post(
@@ -166,15 +165,14 @@ class ChatbotRepository {
   ///
   /// GET is retried up to 3 times on transient network failures.
   Future<List<ChatSessionModel>> getSessions() async {
-    final options = RequestOptions(method: 'GET', path: '/chatbot/sessions');
-    await _addAuthHeader(options);
+    final options = await _authOptions();
 
     return await _retryGet(() => _fetchSessions(options), 3);
   }
 
   /// Internal fetch for getSessions, extracted for retry.
-  Future<List<ChatSessionModel>> _fetchSessions(RequestOptions options) async {
-    final response = await _dio.fetch(options);
+  Future<List<ChatSessionModel>> _fetchSessions(Options options) async {
+    final response = await _dio.get('/chatbot/sessions', options: options);
 
     if (response.statusCode == 200 && response.data is List) {
       return (response.data as List)
@@ -195,19 +193,18 @@ class ChatbotRepository {
     String? productUrl,
     double? targetPrice,
   }) async {
-    final options = RequestOptions(
-      method: 'POST',
-      path: '/chatbot/add-to-feed',
-      data: {
-        'session_id': sessionId,
-        ...(productUrl != null ? {'product_url': productUrl} : {}),
-        ...(targetPrice != null ? {'target_price': targetPrice} : {}),
-      },
-    );
-    await _addAuthHeader(options);
+    final options = await _authOptions();
 
     try {
-      final response = await _dio.fetch(options);
+      final response = await _dio.post(
+        '/chatbot/add-to-feed',
+        data: {
+          'session_id': sessionId,
+          ...(productUrl != null ? {'product_url': productUrl} : {}),
+          ...(targetPrice != null ? {'target_price': targetPrice} : {}),
+        },
+        options: options,
+      );
 
       if (response.statusCode == 200 && response.data is Map<String, dynamic>) {
         return ChatResponseModel.fromJson(
@@ -226,18 +223,20 @@ class ChatbotRepository {
   ///
   /// GET is retried up to 3 times on transient network failures.
   Future<ChatSessionModel> getSession({required String sessionId}) async {
-    final options = RequestOptions(
-      method: 'GET',
-      path: '/chatbot/sessions/$sessionId',
-    );
-    await _addAuthHeader(options);
+    final options = await _authOptions();
 
-    return await _retryGet(() => _fetchSession(options), 3);
+    return await _retryGet(() => _fetchSession(sessionId, options), 3);
   }
 
   /// Internal fetch for getSession, extracted for retry.
-  Future<ChatSessionModel> _fetchSession(RequestOptions options) async {
-    final response = await _dio.fetch(options);
+  Future<ChatSessionModel> _fetchSession(
+    String sessionId,
+    Options options,
+  ) async {
+    final response = await _dio.get(
+      '/chatbot/sessions/$sessionId',
+      options: options,
+    );
 
     if (response.statusCode == 200 && response.data is Map<String, dynamic>) {
       return ChatSessionModel.fromJson(response.data as Map<String, dynamic>);

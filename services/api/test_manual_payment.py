@@ -346,7 +346,7 @@ class TestApproveReject:
         assert data["status"] == "approved"
         assert data["credits_granted"] == 10
         # Free tier: 100 starting credits + 10 granted = 110.
-        assert data["new_balance"] == 13
+        assert data["new_balance"] == 110
 
         # Approval persists resolved_by/resolved_at and a credit transaction.
         gen = app.dependency_overrides[get_db]()
@@ -383,7 +383,7 @@ class TestApproveReject:
         )
         assert first.status_code == 200
         # 100 free + 30 premium = 130.
-        assert first.json()["new_balance"] == 33
+        assert first.json()["new_balance"] == 130
 
         second = client.post(
             f"/admin/payments/{order_ref}/approve",
@@ -722,7 +722,7 @@ class TestRefund:
         assert body["status"] == "refunded"
         assert body["credits_deducted"] == 10  # standard package
         # Free tier starts at 100; +15 seed, -10 claw-back => 105.
-        assert body["new_balance"] == 8
+        assert body["new_balance"] == 105
 
         # A Refund row was recorded.
         gen = app.dependency_overrides[get_db]()
@@ -1049,14 +1049,23 @@ class TestAdjustCredits:
         assert resp.status_code == 404
 
     def test_adjust_cannot_go_negative(self, client):
-        # A manual adjustment must not drive the balance below zero (the
-        # free tier starts at 100; removing 4 would be negative).
+        # A manual adjustment must not drive the balance below zero. The free
+        # tier starts at 100 and single adjustments above 50 need a second
+        # admin, so draw the balance down to 0 in two steps first; removing 1
+        # more would be negative.
         admin_token = _admin_token(client)
         user_id, _ = _seed_user(client, USER_PHONE)
+        for _ in range(2):
+            drain = client.post(
+                f"/admin/users/{user_id}/adjust-credits",
+                headers=_auth_headers(admin_token),
+                json={"amount": -50, "reason": "overdraft correction"},
+            )
+            assert drain.status_code == 200, drain.text
         resp = client.post(
             f"/admin/users/{user_id}/adjust-credits",
             headers=_auth_headers(admin_token),
-            json={"amount": -4, "reason": "overdraft correction"},
+            json={"amount": -1, "reason": "overdraft correction"},
         )
         assert resp.status_code == 400, resp.text
 
