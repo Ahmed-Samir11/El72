@@ -391,6 +391,26 @@ class AppLocalizationsAr extends AppLocalizations {
       'تعذّر تحديث السعر الآن - حاول مرة أخرى بعد قليل.';
 
   @override
+  String get deleteTrackerTitle => 'حذف المتابعة؟';
+
+  @override
+  String deleteTrackerBody(String title) {
+    return 'إيقاف متابعة \"$title\"؟ سيتم حذف سجل أسعاره.';
+  }
+
+  @override
+  String get deleteTrackerConfirm => 'حذف';
+
+  @override
+  String get trackerDeleted => 'تم حذف المتابعة';
+
+  @override
+  String get retry => 'إعادة المحاولة';
+
+  @override
+  String get trackerDeleteFailed => 'تعذّر حذف المتابعة - حاول مرة أخرى.';
+
+  @override
   String genericLoadError(String error) {
     return 'فشل في التحميل.\n$error';
   }
