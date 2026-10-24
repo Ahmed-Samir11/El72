@@ -90,9 +90,7 @@ class ChatbotRepository {
               receiveTimeout: const Duration(seconds: 120),
             ),
           ),
-      _storage = storage ?? const FlutterSecureStorage() {
-    print('DEBUG: chatbotBaseUrl = ${AppConfig.chatbotBaseUrl}');
-  }
+      _storage = storage ?? const FlutterSecureStorage();
 
   /// Read the stored JWT access token.
   Future<String?> _getToken() async {

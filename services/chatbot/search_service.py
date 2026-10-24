@@ -18,11 +18,18 @@ from crawl4ai.extraction_strategy import LLMExtractionStrategy
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 
-from arabic_nlp import (
-    detect_language,
-    parse_arabic_intent,
-    translate_query_for_search,
-)
+try:
+    from services.chatbot.arabic_nlp import (
+        detect_language,
+        parse_arabic_intent,
+        translate_query_for_search,
+    )
+except ImportError:
+    from arabic_nlp import (
+        detect_language,
+        parse_arabic_intent,
+        translate_query_for_search,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -45,9 +52,17 @@ MAX_TOKENS_EXTRACTION = 2000
 # =============================================================================
 
 
+_llm_client: Optional[AsyncOpenAI] = None
+
+
 def get_lm_studio_client() -> AsyncOpenAI:
-    """Get AsyncOpenAI client configured for LM Studio."""
-    return AsyncOpenAI(base_url=LM_STUDIO_URL, api_key="not-needed")
+    """Get the singleton AsyncOpenAI client configured for the LLM server."""
+    global _llm_client
+    if _llm_client is None:
+        _llm_client = AsyncOpenAI(
+            base_url=LM_STUDIO_URL, api_key="not-needed", timeout=60.0
+        )
+    return _llm_client
 
 
 # =============================================================================
@@ -222,15 +237,25 @@ def _parse_english_intent(message: str) -> Dict[str, Any]:
 
 
 def parse_intent(message: str) -> Dict[str, Any]:
-    """Parse English or Egyptian Arabic search intent (regex fallback)."""
+    """Parse English or Egyptian Arabic search intent (regex fallback).
+
+    Contract:
+      - "query": The search query in English (what to send to stores).
+      - "display_query": The user's original text (for display in UI).
+      - "max_price": Optional float price ceiling.
+      - "language": "ar" or "en".
+    """
     language = detect_language(message)
     if language == "ar":
         result = parse_arabic_intent(message)
-        result["search_query"] = translate_query_for_search(result["query"])
+        display_query = result["query"]
+        result["query"] = translate_query_for_search(result["query"])
+        result["search_query"] = result["query"]
     else:
         result = _parse_english_intent(message)
+        display_query = result["query"]
         result["search_query"] = result["query"]
-    result["display_query"] = result["query"]
+    result["display_query"] = display_query
     result["language"] = language
     return result
 
@@ -280,10 +305,24 @@ async def llm_extract_intent(message: str) -> Optional[Dict[str, Any]]:
             if raw.startswith("json"):
                 raw = raw[4:].strip()
         data = json.loads(raw)
+        # Validate and coerce max_price.
+        raw_price = data.get("max_price")
+        max_price: Optional[float] = None
+        if raw_price is not None:
+            try:
+                max_price = float(raw_price)
+                if max_price < 0:
+                    max_price = None
+            except (ValueError, TypeError):
+                max_price = None
+        # Validate language.
+        lang = data.get("language", "en")
+        if lang not in ("ar", "en"):
+            lang = "en"
         return {
             "query": data.get("query", ""),
-            "max_price": data.get("max_price"),
-            "language": data.get("language", "en"),
+            "max_price": max_price,
+            "language": lang,
         }
     except Exception as e:
         logger.warning(f"LLM intent extraction failed: {e}")

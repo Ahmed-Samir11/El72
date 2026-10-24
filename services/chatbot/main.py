@@ -42,16 +42,28 @@ from slowapi.util import get_remote_address
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
-from models import (
-    AddToFeedRequest,
-    ChatRequest,
-    ChatResponse,
-    HealthResponse,
-    SearchResult,
-)
-from arabic_nlp import detect_language, parse_add_command
-from i18n import format_message
-from search_service import ChatbotSearchService
+try:
+    from services.chatbot.models import (
+        AddToFeedRequest,
+        ChatRequest,
+        ChatResponse,
+        HealthResponse,
+        SearchResult,
+    )
+    from services.chatbot.arabic_nlp import detect_language, parse_add_command
+    from services.chatbot.i18n import format_message
+    from services.chatbot.search_service import ChatbotSearchService
+except ImportError:
+    from models import (
+        AddToFeedRequest,
+        ChatRequest,
+        ChatResponse,
+        HealthResponse,
+        SearchResult,
+    )
+    from arabic_nlp import detect_language, parse_add_command
+    from i18n import format_message
+    from search_service import ChatbotSearchService
 
 logger = logging.getLogger(__name__)
 
