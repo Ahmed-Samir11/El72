@@ -44,6 +44,9 @@ abstract final class FetchStatus {
 class TrackedItem {
   final int id;
   final String canonicalProductId;
+
+  /// Product name scraped from the store page; null until a fetch succeeds.
+  final String? title;
   final double? targetPrice;
   final bool isActive;
   final int storeCount;
@@ -63,6 +66,7 @@ class TrackedItem {
   const TrackedItem({
     required this.id,
     required this.canonicalProductId,
+    this.title,
     this.targetPrice,
     required this.isActive,
     required this.storeCount,
@@ -73,9 +77,18 @@ class TrackedItem {
     this.fetchError,
   });
 
-  /// Human-friendly label derived from the canonical id.
+  /// The product's name: the scraped page title when known, otherwise a
+  /// label derived from the canonical id without its `store:` prefix (the
+  /// store is not part of the product name, and is `unknown` for stores the
+  /// backend does not recognise).
   String get displayName {
-    final words = canonicalProductId
+    final scraped = title?.trim();
+    if (scraped != null && scraped.isNotEmpty) return scraped;
+    final colon = canonicalProductId.indexOf(':');
+    final slug = colon >= 0
+        ? canonicalProductId.substring(colon + 1)
+        : canonicalProductId;
+    final words = slug
         .replaceAll(RegExp(r'[_\-]+'), ' ')
         .split(' ')
         .where((w) => w.isNotEmpty)
@@ -88,6 +101,7 @@ class TrackedItem {
     return TrackedItem(
       id: (json['id'] as num?)?.toInt() ?? 0,
       canonicalProductId: json['canonical_product_id'] as String? ?? '',
+      title: json['title'] is String ? json['title'] as String : null,
       targetPrice: (json['target_price'] as num?)?.toDouble(),
       isActive: json['is_active'] as bool? ?? true,
       storeCount: (json['store_count'] as num?)?.toInt() ?? 0,

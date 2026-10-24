@@ -24,6 +24,7 @@ spawn a browser per item). Fetches are network-bound and user-driven
 from __future__ import annotations
 
 import contextlib
+import html as html_lib
 import ipaddress
 import json
 import logging
@@ -378,7 +379,45 @@ _IMG_SKIP_HINTS = (
     "avatar",
     ".svg",
     "data:",
+    # Amazon's 1x1 tracking beacons (fls-eu.amazon.eg/1/batch/1/OP/...).
+    "/batch/1/",
+    "fls-",
 )
+
+
+def _extract_main_product_image(html: str, page_url: str) -> Optional[str]:
+    """The main gallery image on pages that mark it explicitly, else None.
+
+    Amazon has no og:image; its product photo is
+    ``<img id="landingImage" data-old-hires="..." data-a-dynamic-image='{...}'>``
+    (``imgBlkFront`` on book pages). Prefer the hi-res URL, then the largest
+    entry of the dynamic-image map (``{"url": [width, height], ...}``), then
+    ``src``.
+    """
+    for tag in re.findall(r"<img[^>]+>", html, re.IGNORECASE):
+        if not re.search(
+            r'\bid=["\'](?:landingImage|imgBlkFront)["\']', tag, re.IGNORECASE
+        ):
+            continue
+        hires = re.search(r'\bdata-old-hires=["\']([^"\']+)["\']', tag)
+        if hires and hires.group(1).strip():
+            return _absolutize(hires.group(1), page_url)
+        dynamic = re.search(r"\bdata-a-dynamic-image=(['\"])(.+?)\1", tag)
+        if dynamic:
+            try:
+                sizes = json.loads(html_lib.unescape(dynamic.group(2)))
+                if isinstance(sizes, dict) and sizes:
+                    best = max(
+                        sizes.items(),
+                        key=lambda kv: kv[1][0] if isinstance(kv[1], list) else 0,
+                    )[0]
+                    return _absolutize(best, page_url)
+            except (ValueError, TypeError, IndexError):
+                pass
+        src = re.search(r'\bsrc=["\']([^"\']+)["\']', tag, re.IGNORECASE)
+        if src and src.group(1).strip():
+            return _absolutize(src.group(1), page_url)
+    return None
 
 
 def _extract_image_from_meta(html: str, page_url: str) -> Optional[str]:
@@ -572,7 +611,8 @@ def _extract_from_html(
     3. WooCommerce price markup.
     4. A regex over visible text for an EGP amount.
 
-    Image cascade: JSON-LD ``image`` → OG/Twitter meta → ``<img>`` scan.
+    Image cascade: JSON-LD ``image`` → OG/Twitter meta → marked main gallery
+    image (Amazon ``#landingImage``) → ``<img>`` scan.
     All image URLs are resolved to absolute (see :func:`_absolutize`).
 
     Returns ``(price, currency, title, image_url)`` or ``None`` if no price
@@ -622,14 +662,18 @@ def _extract_from_html(
     if price is None:
         return None
 
-    # Title fallback (JSON-LD takes precedence).
+    # Title fallbacks (JSON-LD takes precedence).
     if title is None:
         title = _extract_meta(html, "og:title")
+    if title is None:
+        title = _extract_title_from_markup(html)
 
     # Image fallbacks (JSON-LD takes precedence), then normalize whatever we
     # found to an absolute URL the app can load directly.
     if image_url is None:
         image_url = _extract_image_from_meta(html, page_url)
+    if image_url is None:
+        image_url = _extract_main_product_image(html, page_url)
     if image_url is None:
         image_url = _extract_image_from_imgs(html, page_url)
     if image_url is not None and page_url:
@@ -638,6 +682,27 @@ def _extract_from_html(
     # The app targets the Egyptian market; pages that omit priceCurrency
     # are assumed to quote EGP.
     return price, (currency or "EGP"), title, image_url
+
+
+def _extract_title_from_markup(html: str) -> Optional[str]:
+    """Product name from page markup when there is no JSON-LD/OG title.
+
+    Amazon renders it as ``<span id="productTitle">``; otherwise use the
+    ``<title>`` tag, minus a trailing `` : Amazon.eg``-style site suffix.
+    """
+    for pattern in (
+        r'<span[^>]+id=["\']productTitle["\'][^>]*>(.*?)</span>',
+        r"<title[^>]*>(.*?)</title>",
+    ):
+        m = re.search(pattern, html, re.IGNORECASE | re.DOTALL)
+        if not m:
+            continue
+        text = html_lib.unescape(re.sub(r"<[^>]+>", "", m.group(1)))
+        text = re.sub(r"\s+", " ", text).strip()
+        text = re.sub(r"\s*[:|\-–]\s*Amazon\.[a-z.]+\s*$", "", text, flags=re.I)
+        if text:
+            return text
+    return None
 
 
 def _extract_meta(html: str, prop: str) -> Optional[str]:
