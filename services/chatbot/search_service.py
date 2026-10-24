@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 from urllib.parse import quote_plus
 
 from crawl4ai import AsyncWebCrawler
-from crawl4ai.extraction_strategy import LLMExtractionStrategy
+
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 
@@ -334,7 +334,7 @@ async def llm_extract_intent(message: str) -> Optional[Dict[str, Any]]:
 # =============================================================================
 
 
-class LMStudioExtractionStrategy(LLMExtractionStrategy):
+class LMStudioExtractionStrategy:
     """Custom extraction strategy that uses LM Studio for local inference."""
 
     def __init__(
@@ -348,7 +348,6 @@ class LMStudioExtractionStrategy(LLMExtractionStrategy):
         self.extraction_prompt = extraction_prompt
         self.model = model or LM_STUDIO_MODEL
         self.client = get_lm_studio_client()
-        super().__init__(**kwargs)
 
     async def extract(self, content: str, url: str = None) -> str:
         """Extract structured data from content using local LLM."""

@@ -293,10 +293,10 @@ def get_pricing(request: Request) -> dict:
                 "id": "free",
                 "name": "Free",
                 "price_egp": 0,
-                "credits": 3,
-                "max_trackers": 3,
+                "credits": 100,
+                "max_trackers": 100,
                 "features": [
-                    "3 active trackers",
+                    "100 active trackers",
                     "WhatsApp deal alerts",
                     "Price history charts",
                 ],

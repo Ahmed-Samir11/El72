@@ -345,7 +345,7 @@ class TestApproveReject:
         data = resp.json()
         assert data["status"] == "approved"
         assert data["credits_granted"] == 10
-        # Free tier: 3 starting credits + 10 granted = 13.
+        # Free tier: 100 starting credits + 10 granted = 110.
         assert data["new_balance"] == 13
 
         # Approval persists resolved_by/resolved_at and a credit transaction.
@@ -382,7 +382,7 @@ class TestApproveReject:
             headers=_auth_headers(admin_token),
         )
         assert first.status_code == 200
-        # 3 free + 30 premium = 33.
+        # 100 free + 30 premium = 130.
         assert first.json()["new_balance"] == 33
 
         second = client.post(
@@ -721,7 +721,7 @@ class TestRefund:
         body = resp.json()
         assert body["status"] == "refunded"
         assert body["credits_deducted"] == 10  # standard package
-        # Free tier starts at 3; +15 seed, -10 claw-back => 8.
+        # Free tier starts at 100; +15 seed, -10 claw-back => 105.
         assert body["new_balance"] == 8
 
         # A Refund row was recorded.
@@ -932,7 +932,7 @@ class TestAdjustCredits:
             json={"amount": 5, "reason": "goodwill credit"},
         )
         assert resp.status_code == 200, resp.text
-        assert resp.json()["new_balance"] == 3 + 5  # free tier starts at 3
+        assert resp.json()["new_balance"] == 100 + 5  # free tier starts at 100
 
     def test_large_adjustment_requires_approval(self, client):
         admin_token = _admin_token(client)
@@ -995,7 +995,7 @@ class TestAdjustCredits:
             json={"amount": 100, "reason": "large topup", "approver_id": second_id},
         )
         assert resp.status_code == 200, resp.text
-        assert resp.json()["new_balance"] == 3 + 100
+        assert resp.json()["new_balance"] == 100 + 100
 
     def test_large_adjustment_token_does_not_match(self, client):
         # A valid approver token for a DIFFERENT admin than the claimed
@@ -1050,7 +1050,7 @@ class TestAdjustCredits:
 
     def test_adjust_cannot_go_negative(self, client):
         # A manual adjustment must not drive the balance below zero (the
-        # free tier starts at 3; removing 4 would be negative).
+        # free tier starts at 100; removing 4 would be negative).
         admin_token = _admin_token(client)
         user_id, _ = _seed_user(client, USER_PHONE)
         resp = client.post(

@@ -40,6 +40,7 @@ class ChatMessageModel {
   final String role; // 'user' or 'bot'
   final String content;
   final DateTime createdAt;
+  final String language;
 
   const ChatMessageModel({
     required this.id,
@@ -47,6 +48,7 @@ class ChatMessageModel {
     required this.role,
     required this.content,
     required this.createdAt,
+    this.language = 'en',
   });
 
   factory ChatMessageModel.fromJson(Map<String, dynamic> json) {
@@ -80,6 +82,7 @@ class ChatMessageModel {
       role: role,
       content: content,
       createdAt: createdAt,
+      language: json['language'] as String? ?? 'en',
     );
   }
 }
@@ -204,11 +207,13 @@ class ChatResponseModel {
   final String message;
   final String sessionId; // UUID string from the server
   final List<SearchResultModel> searchResults;
+  final String language;
 
   const ChatResponseModel({
     required this.message,
     required this.sessionId,
     required this.searchResults,
+    this.language = 'en',
   });
 
   factory ChatResponseModel.fromJson(Map<String, dynamic> json) {
@@ -233,6 +238,7 @@ class ChatResponseModel {
       searchResults: (resultsList ?? const [])
           .map((r) => SearchResultModel.fromJson(r))
           .toList(),
+      language: json['language'] as String? ?? 'en',
     );
   }
 }

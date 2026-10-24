@@ -13475,3 +13475,841 @@ WARNING: Diff truncated from 1736882 to 50000 chars
 Review completed in 170.9s
 Decision: REQUEST_CHANGES (confidence: 0.92)
 Findings: 9
+## PR Review: feat: chatbot service with search and add-to-feed
+Model: local/qwen-27b
+Files changed: 44
+WARNING: Diff truncated from 1736473 to 50000 chars
+
+### Raw LLM Response
+{
+  "summary": "This PR adds a chatbot service (FastAPI, port 8003) with natural-language product search and add-to-feed functionality, plus Flutter UI integration. The backend uses Crawl4AI for search and calls the API service for tracker creation. Database schema adds chat_sessions, chat_messages, and chat_search_results tables. Overall the feature is well-structured but has several critical correctness issues in the Flutter layer.",
+  "decision": "REQUEST_CHANGES",
+  "confidence": 0.88,
+  "findings": [
+    {
+      "file": "flutter-app/lib/src/ui/chatbot/chat_page.dart",
+      "line": 115,
+      "severity": "CRITICAL",
+      "category": "correctness",
+      "title": "_generateSessionId() out-of-bounds list access causes RuntimeError",
+      "description": "The method creates a list of 16 bytes (indices 0-15) but accesses bytes[16..20] in the final segment, which is out of bounds. This throws a RangeError at runtime when any user sends a message, crashing the chat page.",
+      "suggestion": "Fix the byte slicing to stay within bounds. Use standard UUID format: bytes[0..4], bytes[4..6], bytes[6..8], bytes[8..10], bytes[10..16] producing 8-4-4-4-12 hex chars (32 total)."
+    },
+    {
+      "file": "flutter-app/lib/src/data/models/chat_message_model.dart",
+      "line": 12,
+      "severity": "CRITICAL",
+      "category": "correctness",
+      "title": "ChatMessageModel.id type mismatch with database schema",
+      "description": "The Flutter model declares `final int id` but the database schema defines `chat_messages.id` as UUID PRIMARY KEY. The backend will return UUID strings for message IDs, which cannot be parsed as int, causing FormatException crashes when loading server messages.",
+      "suggestion": "Change `ChatMessageModel.id` to `String` to match the UUID type from the database. Alternatively, have the backend generate integer IDs for messages."
+    },
+    {
+      "file": "flutter-app/lib/src/ui/chatbot/search_result_card.dart",
+      "line": 42,
+      "severity": "CRITICAL",
+      "category": "correctness",
+      "title": "Hardcoded 'Add to Feed' string bypasses localization",
+      "description": "The SearchResultCard uses a hardcoded English string 'Add to Feed' instead of `l10n.addToFeed`, breaking Arabic localization and the project's localization pattern.",
+      "suggestion": "Replace the hardcoded string with `Text(l10n.addToFeed)` to match the localization pattern used elsewhere in the widget."
+    },
+    {
+      "file": "flutter-app/lib/src/ui/chatbot/chat_page.dart",
+      "line": 213,
+      "severity": "WARNING",
+      "category": "correctness",
+      "title": "No null guard for _sessionId in _addToFeed",
+      "description": "The `_addToFeed` method uses `_sessionId!` without checking if it's null. While currently only called after a message is sent (which sets _sessionId), defensive programming would prevent a potential crash if the call path changes.",
+      "suggestion": "Add an early return or null check for `_sessionId` at the start of `_addToFeed`, similar to the guard in `_sendMessage`."
+    },
+    {
+      "file": "flutter-app/lib/src/data/repositories/chatbot_repository.dart",
+      "line": 108,
+      "severity": "WARNING",
+      "category": "correctness",
+      "title": "402 insufficient credits error not surfaced specifically to user",
+      "description": "The PR description states that 402 (insufficient credits) should be surfaced to the user. The repository throws a generic Exception for any non-200 response, and the UI shows a generic 'Failed to add tracker' message. Users cannot distinguish credit errors from other failures.",
+      "suggestion": "In the repository, detect 402 status codes and throw a specific exception (e.g., InsufficientCreditsException). In the UI, catch this exception and show a message about purchasing credits or checking balance."
+    },
+    {
+      "file": "flutter-app/lib/src/ui/chatbot/chat_page.dart",
+      "line": 145,
+      "severity": "WARNING",
+      "category": "correctness",
+      "title": "Message ID collision risk with timestamp-based IDs",
+      "description": "Locally created messages use `DateTime.now().millisecondsSinceEpoch` as the ID. If two messages are sent within the same millisecond, IDs will collide, potentially causing issues with message tracking or UI updates.",
+      "suggestion": "Use a UUID or monotonically increasing counter for locally generated message IDs instead of timestamps."
+    },
+    {
+      "file": "flutter-app/lib/src/data/repositories/chatbot_repository.dart",
+      "line": 30,
+      "severity": "WARNING",
+      "category": "performance",
+      "title": "Retry backoff starts at 1 second which may be too aggressive",
+      "description": "The retry logic uses exponential backoff starting at 1 second (1s, 2s, 4s...). For a chatbot service where responsiveness matters, this could delay error recovery. However, 3 retries with this backoff is reasonable for transient failures.",
+      "suggestion": "Consider reducing initial backoff to 500ms or adding jitter to prevent thundering herd issues if the service goes down."
+    },
+    {
+      "file": "flutter-app/lib/src/ui/chatbot/chat_page.dart",
+      "line": 1,
+      "severity": "INFO",
+      "category": "testing",
+      "title": "No tests for new Flutter repository or UI components",
+      "description": "The PR mentions 22/22 chatbot tests pass (backend) but there are no Flutter tests for ChatbotRepository, ChatPage, or the new widgets. The project has existing Flutter tests but none cover the new chatbot functionality.",
+      "suggestion": "Add unit tests for ChatbotRepository (mocking Dio) and widget tests for ChatPage to verify message sending, search result display, and add-to-feed flow."
+    },
+    {
+      "file": "pilot_results.csv",
+      "line": 1,
+      "severity": "INFO",
+      "category": "architecture",
+      "title": "Test artifact file committed to repository",
+      "description": "The `pilot_results.csv` file appears to be a test artifact from a review pilot process (containing PR metadata, review decisions, confidence scores). It is not part of the feature implementation and should not be committed.",
+      "suggestion": "Remove `pilot_results.csv` from the commit. It contains internal review metadata unrelated to the feature."
+    },
+    {
+      "file": "flutter-app/lib/src/ui/chatbot/chat_page.dart",
+      "line": 115,
+      "severity": "INFO",
+      "category": "correctness",
+      "title": "Non-standard UUID format for session IDs",
+      "description": "The generated session ID uses a custom 8-4-4-4-10 hex char format (30 chars total) instead of the standard UUID 8-4-4-4-12 format (32 chars). If the backend validates session IDs as proper UUIDs, these will be rejected.",
+      "suggestion": "Generate standard UUID v4 format strings to ensure compatibility with the database UUID type and any backend validation."
+    }
+  ],
+  "missed_tests": [
+    "Backend unit tests for search_service.py intent parsing (price extraction, store selection)",
+    "Backend integration tests for /chatbot/message endpoint with mocked Crawl4AI",
+    "Backend tests for /chatbot/add-to-feed endpoint including 402 credit error handling",
+    "Flutter widget tests for ChatPage (message sending, search results display)",
+    "Flutter unit tests for ChatbotRepository (Dio mocking, auth header injection, retry behavior)",
+    "Flutter tests for localization strings (EN + AR completeness)",
+    "Database migration tests for new chat tables (FK constraints, cascade deletes)"
+  ],
+  "positive_notes": [
+    "Clean separation of concerns: chatbot is a standalone service calling the API via REST, following service-isolation rules",
+    "Docker compose properly integrates the new service with depends_on for postgres and api",
+    "Database schema includes proper FK constraints, indexes, and UUID primary keys",
+    "Localization implemented for both EN and AR with all new strings",
+    "ChatbotRepository includes retry logic with exponential backoff for transient failures",
+    "Auth token is securely stored in FlutterSecureStorage and sent as Bearer header",
+    "Error handling in UI shows generic messages to users while logging details for debugging",
+    "Plan document (plans/chatbot-implementation.md) is comprehensive and well-structured",
+    "PR_WORKFLOW.md and AGENTS.md updates provide clear process documentation for the team"
+  ]
+}
+
+
+Review completed in 137.0s
+Decision: REQUEST_CHANGES (confidence: 0.88)
+Findings: 10
+## PR Review: feat: chatbot service with search and add-to-feed
+Model: local/qwen-27b
+Files changed: 45
+WARNING: Diff truncated from 1740056 to 50000 chars
+
+### Raw LLM Response
+{
+  "summary": "This PR adds a standalone chatbot service and a Flutter chat UI for natural-language product search and add-to-feed actions. The overall architecture follows service isolation and includes localization, schema changes, and basic tests, but the visible Flutter client contains critical HTTP/retry handling bugs, a date-parsing regex bug, and insufficient test coverage. The backend implementation is not fully visible in the provided diff, so server-side authorization and search behavior could not be fully verified.",
+  "decision": "REQUEST_CHANGES",
+  "confidence": 0.85,
+  "findings": [
+    {
+      "file": "flutter-app/lib/src/data/repositories/chatbot_repository.dart",
+      "line": 166,
+      "severity": "CRITICAL",
+      "category": "correctness",
+      "title": "402 response handling is unreachable because Dio throws on non-2xx responses",
+      "description": "The repository checks response.statusCode == 402 after calling _dio.fetch, but Dio's default validateStatus throws a DioException for 402 before the response is returned. As a result, InsufficientCreditsException is never thrown and the UI will show a generic error instead of the intended credits prompt.",
+      "suggestion": "Configure Dio with a validateStatus that allows 402 (e.g. (status) => status == 200 || status == 402) or catch DioException and inspect e.response?.statusCode to throw InsufficientCreditsException."
+    },
+    {
+      "file": "flutter-app/lib/src/data/repositories/chatbot_repository.dart",
+      "line": 23,
+      "severity": "CRITICAL",
+      "category": "correctness",
+      "title": "Blind retry logic can duplicate non-idempotent POST requests",
+      "description": "_retry catches all exceptions and retries sendMessage and addToFeed up to 3 times. This includes non-transient 4xx errors and timeouts after the server may have already processed the request. For addToFeed, this can create duplicate tracked items; for sendMessage, it can duplicate chat messages.",
+      "suggestion": "Only retry on transient failures such as connection errors, receive timeouts, 5xx, or 429. Do not retry 4xx responses. Add an idempotency key to POST /chatbot/message and POST /chatbot/add-to-feed, or make the server endpoints idempotent."
+    },
+    {
+      "file": "flutter-app/lib/src/data/models/chat_message_model.dart",
+      "line": 17,
+      "severity": "WARNING",
+      "category": "correctness",
+      "title": "Date-parsing regex uses double backslashes in a raw string",
+      "description": "The regex RegExp(r'[+-]\\d{2}:\\d{2}$') contains literal backslashes because it is a raw string with double backslashes. It will not match timezone offsets as intended, so the fallback parsing path may throw for some ISO 8601 variants.",
+      "suggestion": "Use RegExp(r'[+-]\\d{2}:\\d{2}$') in a non-raw string or RegExp(r'[+-]\\d{2}:\\d{2}$') with a single backslash in a raw string. Add unit tests for timestamps with and without timezone offsets."
+    },
+    {
+      "file": "flutter-app/lib/src/ui/chatbot/chat_page.dart",
+      "line": 152,
+      "severity": "WARNING",
+      "category": "security",
+      "title": "Client-generated session IDs require strict server-side ownership validation",
+      "description": "The client generates session IDs and message IDs locally. This is acceptable only if the server validates that the session belongs to the authenticated user derived from the JWT. If the server trusts the client-supplied session_id without authorization checks, this becomes an IDOR vulnerability.",
+      "suggestion": "Ensure the chatbot service verifies session ownership on every request using the authenticated user_id from the JWT. Add server-side tests for cross-user session access."
+    },
+    {
+      "file": "flutter-app/lib/src/ui/chatbot/chat_page.dart",
+      "line": 155,
+      "severity": "WARNING",
+      "category": "security",
+      "title": "Product URLs are forwarded to add-to-feed without visible client-side validation",
+      "description": "The UI sends result.url to the chatbot add-to-feed endpoint. If the chatbot or API service fetches arbitrary URLs, this could enable SSRF or abuse of upstream store endpoints. The visible diff does not show server-side URL validation.",
+      "suggestion": "Validate product URLs server-side against an allowlist of supported stores, block private/internal IP ranges, and limit redirects. Add tests for malicious or non-store URLs."
+    },
+    {
+      "file": "flutter-app/lib/src/ui/chatbot/search_result_card.dart",
+      "line": 43,
+      "severity": "WARNING",
+      "category": "correctness",
+      "title": "Add to Feed button is not disabled while a request is in flight",
+      "description": "SearchResultCard does not know whether _isSending is true, so users can tap multiple Add to Feed buttons concurrently. Combined with the retry logic, this increases the risk of duplicate tracker creation.",
+      "suggestion": "Pass an isSending flag to SearchResultCard and disable the FilledButton while a request is active, or use a shared state provider to track in-flight add-to-feed operations."
+    },
+    {
+      "file": "flutter-app/test/chatbot_repository_test.dart",
+      "line": 1,
+      "severity": "WARNING",
+      "category": "testing",
+      "title": "Repository tests only verify construction",
+      "description": "The new Flutter tests only assert that ChatbotRepository can be constructed. They do not cover authentication headers, retry behavior, 402 handling, model parsing, or error cases. This leaves the critical HTTP logic untested.",
+      "suggestion": "Add tests using a mock Dio adapter or HttpServer to verify: Bearer token is sent, 402 throws InsufficientCreditsException, transient failures are retried, 4xx failures are not retried, and model parsing handles valid/invalid payloads."
+    },
+    {
+      "file": "flutter-app/lib/src/data/repositories/chatbot_repository.dart",
+      "line": 58,
+      "severity": "WARNING",
+      "category": "performance",
+      "title": "30-second timeout may be too low for multi-store Crawl4AI search",
+      "description": "The chatbot performs Crawl4AI-based search across 7 stores with LLM extraction. A 30-second receive timeout may be insufficient under normal load, causing user-facing timeouts and retries.",
+      "suggestion": "Increase the receive timeout for search requests, make the search endpoint async with a job ID, or add streaming/progress updates. Add load tests for the search path."
+    },
+    {
+      "file": ".agents/PR_WORKFLOW.md",
+      "line": 180,
+      "severity": "WARNING",
+      "category": "documentation",
+      "title": "Shell-escaping guidance for GitHub PAT is incorrect and risky",
+      "description": "The document suggests curl -H \"Authorization: Bearer '$TOKEN'\" to avoid variable expansion. In bash, single quotes inside double quotes are literal, so $TOKEN will not be expanded. This can lead to authentication failures and encourages handling secrets in shell commands.",
+      "suggestion": "Correct the example to use proper variable expansion (e.g. curl -H \"Authorization: Bearer $TOKEN\") and recommend avoiding printing or storing PATs in shell history. Consider using a dedicated CI secret or short-lived token."
+    },
+    {
+      "file": "docker-compose.yml",
+      "line": 81,
+      "severity": "WARNING",
+      "category": "architecture",
+      "title": "Chatbot service exposes port 8003 to the host without healthcheck",
+      "description": "The docker-compose service publishes port 8003 to the host and depends on postgres/api without health conditions. This is acceptable for local development but may be unsafe in shared environments and does not guarantee dependency readiness.",
+      "suggestion": "Add a healthcheck for the chatbot service, use depends_on with condition: service_healthy for postgres and api, and avoid publishing the port in production compose files."
+    },
+    {
+      "file": "flutter-app/lib/src/ui/chatbot/chat_page.dart",
+      "line": 165,
+      "severity": "INFO",
+      "category": "documentation",
+      "title": "User-facing strings are hardcoded in English",
+      "description": "Several SnackBar messages such as 'Tracker created for ...', 'An error occurred...', and 'Failed to add tracker...' are hardcoded in English. The PR adds localization for other chat strings, so these should be localized as well.",
+      "suggestion": "Add localization keys for success, generic error, and add-to-feed failure messages, and use AppLocalizations in the UI."
+    },
+    {
+      "file": "flutter-app/lib/src/ui/chatbot/chat_page.dart",
+      "line": 1,
+      "severity": "INFO",
+      "category": "architecture",
+      "title": "getSessions and getSession are implemented but not used by the UI",
+      "description": "The repository exposes getSessions and getSession, and the PR description mentions session endpoints, but the chat page only creates new client-side sessions and never loads existing sessions. This is dead functionality in the current UI.",
+      "suggestion": "Either implement a session list/history UI or remove the unused repository methods and endpoints from the MVP to reduce surface area."
+    },
+    {
+      "file": "flutter-app/lib/src/ui/chatbot/chat_widgets.dart",
+      "line": 62,
+      "severity": "INFO",
+      "category": "architecture",
+      "title": "NewChatButton is unused",
+      "description": "NewChatButton is defined but not used in the visible UI. The chat page uses a refresh IconButton instead. Dead code increases maintenance burden.",
+      "suggestion": "Remove NewChatButton or wire it to the new-chat action if it is intended for future use."
+    },
+    {
+      "file": "flutter-app/lib/src/ui/chatbot/search_result_card.dart",
+      "line": 38,
+      "severity": "INFO",
+      "category": "correctness",
+      "title": "Price formatting loses decimal precision",
+      "description": "The card displays price using toStringAsFixed(0), which truncates decimals. For currencies with non-zero fractional parts, this can misrepresent the price.",
+      "suggestion": "Use a currency-aware formatter or toStringAsFixed(2) when the currency has fractional units."
+    },
+    {
+      "file": "flutter-app/lib/src/ui/dashboard/dashboard_page.dart",
+      "line": 267,
+      "severity": "INFO",
+      "category": "architecture",
+      "title": "_ChatTab extends ConsumerWidget without using ref",
+      "description": "_ChatTab is a ConsumerWidget but does not use the WidgetRef. It can be a StatelessWidget for clarity.",
+      "suggestion": "Change _ChatTab to StatelessWidget or use ref if it will read providers in the future."
+    },
+    {
+      "file": "flutter-app/lib/src/ui/chatbot/chat_page.dart",
+      "line": 120,
+      "severity": "INFO",
+      "category": "correctness",
+      "title": "Chat list does not automatically scroll to the latest message",
+      "description": "After adding a new user or bot message, the ListView does not scroll to the bottom. Users may not see the latest response, especially on small screens.",
+      "suggestion": "Use a ScrollController and animate to maxScrollExtent after appending messages."
+    },
+    {
+      "file": "flutter-app/lib/src/data/repositories/chatbot_repository.dart",
+      "line": 70,
+      "severity": "INFO",
+      "category": "security",
+      "title": "No handling for 401 unauthorized responses",
+      "description": "If the JWT is expired or invalid, the chatbot will likely return 401. The repository does not surface a specific authentication error, so the user sees a generic failure.",
+      "suggestion": "Catch 401 responses and prompt the user to re-authenticate or refresh the token."
+    },
+    {
+      "file": "infra/sql/schema/postgres.sql",
+      "line": 364,
+      "severity": "INFO",
+      "category": "architecture",
+      "title": "updated_at columns are not maintained by a trigger",
+      "description": "chat_sessions.updated_at is defined with a default NOW(), but there is no visible trigger to update it when rows change. Applications must remember to set it manually, which is error-prone.",
+      "suggestion": "Add a PostgreSQL trigger function to set updated_at = NOW() on UPDATE for chat_sessions, or enforce it in the ORM/service layer."
+    },
+    {
+      "file": "flutter-app/lib/src/data/models/chat_message_model.dart",
+      "line": 7,
+      "severity": "INFO",
+      "category": "testing",
+      "title": "Date parsing edge cases are not tested",
+      "description": "parseDateRobust handles null, DateTime, and string values, but the visible tests do not cover timezone offsets, microsecond precision, or malformed dates.",
+      "suggestion": "Add unit tests for ISO 8601 strings with and without timezone offsets, microsecond precision, and invalid inputs."
+    }
+  ],
+  "missed_tests": [
+    "Test that ChatbotRepository sends the stored JWT access token as a Bearer header.",
+    "Test that 402 responses from addToFeed produce InsufficientCreditsException.",
+    "Test that transient network failures are retried but 4xx responses are not retried.",
+    "Test that sendMessage and addToFeed do not duplicate requests on timeout without idempotency.",
+    "Test ChatMessageModel, ChatSessionModel, SearchResultModel, and ChatResponseModel parsing with valid and invalid JSON payloads.",
+    "Test parseDateRobust with ISO 8601 strings containing timezone offsets, microsecond precision, and malformed values.",
+    "Test server-side session ownership to prevent cross-user access via client-generated session IDs.",
+    "Test add-to-feed URL validation against allowed stores and internal/private IP ranges.",
+    "Test chat UI behavior when add-to-feed is tapped multiple times while a request is in flight.",
+    "Test dashboard navigation with the new Chat tab and localized labels."
+  ],
+  "positive_notes": [
+    "The chatbot is implemented as a separate service and communicates with the main API via REST, following the project's service-isolation pattern.",
+    "Database schema uses UUID primary keys, which avoids sequence desynchronization when clients supply IDs.",
+    "Flutter localization is added for both English and Arabic, including new navigation and chat strings.",
+    "The chatbot repository uses FlutterSecureStorage for JWT access tokens and adds Bearer authentication headers.",
+    "The PR includes a plan reference and reports that existing project tests continue to pass.",
+    "The Flutter models validate required fields and throw explicit FormatException errors for missing data."
+  ]
+}
+
+
+Review completed in 305.5s
+Decision: REQUEST_CHANGES (confidence: 0.85)
+Findings: 19
+## PR Review: feat: chatbot service with search and add-to-feed
+Model: local/qwen-27b
+Files changed: 45
+WARNING: Diff truncated from 1739959 to 50000 chars
+
+### Raw LLM Response
+{
+  "summary": "This PR adds a standalone FastAPI chatbot service, Postgres schema for chat sessions/messages/search results, and a Flutter chat tab with product search and add-to-feed actions. The overall architecture is reasonable and follows service isolation, but there are correctness risks around session ID handling and state updates after unmount, weak Flutter tests, missing localization for user-facing error messages, and operational gaps in Docker configuration that should be addressed before merge.",
+  "decision": "REQUEST_CHANGES",
+  "confidence": 0.78,
+  "findings": [
+    {
+      "file": "flutter-app/lib/src/ui/chatbot/chat_page.dart",
+      "line": 201,
+      "severity": "CRITICAL",
+      "category": "correctness",
+      "title": "setState called in finally block after state may be unmounted",
+      "description": "In addToFeed, the finally block unconditionally calls setState(() => _isSending = false). If the user navigates away or the widget is disposed while the request is in flight, setState will be called on an unmounted State and throw a runtime error.",
+      "suggestion": "Guard the finally block with if (mounted) { setState(() => _isSending = false); } or move the state reset into a safe lifecycle-aware helper."
+    },
+    {
+      "file": "flutter-app/lib/src/ui/chatbot/chat_page.dart",
+      "line": 90,
+      "severity": "CRITICAL",
+      "category": "correctness",
+      "title": "Client-generated session ID may not match server session ID",
+      "description": "The client generates a UUID for _sessionId and uses it for all subsequent messages, but it never adopts response.sessionId from the chatbot response. If the backend creates a session with its own UUID or returns a different session_id, later messages and add-to-feed calls will target the wrong session or fail.",
+      "suggestion": "After sendMessage, update _sessionId from response.sessionId. Ensure the backend explicitly supports client-provided session IDs for first messages and add an integration test proving the returned session_id is stable and owned by the authenticated user."
+    },
+    {
+      "file": "flutter-app/lib/src/ui/chatbot/chat_page.dart",
+      "line": 90,
+      "severity": "WARNING",
+      "category": "security",
+      "title": "Client-generated session IDs require strict server-side ownership validation",
+      "description": "Because the client supplies session IDs, the backend must validate that each session belongs to the authenticated user derived from the JWT. If ownership checks are missing or incomplete, this becomes an IDOR vulnerability where a user could access or mutate another user's chat sessions.",
+      "suggestion": "Add backend authorization tests for session access, message access, and add-to-feed using another user's session_id. Ensure all queries filter by the authenticated user_id."
+    },
+    {
+      "file": "flutter-app/lib/src/data/repositories/chatbot_repository.dart",
+      "line": 84,
+      "severity": "WARNING",
+      "category": "security",
+      "title": "No handling for 401 responses or expired access tokens",
+      "description": "The repository reads a JWT from secure storage and adds it to requests, but it does not handle 401 Unauthorized responses, token expiration, or token refresh. Users with expired tokens will see generic failures with no path to re-authenticate.",
+      "suggestion": "Intercept 401 responses, trigger token refresh if available, or surface a clear re-authentication prompt. Add tests for 401 behavior."
+    },
+    {
+      "file": "flutter-app/lib/src/data/repositories/chatbot_repository.dart",
+      "line": 100,
+      "severity": "WARNING",
+      "category": "performance",
+      "title": "Expensive chatbot endpoints need rate limiting and input bounds",
+      "description": "The chatbot performs multi-store web scraping and LLM extraction per message. Without visible rate limiting, message length limits, or request throttling, authenticated users can trigger expensive operations repeatedly, causing latency, cost, or store blocking.",
+      "suggestion": "Add backend rate limiting per user, maximum message length, concurrency limits for store searches, and request timeouts. Document these limits in the API."
+    },
+    {
+      "file": "flutter-app/lib/src/data/repositories/chatbot_repository.dart",
+      "line": 70,
+      "severity": "WARNING",
+      "category": "performance",
+      "title": "Receive timeout may be too low for multi-store search",
+      "description": "The Dio client uses a 60-second receive timeout. Searching across 7 stores with Crawl4AI and LLM extraction can easily exceed this, especially on slow networks or when stores are unresponsive, causing user-facing timeouts.",
+      "suggestion": "Increase receiveTimeout for search requests, add per-store timeouts, return partial results, or stream progress. Add load tests for worst-case search latency."
+    },
+    {
+      "file": "flutter-app/lib/src/data/models/chat_message_model.dart",
+      "line": 17,
+      "severity": "WARNING",
+      "category": "correctness",
+      "title": "Date parsing fallback strips timezone offset",
+      "description": "parseDateRobust attempts to strip timezone offsets before parsing. If this fallback is ever used, DateTime.parse will interpret the timestamp as local time, silently shifting created_at values and causing incorrect ordering or display.",
+      "suggestion": "Preserve timezone information. Prefer DateTime.parse for ISO 8601 strings and only handle genuinely unsupported formats in a way that retains UTC or explicit offset. Add unit tests for UTC, offset, and Zulu timestamps."
+    },
+    {
+      "file": "docker-compose.yml",
+      "line": 81,
+      "severity": "WARNING",
+      "category": "architecture",
+      "title": "Chatbot service exposes port and lacks healthcheck/dependency readiness",
+      "description": "The chatbot service publishes port 8003 to the host and depends_on api/postgres without healthcheck conditions. This can expose an internal service unnecessarily and allow the chatbot to start before its dependencies are ready, causing startup failures.",
+      "suggestion": "Avoid publishing the port unless required for development, add healthchecks for chatbot/api/postgres, and use depends_on with condition: service_healthy where appropriate."
+    },
+    {
+      "file": "docker-compose.yml",
+      "line": 89,
+      "severity": "WARNING",
+      "category": "architecture",
+      "title": "Chatbot shares Postgres and resolves users directly",
+      "description": "The chatbot connects directly to the shared operational database and resolves user_id from the JWT by looking up users. This may conflict with the stated service-isolation rule that services communicate through Redis Streams or REST APIs, and it increases coupling between services.",
+      "suggestion": "Either document this as an approved exception, move user resolution to the API service, or use a shared library for authentication/user lookup. Ensure the chatbot does not write to tables owned by other services."
+    },
+    {
+      "file": "flutter-app/test/chatbot_repository_test.dart",
+      "line": 1,
+      "severity": "WARNING",
+      "category": "testing",
+      "title": "Flutter tests are insufficient for new chatbot functionality",
+      "description": "The visible Flutter tests only construct ChatbotRepository with default and custom Dio. They do not cover model parsing, authentication headers, 402 handling, retry behavior, error responses, or the chat page UI flows.",
+      "suggestion": "Add tests for ChatMessageModel, ChatSessionModel, SearchResultModel, ChatResponseModel, ChatbotRepository with a mocked Dio (success, 401, 402, network retry), and widget/integration tests for ChatPage send/add-to-feed/error/unmount scenarios."
+    },
+    {
+      "file": "flutter-app/lib/src/ui/chatbot/chat_page.dart",
+      "line": 139,
+      "severity": "WARNING",
+      "category": "documentation",
+      "title": "User-facing error and success messages are hardcoded in English",
+      "description": "Several SnackBar messages and bot error content are hardcoded English strings, while the rest of the UI uses AppLocalizations. This breaks Arabic localization and user experience consistency.",
+      "suggestion": "Add localization keys for chat error, add-to-feed success, insufficient credits, and generic failure messages, then use AppLocalizations in the UI."
+    },
+    {
+      "file": "flutter-app/lib/src/ui/chatbot/chat_widgets.dart",
+      "line": 60,
+      "severity": "INFO",
+      "category": "architecture",
+      "title": "NewChatButton is defined but unused",
+      "description": "NewChatButton is implemented but not used in the visible UI. The refresh icon performs a similar reset, but the dedicated button is dead code.",
+      "suggestion": "Either use NewChatButton in the chat UI for starting a new session or remove it to avoid maintenance burden."
+    },
+    {
+      "file": "flutter-app/lib/src/ui/chatbot/chat_page.dart",
+      "line": 235,
+      "severity": "INFO",
+      "category": "correctness",
+      "title": "Refresh button does not delete or reset server-side session",
+      "description": "The refresh button clears local messages and sets _sessionId to null, but it does not call any backend endpoint to delete or invalidate the existing server session. This can leave orphaned sessions and may cause confusion if the user expects a true reset.",
+      "suggestion": "Add a delete/reset session endpoint and call it on refresh, or clearly document that refresh only starts a new local session."
+    },
+    {
+      "file": ".agents/PR_WORKFLOW.md",
+      "line": 219,
+      "severity": "INFO",
+      "category": "documentation",
+      "title": "Shell escaping guidance for GitHub token is incorrect",
+      "description": "The document says to use single quotes for the PAT in curl headers to avoid variable expansion, but the example uses double quotes around the header with single quotes inside, which prevents variable expansion in Bash. This can lead to literal $TOKEN being sent.",
+      "suggestion": "Correct the example to use double quotes for variable expansion, e.g. -H \"Authorization: Bearer $TOKEN\", or provide a safe non-expanding pattern if the intent is to avoid expansion."
+    },
+    {
+      "file": "flutter-app/lib/src/ui/chatbot/search_result_card.dart",
+      "line": 40,
+      "severity": "INFO",
+      "category": "correctness",
+      "title": "Price formatting drops decimals",
+      "description": "The card displays price using toStringAsFixed(0), which hides decimal values. For currencies with subunits or prices that require precision, this can mislead users.",
+      "suggestion": "Format prices based on currency rules, e.g. use toStringAsFixed(2) for EGP or a currency-aware formatter."
+    },
+    {
+      "file": "flutter-app/lib/src/data/config.dart",
+      "line": 31,
+      "severity": "INFO",
+      "category": "architecture",
+      "title": "Default chatbot base URL only works for Android emulator",
+      "description": "The default CHATBOT_BASE_URL is http://10.0.2.2:8003, which is the Android emulator loopback address. iOS simulators and physical devices will need a different URL, and this is not obvious from the code.",
+      "suggestion": "Document the required --dart-define values for iOS, Android, and production, or provide environment-specific defaults."
+    },
+    {
+      "file": "infra/sql/schema/postgres.sql",
+      "line": 370,
+      "severity": "INFO",
+      "category": "architecture",
+      "title": "updated_at has no database trigger",
+      "description": "chat_sessions.updated_at defaults to NOW() but there is no visible trigger to update it when messages are inserted or sessions are modified. If the application does not explicitly update it, the column can become stale.",
+      "suggestion": "Add a Postgres trigger to update updated_at on relevant writes, or ensure the application explicitly updates it and add tests."
+    }
+  ],
+  "missed_tests": [
+    "ChatbotRepository tests with a mocked Dio for sendMessage success, 401, 402, network timeout, and retry behavior for GET requests.",
+    "ChatbotRepository tests verifying that POST requests are not retried and that 402 from addToFeed raises InsufficientCreditsException.",
+    "Model parsing tests for ChatMessageModel, ChatSessionModel, SearchResultModel, and ChatResponseModel covering valid JSON, missing required fields, null optional fields, and timezone variations.",
+    "Date parsing tests for parseDateRobust covering UTC, +00:00, -05:00, Zulu, and malformed inputs.",
+    "ChatPage widget/integration tests for sending a message, displaying search results, adding to feed, error states, and unmounting during async operations.",
+    "Backend integration tests for first-message session creation with client-provided session_id, session ownership validation, and add-to-feed credit enforcement.",
+    "Backend tests for 402 propagation from the API service to the chatbot response.",
+    "Database schema tests for chat_sessions/chat_messages foreign keys, role check constraint, and indexes.",
+    "Localization tests ensuring all new EN and AR strings are present and used in the UI."
+  ],
+  "positive_notes": [
+    "The chatbot is implemented as a separate FastAPI service and communicates with the main API over REST, preserving service isolation.",
+    "JWT authentication is handled via secure storage and Bearer headers, and the client does not supply user_id directly.",
+    "Retry logic is limited to idempotent GET requests, avoiding duplicate side effects from POST retries.",
+    "Database schema uses UUID primary keys, foreign keys, and a check constraint for message role, reducing ID collision and invalid data risks.",
+    "Flutter localization was updated for both English and Arabic, and new UI strings are mostly wired through AppLocalizations.",
+    "Docker Compose was updated to include the new chatbot service with required environment variables and dependencies.",
+    "The PR includes a detailed plan reference and documents key design decisions, which improves maintainability."
+  ]
+}
+
+
+Review completed in 370.4s
+Decision: REQUEST_CHANGES (confidence: 0.78)
+Findings: 17
+## PR Review: feat: Egyptian Arabic chatbot + LLM intent extraction + Docker fixes
+Model: local/qwen-27b
+Files changed: 11
+
+### Raw LLM Response
+{
+  "summary": "This PR adds Egyptian Arabic NLP, localized responses, LLM-based intent extraction with a regex fallback, and several Docker/Flutter fixes. The overall direction is sound, but it has packaging/import issues, insufficient validation of LLM output, a potential security exposure from 0.0.0.0 binding, and an unbounded in-memory result cache. I would request changes before merge.",
+  "decision": "REQUEST_CHANGES",
+  "confidence": 0.86,
+  "findings": [
+    {
+      "file": "services/chatbot/main.py",
+      "line": 45,
+      "severity": "CRITICAL",
+      "category": "architecture",
+      "title": "Flat imports break package layout and tests",
+      "description": "main.py and search_service.py use top-level imports such as from models import and from arabic_nlp import. These only work when the service directory is on sys.path, for example inside the Docker image. Repository tests and local tooling that import services.chatbot.* will fail because the modules are not top-level.",
+      "suggestion": "Use package-relative imports (from .models import ...) or services.chatbot imports, and adjust the Docker build to preserve the package layout or set PYTHONPATH appropriately. Ensure CI can import the service from the repository root."
+    },
+    {
+      "file": "services/chatbot/search_service.py",
+      "line": 250,
+      "severity": "CRITICAL",
+      "category": "correctness",
+      "title": "LLM intent output is not validated",
+      "description": "llm_extract_intent returns raw values from the model. max_price may be a string, query may be non-string, or language may be an unexpected value. Later format_message uses {max_price:g}, which raises ValueError for strings and can cause a 500 response.",
+      "suggestion": "Validate and coerce LLM output: ensure query is a non-empty str, max_price is int/float or None, and language is ar/en. Return None on invalid output so the regex fallback is used."
+    },
+    {
+      "file": "docker-compose.yml",
+      "line": 96,
+      "severity": "WARNING",
+      "category": "security",
+      "title": "Service bound to 0.0.0.0",
+      "description": "Changing the port mapping from 127.0.0.1 to 0.0.0.0 exposes the chatbot service on all host interfaces. If the host is reachable from untrusted networks, unauthenticated endpoints such as /health and any missing auth checks become reachable.",
+      "suggestion": "Bind to 127.0.0.1 or an internal Docker network unless public exposure is explicitly required. If public exposure is needed, document it and ensure authentication, rate limiting, and reverse-proxy protections are in place."
+    },
+    {
+      "file": "services/chatbot/main.py",
+      "line": 183,
+      "severity": "WARNING",
+      "category": "performance",
+      "title": "Unbounded in-memory search result cache",
+      "description": "_active_search_results stores the latest result set for every session in process memory with no TTL, size limit, or cleanup. Long-running services can leak memory, and stale results may be used for add-to-feed commands.",
+      "suggestion": "Use an external store such as Redis with a TTL, or implement an LRU cache with session cleanup. Clear entries when sessions end or when a new search replaces old results."
+    },
+    {
+      "file": "services/chatbot/main.py",
+      "line": 183,
+      "severity": "WARNING",
+      "category": "architecture",
+      "title": "Session state is not safe across workers",
+      "description": "The in-memory cache assumes a single process. If uvicorn runs multiple workers or the service scales horizontally, add-to-feed commands may not see the latest search results.",
+      "suggestion": "Move session result state to shared storage or ensure the deployment runs a single worker with clear documentation."
+    },
+    {
+      "file": "docker-compose.yml",
+      "line": 94,
+      "severity": "WARNING",
+      "category": "architecture",
+      "title": "Hardcoded Windows model path in LLM_MODEL",
+      "description": "LLM_MODEL is set to a Windows filesystem path. This is not portable, may not be the correct model identifier for llama-server, and leaks local deployment details into the compose file.",
+      "suggestion": "Use a stable model name/identifier expected by the LLM endpoint, move the value to .env, and document how the host llama-server is started. Avoid hardcoding host-specific paths in version control."
+    },
+    {
+      "file": "services/chatbot/main.py",
+      "line": 570,
+      "severity": "WARNING",
+      "category": "correctness",
+      "title": "Uncaught JSON decode error in add-to-feed handler",
+      "description": "_handle_add_to_feed calls response.json() after a successful API call. If the API returns non-JSON or an empty body, json.JSONDecodeError is not caught by the httpx.HTTPError handler and can produce a 500 response.",
+      "suggestion": "Catch httpx.HTTPError and json.JSONDecodeError, log the failure, and return the localized add_failed message."
+    },
+    {
+      "file": "services/chatbot/search_service.py",
+      "line": 265,
+      "severity": "WARNING",
+      "category": "correctness",
+      "title": "Fragile JSON extraction from LLM response",
+      "description": "The code assumes a markdown code block if ``` is present and takes split('```')[1]. If the model returns multiple code blocks, leading text, or malformed JSON, extraction can fail or parse the wrong segment.",
+      "suggestion": "Use a more robust extraction strategy such as finding the first { and last }, stripping code fences, and validating the parsed object. Fall back to regex parsing on any failure."
+    },
+    {
+      "file": "flutter-app/lib/src/data/repositories/chatbot_repository.dart",
+      "line": 93,
+      "severity": "INFO",
+      "category": "security",
+      "title": "Debug print left in production code",
+      "description": "The constructor prints the chatbot base URL. This is noisy and may leak configuration details in logs.",
+      "suggestion": "Remove the print statement or replace it with a debug-only logger guarded by kDebugMode."
+    },
+    {
+      "file": "services/chatbot/requirements.txt",
+      "line": 6,
+      "severity": "INFO",
+      "category": "architecture",
+      "title": "Potentially unused dependencies added",
+      "description": "python-jose, slowapi, and psycopg[binary] are added but are not referenced in the diff. Unused dependencies increase image size, install time, and supply-chain attack surface.",
+      "suggestion": "Remove dependencies that are not used, or add the code that requires them. If they are needed by other modules, document why."
+    },
+    {
+      "file": "services/chatbot/main.py",
+      "line": 262,
+      "severity": "INFO",
+      "category": "correctness",
+      "title": "Arabic pluralization does not handle dual form",
+      "description": "The plural logic uses an empty string for count == 2 and ات for count > 2. Egyptian Arabic typically uses منتجين for the dual form, so the message may be grammatically awkward.",
+      "suggestion": "Add a dual plural form for count == 2, for example منتجين, or use a small pluralization helper for Arabic."
+    },
+    {
+      "file": "docker-compose.yml",
+      "line": 93,
+      "severity": "INFO",
+      "category": "documentation",
+      "title": "LLM environment variables are not documented",
+      "description": "LLM_BASE_URL and LLM_MODEL are new required configuration values, but the PR does not document their expected format, host.docker.internal limitations, or how to configure the local llama-server.",
+      "suggestion": "Add documentation for the LLM endpoint, model identifier, and platform-specific notes for host.docker.internal on Docker Desktop versus Linux."
+    },
+    {
+      "file": "services/chatbot/test_search_service.py",
+      "line": 64,
+      "severity": "WARNING",
+      "category": "testing",
+      "title": "New tests may not run due to import packaging",
+      "description": "test_search_service.py exercises parse_intent, but search_service.py uses flat imports. If tests are run from the repository root, importing services.chatbot.search_service will fail before the test executes.",
+      "suggestion": "Fix the import packaging first, then ensure the test suite runs from the repository root. Add a test that imports the service as a package."
+    },
+    {
+      "file": "services/chatbot/test_arabic_nlp.py",
+      "line": 10,
+      "severity": "INFO",
+      "category": "testing",
+      "title": "Arabic NLP tests cover only happy paths",
+      "description": "The tests cover basic language detection, price parsing, translation, and add commands, but miss edge cases such as Eastern digits, million values, no price, out-of-range add commands, and mixed scripts.",
+      "suggestion": "Add tests for Eastern Arabic digits, comma separators, million values, empty query, add command with no cached results, and mixed Arabic/English messages."
+    }
+  ],
+  "missed_tests": [
+    "LLM intent extraction returns valid JSON and is used when query is non-empty.",
+    "LLM intent extraction falls back to regex parsing when the LLM is unavailable, returns invalid JSON, or returns an empty query.",
+    "LLM max_price as a string, null, or negative value is handled safely.",
+    "parse_intent handles mixed Arabic/English messages and preserves the display query.",
+    "Arabic price parsing handles Eastern digits, comma separators, million values, and no price.",
+    "Add-to-feed command works with cached results, out-of-range index, and no cached results.",
+    "i18n format_message handles unknown language fallback, missing kwargs, and Arabic dual pluralization.",
+    "Package imports for services.chatbot.main and services.chatbot.search_service work from the repository root."
+  ],
+  "positive_notes": [
+    "Clear separation between deterministic Arabic NLP, localization templates, and LLM intent extraction.",
+    "LLM-first parsing with a regex/dictionary fallback is a reasonable resilience strategy.",
+    "New unit tests for Arabic NLP and intent parsing provide a good baseline.",
+    "Dockerfile updates for Playwright and dependencies address runtime scraping requirements.",
+    "The Flutter change from fetch to post is likely the correct fix for baseUrl resolution."
+  ]
+}
+
+
+Review completed in 349.3s
+Decision: REQUEST_CHANGES (confidence: 0.86)
+Findings: 14
+## PR Review: feat: Egyptian Arabic chatbot + LLM intent extraction + Docker fixes
+Model: local/qwen-27b
+Files changed: 11
+
+### Raw LLM Response
+{
+  "summary": "This PR adds Egyptian Arabic support, LLM-based intent extraction with a regex fallback, localized responses, and Docker/Flutter fixes. Overall the direction is sound, but there are blocking correctness/test issues (flat imports and an inconsistent Arabic parse_intent contract) plus several security/performance concerns that should be addressed before merge.",
+  "decision": "REQUEST_CHANGES",
+  "confidence": 0.88,
+  "findings": [
+    {
+      "file": "services/chatbot/test_search_service.py",
+      "line": 64,
+      "severity": "CRITICAL",
+      "category": "testing",
+      "title": "Arabic parse_intent test expects translated query in 'query' key",
+      "description": "parse_intent() leaves result['query'] as the original Arabic text and puts the translated search term in result['search_query']. The new test asserts result['query'] == 'monitors 2k', so it will fail. This also makes the public parse_intent() contract inconsistent: for English, 'query' is the parsed search query, but for Arabic it is the display query.",
+      "suggestion": "Either set result['query'] = result['search_query'] inside parse_intent() so 'query' always means the search query, or update the test to assert result['search_query'] == 'monitors 2k'. Document the distinction between query, search_query, and display_query."
+    },
+    {
+      "file": "services/chatbot/search_service.py",
+      "line": 21,
+      "severity": "CRITICAL",
+      "category": "architecture",
+      "title": "Flat absolute imports break package/test execution",
+      "description": "search_service.py uses `from arabic_nlp import ...` and main.py uses `from models import ...`. These imports only work when services/chatbot is the working directory or explicitly on sys.path (e.g. inside the Docker image). Importing services.chatbot.search_service from the repository root or from pytest will raise ModuleNotFoundError because arabic_nlp is not a top-level module.",
+      "suggestion": "Use package-relative imports (`from .arabic_nlp import ...`, `from .models import ...`) and ensure the service is a proper Python package, or configure PYTHONPATH/build so the package imports work everywhere. Avoid flat imports that only work in the Docker container."
+    },
+    {
+      "file": "docker-compose.yml",
+      "line": 95,
+      "severity": "WARNING",
+      "category": "security",
+      "title": "Chatbot service bound to 0.0.0.0",
+      "description": "The port binding was changed from 127.0.0.1:8003 to 0.0.0.0:8003. This exposes the chatbot service on all network interfaces. Even if the chat endpoint is authenticated, unauthenticated routes such as /health may be reachable, and any future unauthenticated endpoint would be exposed.",
+      "suggestion": "Bind to 127.0.0.1 for local development, or place the service behind a reverse proxy/ingress with authentication and network restrictions. If external binding is required, document the security controls."
+    },
+    {
+      "file": "docker-compose.yml",
+      "line": 94,
+      "severity": "WARNING",
+      "category": "correctness",
+      "title": "LLM_MODEL is set to a Windows file path",
+      "description": "LLM_MODEL contains an absolute Windows path to a GGUF file. OpenAI-compatible llama-server endpoints usually expect a model name or alias, not a file path. This may cause the LLM call to fail and force every request onto the regex fallback.",
+      "suggestion": "Set LLM_MODEL to the model name/alias registered with llama-server. Keep the GGUF file path in the llama-server startup configuration, and make both values environment-driven rather than hard-coded."
+    },
+    {
+      "file": "services/chatbot/search_service.py",
+      "line": 247,
+      "severity": "WARNING",
+      "category": "correctness",
+      "title": "LLM max_price is not validated or coerced",
+      "description": "llm_extract_intent() returns data.get('max_price') without type validation. If the LLM returns a string, negative number, or non-numeric value, downstream code may raise ValueError when formatting with `{max_price:g}` or behave incorrectly during price filtering.",
+      "suggestion": "Coerce max_price to float, return None on failure, and ensure it is non-negative. Also validate that language is one of 'ar' or 'en'."
+    },
+    {
+      "file": "services/chatbot/search_service.py",
+      "line": 236,
+      "severity": "WARNING",
+      "category": "performance",
+      "title": "LLM client is created per request",
+      "description": "llm_extract_intent() calls get_lm_studio_client() for every message, creating a new AsyncOpenAI client each time. This adds latency and unnecessary resource allocation.",
+      "suggestion": "Create a module-level singleton AsyncOpenAI client with an appropriate timeout and reuse it across requests."
+    },
+    {
+      "file": "services/chatbot/main.py",
+      "line": 183,
+      "severity": "WARNING",
+      "category": "performance",
+      "title": "Unbounded in-memory search result cache",
+      "description": "_active_search_results stores the latest result set per session in a global dict with no eviction. In a long-running service with many sessions, memory usage will grow unbounded. The state is also process-local, so it will not work correctly if the service runs with multiple workers.",
+      "suggestion": "Use a TTL/LRU cache, persist the latest result set in the database, or explicitly document that the service must run as a single worker."
+    },
+    {
+      "file": "services/chatbot/arabic_nlp.py",
+      "line": 55,
+      "severity": "WARNING",
+      "category": "correctness",
+      "title": "Arabic price regex can match product words ending in b",
+      "description": "The price pattern includes a bare `ب` alternative with no word-boundary guard. A query like 'لابتوب 30' can match the final b of 'لابتوب' followed by a space and number, incorrectly extracting max_price=30.",
+      "suggestion": "Require the preposition to be standalone, for example by adding a negative lookbehind for Arabic letters/digits: `(?<![0-9\\u0600-\\u06FF])ب\\s+`. Add regression tests for product names ending in b."
+    },
+    {
+      "file": "flutter-app/lib/src/data/repositories/chatbot_repository.dart",
+      "line": 93,
+      "severity": "INFO",
+      "category": "security",
+      "title": "Debug print in repository constructor",
+      "description": "The constructor prints the chatbot base URL. This is debug output that should not remain in production code.",
+      "suggestion": "Remove the print statement or replace it with conditional debug logging."
+    },
+    {
+      "file": "services/chatbot/main.py",
+      "line": 340,
+      "severity": "INFO",
+      "category": "architecture",
+      "title": "add_to_feed endpoint hardcodes English responses",
+      "description": "The add_to_feed endpoint calls _handle_add_to_feed with language='en', so Arabic users using that endpoint will receive English messages.",
+      "suggestion": "Add a language field to AddToFeedRequest or derive the language from the session/user context."
+    },
+    {
+      "file": "services/chatbot/main.py",
+      "line": 570,
+      "severity": "INFO",
+      "category": "correctness",
+      "title": "No-op response.json() call",
+      "description": "The code calls response.json() but ignores the result. This is dead code and may confuse reviewers.",
+      "suggestion": "Remove the call or assign the result if it is needed."
+    },
+    {
+      "file": "services/chatbot/search_service.py",
+      "line": 94,
+      "severity": "INFO",
+      "category": "documentation",
+      "title": "host.docker.internal LLM URL may not work on Linux",
+      "description": "The default LLM_BASE_URL uses host.docker.internal, which is not available on all Docker hosts (notably Linux without extra configuration).",
+      "suggestion": "Document the required extra_hosts/network mode, or make LLM_BASE_URL a required environment variable."
+    },
+    {
+      "file": "services/chatbot/requirements.txt",
+      "line": 6,
+      "severity": "INFO",
+      "category": "architecture",
+      "title": "New dependencies may be unused in this service",
+      "description": "python-jose, slowapi, and psycopg[binary] were added, but the diff does not show them being used in the chatbot service. Unused dependencies increase image size and attack surface.",
+      "suggestion": "Confirm whether these dependencies are actually required by this service and remove them if they are not."
+    }
+  ],
+  "missed_tests": [
+    "Add a test asserting parse_intent('عايز شاشات 2k بسعر أقل من 12 ألف')['search_query'] == 'monitors 2k' and clarifying the 'query' key contract.",
+    "Add mocked LLM tests for successful JSON extraction, markdown code blocks, invalid max_price types, and fallback to regex when the LLM returns None.",
+    "Add tests for English filler stripping (e.g. 'show me all 2k monitors') and standalone price removal.",
+    "Add Arabic price parsing edge cases where product names end in b (e.g. 'لابتوب 30') to ensure no false max_price is extracted.",
+    "Add tests for parse_add_command out-of-range numbers, Eastern Arabic digits, and the no-cached-results path in send_message.",
+    "Add i18n tests for pluralization (1, 2, 3 in Arabic; 1, 2 in English) and price_filter formatting.",
+    "Add an integration/test ensuring services.chatbot.search_service can be imported from the repository root without relying on flat module paths."
+  ],
+  "positive_notes": [
+    "LLM-first intent extraction with a regex fallback improves robustness for Arabic/English/mixed queries.",
+    "Centralized i18n templates reduce duplicated string formatting and support the new language field for RTL clients.",
+    "New unit tests cover core Arabic NLP behaviors such as language detection, price parsing, translation, and add commands.",
+    "Dockerfile updates install required scraping dependencies and fix the uvicorn host/port arguments.",
+    "The Flutter repository now uses Dio.post with an explicit path and auth headers, improving baseUrl resolution."
+  ]
+}
+
+
+Review completed in 271.3s
+Decision: REQUEST_CHANGES (confidence: 0.88)
+Findings: 13

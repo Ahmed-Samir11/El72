@@ -60,7 +60,10 @@ async def run_for_store(
             store_id, False, f"Unsupported store_id: {store_id}", None, None
         )
 
-    browser = await playwright.chromium.launch(headless=True)
+    browser = await playwright.chromium.launch(
+        headless=True,
+        args=["--disable-http2"],
+    )
     context = await browser.new_context()
     page = await context.new_page()
     screenshot_path = None

@@ -19,11 +19,11 @@ from services.api.models import CreditTransaction, User, UserCredit
 # Free users receive their initial allowance lazily. Standard and Premium are
 # purchased packages, so their credits are granted by the payment flow.
 TIER_STARTING_CREDITS = {
-    "free": 3,
+    "free": 100,
     "standard": 0,
     "premium": 0,
 }
-DEFAULT_STARTING_CREDITS = 3
+DEFAULT_STARTING_CREDITS = 100
 
 
 def _starting_credits(tier: str) -> int:

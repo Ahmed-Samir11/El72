@@ -92,7 +92,7 @@ services:
       API_BASE_URL: "http://api:8000"
       SECRET_KEY: "${SECRET_KEY:?Set SECRET_KEY in .env}"
       LLM_BASE_URL: "http://host.docker.internal:8080/v1"
-      LLM_MODEL: "E:\\LocalModels\\Swift-1.5-Qwen3.8-27B-GSQ-RCO-IQ3_XXS-mtp.gguf"
+      LLM_MODEL: "E:\\LocalModels\\NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB.gguf"
     ports:
       - "0.0.0.0:8003:8003"
     healthcheck:

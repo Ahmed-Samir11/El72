@@ -32,6 +32,9 @@ class ChatMessageBubble extends StatelessWidget {
         ),
         child: Text(
           message.content,
+          textDirection: message.language == 'ar'
+              ? TextDirection.rtl
+              : TextDirection.ltr,
           style: Theme.of(context).textTheme.bodyMedium,
         ),
       ),

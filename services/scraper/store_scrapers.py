@@ -703,3 +703,228 @@ class ElBadrGroupScraper(BaseScraper):
 
 # Register El Badr Group scraper in the factory
 ScraperFactory.register_scraper("elbadrgroup", ElBadrGroupScraper)
+
+
+class AlfrensiaScraper(BaseScraper):
+    """Scraper for Alfrensia (alfrensia.com) — Egyptian PC components store."""
+
+    store_id = "alfrensia"
+
+    def __init__(self):
+        super().__init__(rate_limit_delay=1.5)
+
+    async def extract_price(self, page: Page) -> Optional[float]:
+        selectors = [
+            "p.price.product-page-price",
+            "div.price-wrapper",
+            "meta[itemprop='price'][content]",
+            ".product-price .price",
+            "span.price",
+            "[class*='price']",
+            ".price",
+        ]
+        for selector in selectors:
+            try:
+                if "[content]" in selector:
+                    el = await page.query_selector(selector)
+                    if el:
+                        content = await el.get_attribute("content")
+                        if content:
+                            p = self.parse_price_text(content)
+                            if p is not None:
+                                return p
+                else:
+                    el = await page.query_selector(selector)
+                    if el:
+                        text = await el.inner_text()
+                        p = self.parse_price_text(text)
+                        if p is not None:
+                            return p
+            except Exception:
+                continue
+        return None
+
+    async def extract_stock_status(self, page: Page) -> bool:
+        try:
+            oos = await page.query_selector("text=/sold out|out of stock/i")
+            if oos:
+                return False
+        except Exception:
+            pass
+        try:
+            btn = await page.query_selector("button[name='add'], .product-form__submit, button.add-to-cart")
+            if btn:
+                disabled = await btn.get_attribute("disabled")
+                if disabled is not None:
+                    return False
+        except Exception:
+            pass
+        return True
+
+    async def extract_title(self, page: Page) -> Optional[str]:
+        selectors = ["h1.product__title", "h1[itemprop='name']", "h1"]
+        for selector in selectors:
+            try:
+                el = await page.query_selector(selector)
+                if el:
+                    return (await el.inner_text()).strip()
+            except Exception:
+                continue
+        return None
+
+    def get_default_currency(self) -> str:
+        return "EGP"
+
+    async def search_product(self, page: Page, product_name: str) -> Optional[str]:
+        try:
+            search_url = f"https://alfrensia.com/en/search?q={'+'.join(product_name.split())}"
+            await page.goto(search_url, timeout=20000)
+            await page.wait_for_timeout(2000)
+
+            selector = 'a[href*="/product/"]'
+            links = await page.query_selector_all(selector)
+            if links:
+                target_tokens = [t for t in product_name.lower().split() if t]
+
+                def score(text: str, href: str) -> float:
+                    t = text.lower()
+                    h = (href or "").lower()
+                    token_hits = sum(1 for tok in target_tokens if tok in t or tok in h)
+                    length_bonus = sum(len(tok) for tok in target_tokens if tok in t or tok in h) / 50.0
+                    phrase = " ".join(target_tokens)
+                    phrase_bonus = 1 if phrase and phrase in t else 0
+                    return token_hits + length_bonus + phrase_bonus
+
+                best_link = None
+                best_score = -1
+                for link in links:
+                    text = await link.inner_text() or ""
+                    href = await link.get_attribute("href")
+                    s = score(text, href or "")
+                    if s > best_score:
+                        best_score = s
+                        best_link = link
+
+                if best_link:
+                    href = await best_link.get_attribute("href")
+                    if href:
+                        if href.startswith("/"):
+                            return f"https://alfrensia.com{href}"
+                        return href
+        except Exception as e:
+            logger.warning(f"Alfrensia search failed for '{product_name}': {e}")
+        return None
+
+
+class SigmaComputerScraper(BaseScraper):
+    """Scraper for Sigma Computer (sigma-computer.com) — Egyptian PC components store."""
+
+    store_id = "sigma"
+
+    def __init__(self):
+        super().__init__(rate_limit_delay=1.5)
+
+    async def extract_price(self, page: Page) -> Optional[float]:
+        selectors = [
+            "meta[itemprop='price'][content]",
+            ".product-price .price",
+            "span.price",
+            "[class*='price']",
+            ".price",
+        ]
+        for selector in selectors:
+            try:
+                if "[content]" in selector:
+                    el = await page.query_selector(selector)
+                    if el:
+                        content = await el.get_attribute("content")
+                        if content:
+                            p = self.parse_price_text(content)
+                            if p is not None:
+                                return p
+                else:
+                    el = await page.query_selector(selector)
+                    if el:
+                        text = await el.inner_text()
+                        p = self.parse_price_text(text)
+                        if p is not None:
+                            return p
+            except Exception:
+                continue
+        return None
+
+    async def extract_stock_status(self, page: Page) -> bool:
+        try:
+            oos = await page.query_selector("text=/sold out|out of stock/i")
+            if oos:
+                return False
+        except Exception:
+            pass
+        try:
+            btn = await page.query_selector("button[name='add'], .product-form__submit, button.add-to-cart")
+            if btn:
+                disabled = await btn.get_attribute("disabled")
+                if disabled is not None:
+                    return False
+        except Exception:
+            pass
+        return True
+
+    async def extract_title(self, page: Page) -> Optional[str]:
+        selectors = ["h1.product__title", "h1[itemprop='name']", "h1"]
+        for selector in selectors:
+            try:
+                el = await page.query_selector(selector)
+                if el:
+                    return (await el.inner_text()).strip()
+            except Exception:
+                continue
+        return None
+
+    def get_default_currency(self) -> str:
+        return "EGP"
+
+    async def search_product(self, page: Page, product_name: str) -> Optional[str]:
+        try:
+            search_url = f"https://www.sigma-computer.com/en/search?q={'+'.join(product_name.split())}"
+            await page.goto(search_url, timeout=20000)
+            await page.wait_for_timeout(2000)
+
+            selector = 'a[href*="/item?id="]'
+            links = await page.query_selector_all(selector)
+            if links:
+                target_tokens = [t for t in product_name.lower().split() if t]
+
+                def score(text: str, href: str) -> float:
+                    t = text.lower()
+                    h = (href or "").lower()
+                    token_hits = sum(1 for tok in target_tokens if tok in t or tok in h)
+                    length_bonus = sum(len(tok) for tok in target_tokens if tok in t or tok in h) / 50.0
+                    phrase = " ".join(target_tokens)
+                    phrase_bonus = 1 if phrase and phrase in t else 0
+                    return token_hits + length_bonus + phrase_bonus
+
+                best_link = None
+                best_score = -1
+                for link in links:
+                    text = await link.inner_text() or ""
+                    href = await link.get_attribute("href")
+                    s = score(text, href or "")
+                    if s > best_score:
+                        best_score = s
+                        best_link = link
+
+                if best_link:
+                    href = await best_link.get_attribute("href")
+                    if href:
+                        if href.startswith("/"):
+                            return f"https://www.sigma-computer.com{href}"
+                        return href
+        except Exception as e:
+            logger.warning(f"Sigma Computer search failed for '{product_name}': {e}")
+        return None
+
+
+# Register new store scrapers
+ScraperFactory.register_scraper("alfrensia", AlfrensiaScraper)
+ScraperFactory.register_scraper("sigma", SigmaComputerScraper)

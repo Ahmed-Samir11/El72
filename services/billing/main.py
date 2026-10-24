@@ -36,8 +36,8 @@ PAYMOB_HMAC_SECRET = os.getenv("PAYMOB_HMAC_SECRET", "")
 PAYMOB_SIGNATURE_HEADER = os.getenv("PAYMOB_SIGNATURE_HEADER", "X-Paymob-Signature")
 PAYMOB_CHECKOUT_URL = os.getenv("PAYMOB_CHECKOUT_URL", "")
 
-PACKAGE_CREDITS = {"standard": 10, "premium": 30}
-PACKAGE_PRICES = {"standard": 30.0, "premium": 90.0}
+PACKAGE_CREDITS = {"free": 100, "standard": 10, "premium": 30}
+PACKAGE_PRICES = {"free": 0.0, "standard": 30.0, "premium": 90.0}
 # Exact piastre (minor-unit) values — the validation path uses integers,
 # never float multiplication.
 PACKAGE_PRICES_PAISA = {"standard": 3000, "premium": 9000}
@@ -548,9 +548,9 @@ def get_dynamic_pricing():
     return {
         "currency": "EGP",
         "packages": {
-            "free": {"credits": 3, "price_egp": 0},
-            "standard": {"credits": 10, "price_egp": 30},
-            "premium": {"credits": 30, "price_egp": 90},
+            "free": {"credits": PACKAGE_CREDITS["free"], "price_egp": PACKAGE_PRICES["free"]},
+            "standard": {"credits": PACKAGE_CREDITS["standard"], "price_egp": PACKAGE_PRICES["standard"]},
+            "premium": {"credits": PACKAGE_CREDITS["premium"], "price_egp": PACKAGE_PRICES["premium"]},
         },
     }
 

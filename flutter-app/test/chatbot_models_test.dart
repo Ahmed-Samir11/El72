@@ -264,6 +264,7 @@ void main() {
       final json = {
         'message': 'Found 2 products',
         'session_id': '11223344-5566-4777-8888-9999aabbccdd',
+        'language': 'ar',
         'search_results': [
           {
             'store_id': 'amazon_eg',
@@ -280,6 +281,7 @@ void main() {
       final response = ChatResponseModel.fromJson(json);
       expect(response.message, 'Found 2 products');
       expect(response.sessionId, '11223344-5566-4777-8888-9999aabbccdd');
+      expect(response.language, 'ar');
       expect(response.searchResults.length, 1);
       expect(response.searchResults[0].title, 'Laptop');
     });

@@ -93,7 +93,7 @@ def test_get_pricing(client):
     assert response.status_code == 200
     data = response.json()
     assert data["currency"] == "EGP"
-    assert data["packages"]["free"]["credits"] == 3
+    assert data["packages"]["free"]["credits"] == 100
     assert data["packages"]["standard"]["credits"] == 10
     assert data["packages"]["premium"]["credits"] == 30
 

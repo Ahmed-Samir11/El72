@@ -124,6 +124,7 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
         role: 'bot',
         content: response.message,
         createdAt: DateTime.now(),
+        language: response.language,
       );
       setState(() {
         _messages.add(botMsg);
