@@ -20,7 +20,7 @@ def test_get_balance_lazy_provisions_free_allowance_without_writing():
     user = SimpleNamespace(id="user-1", tier="free")
     db = _database()
 
-    assert get_balance(db, user) == 3
+    assert get_balance(db, user) == 100
     db.add.assert_not_called()
 
 
@@ -30,7 +30,7 @@ def test_deduct_creates_credit_row_and_ledger_entry():
 
     remaining = deduct(db, user)
 
-    assert remaining == 2
+    assert remaining == 99
     db.add.assert_called()
     db.flush.assert_called()
 
