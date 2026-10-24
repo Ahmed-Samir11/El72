@@ -788,6 +788,42 @@ abstract class AppLocalizations {
   /// **'Couldn\'t refresh the price right now - try again in a moment.'**
   String get priceRefreshFailed;
 
+  /// No description provided for @deleteTrackerTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete tracker?'**
+  String get deleteTrackerTitle;
+
+  /// No description provided for @deleteTrackerBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Stop tracking \"{title}\"? Its price history will be removed.'**
+  String deleteTrackerBody(String title);
+
+  /// No description provided for @deleteTrackerConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete'**
+  String get deleteTrackerConfirm;
+
+  /// No description provided for @trackerDeleted.
+  ///
+  /// In en, this message translates to:
+  /// **'Tracker deleted'**
+  String get trackerDeleted;
+
+  /// No description provided for @retry.
+  ///
+  /// In en, this message translates to:
+  /// **'Retry'**
+  String get retry;
+
+  /// No description provided for @trackerDeleteFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t delete the tracker - try again.'**
+  String get trackerDeleteFailed;
+
   /// No description provided for @genericLoadError.
   ///
   /// In en, this message translates to:
