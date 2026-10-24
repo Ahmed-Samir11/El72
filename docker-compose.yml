@@ -91,8 +91,10 @@ services:
       DATABASE_URL: "${DATABASE_URL_DOCKER:?Set DATABASE_URL_DOCKER in .env}"
       API_BASE_URL: "http://api:8000"
       SECRET_KEY: "${SECRET_KEY:?Set SECRET_KEY in .env}"
+      LLM_BASE_URL: "http://host.docker.internal:8080/v1"
+      LLM_MODEL: "E:\\LocalModels\\Swift-1.5-Qwen3.8-27B-GSQ-RCO-IQ3_XXS-mtp.gguf"
     ports:
-      - "127.0.0.1:8003:8003"
+      - "0.0.0.0:8003:8003"
     healthcheck:
       test: ["CMD", "curl", "-fs", "http://localhost:8003/health"]
       interval: 15s

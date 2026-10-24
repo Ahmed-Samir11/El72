@@ -90,7 +90,9 @@ class ChatbotRepository {
               receiveTimeout: const Duration(seconds: 120),
             ),
           ),
-      _storage = storage ?? const FlutterSecureStorage();
+      _storage = storage ?? const FlutterSecureStorage() {
+    print('DEBUG: chatbotBaseUrl = ${AppConfig.chatbotBaseUrl}');
+  }
 
   /// Read the stored JWT access token.
   Future<String?> _getToken() async {
@@ -113,15 +115,19 @@ class ChatbotRepository {
     required String sessionId,
     required String message,
   }) async {
-    final options = RequestOptions(
-      method: 'POST',
-      path: '/chatbot/message',
-      data: {'session_id': sessionId, 'message': message},
-    );
-    await _addAuthHeader(options);
+    final headers = <String, dynamic>{};
+    final token = await _getToken();
+    if (token != null) {
+      headers['Authorization'] = 'Bearer $token';
+    }
+    final options = Options(headers: headers);
 
     try {
-      final response = await _dio.fetch(options);
+      final response = await _dio.post(
+        '/chatbot/message',
+        data: {'session_id': sessionId, 'message': message},
+        options: options,
+      );
 
       if (response.statusCode == 200 && response.data is Map<String, dynamic>) {
         return ChatResponseModel.fromJson(
