@@ -115,6 +115,9 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                               );
 
                               if (isValid && context.mounted) {
+                                // A new login may be a different account:
+                                // don't carry over the previous chat.
+                                ref.invalidate(chatConversationProvider);
                                 Navigator.pushNamedAndRemoveUntil(
                                   context,
                                   AppRoutes.dashboard,

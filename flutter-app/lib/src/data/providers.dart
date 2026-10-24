@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'models/chat_conversation.dart';
 import 'models/credit_balance_model.dart';
 import 'models/deal_model.dart';
 import 'models/platform_stats_model.dart';
@@ -40,6 +41,17 @@ final creditsRepositoryProvider = Provider<CreditsRepository>((ref) {
 /// Client for the chatbot service (`services/chatbot`).
 final chatbotRepositoryProvider = Provider<ChatbotRepository>((ref) {
   return ChatbotRepository();
+});
+
+/// The chat tab's conversation (messages, results, draft, session).
+///
+/// Lives outside the chat page because the dashboard rebuilds the selected
+/// tab from scratch, which would otherwise wipe the chat on every tab switch.
+/// Invalidate on logout so the next account starts with an empty chat.
+final chatConversationProvider = ChangeNotifierProvider<ChatConversation>((
+  ref,
+) {
+  return ChatConversation();
 });
 
 /// The current user's active tracked items.

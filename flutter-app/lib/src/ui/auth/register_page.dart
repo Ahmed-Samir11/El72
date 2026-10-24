@@ -93,6 +93,9 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
                               );
 
                               if (isValid && context.mounted) {
+                                // A new account must not see a previous
+                                // account's chat.
+                                ref.invalidate(chatConversationProvider);
                                 Navigator.pushNamedAndRemoveUntil(
                                   context,
                                   '/dashboard',

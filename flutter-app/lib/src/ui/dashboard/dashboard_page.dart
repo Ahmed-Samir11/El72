@@ -329,6 +329,7 @@ class _ProfileTab extends ConsumerWidget {
               ref.invalidate(trackedItemsProvider);
               ref.invalidate(liveDealsProvider);
               ref.invalidate(platformStatsProvider);
+              ref.invalidate(chatConversationProvider);
               if (context.mounted) {
                 Navigator.of(
                   context,
