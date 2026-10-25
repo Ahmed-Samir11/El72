@@ -30,18 +30,32 @@ class SearchResultCard extends StatelessWidget {
     final colorScheme = Theme.of(context).colorScheme;
     final locale = Localizations.localeOf(context);
 
+    void unableToOpen() {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(l10n.unableToOpen(result.title))));
+    }
+
     return Card(
       margin: const EdgeInsets.symmetric(vertical: 6),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
         onTap: () async {
-          final uri = Uri.tryParse(result.url);
-          if (uri == null || !await launchUrl(uri)) {
-            if (!context.mounted) return;
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text(l10n.unableToOpen(result.title))),
-            );
+          // The url was scraped out of a third-party page, so it may be empty,
+          // malformed or not a web address at all (`file:`, `data:`, some app's
+          // custom scheme). Only absolute http/https may leave the app; anything
+          // else is reported instead of being handed to another program.
+          if (!result.isLaunchable) {
+            unableToOpen();
+            return;
+          }
+          final uri = Uri.parse(result.url);
+          try {
+            if (!await launchUrl(uri)) unableToOpen();
+          } catch (error) {
+            debugPrint('Could not open product page: $error');
+            unableToOpen();
           }
         },
         child: Padding(
@@ -83,7 +97,11 @@ class SearchResultCard extends StatelessWidget {
               ),
               const SizedBox(width: 8),
               FilledButton(
-                onPressed: isEnabled ? onAddToFeed : null,
+                // The tracker is created from this url, so an unopenable url
+                // cannot be tracked either — the button is disabled with it.
+                onPressed: (isEnabled && result.isLaunchable)
+                    ? onAddToFeed
+                    : null,
                 child: Text(l10n.addToFeed),
               ),
             ],

@@ -49,7 +49,16 @@ PRODUCT_TRANSLATIONS = {
     "كتب": "books",
 }
 
-_NUMBER_WORDS = {
+# The alef in these keys is spelled two ways: bare, or with a hamza above it.
+# Queries carry both, so the hamza variant is folded onto the bare alef on the
+# input side (see _parse_number) and the keys are folded the same way here.
+# Without the fold, a key carrying a hamza alef is unreachable and its scale
+# word silently stops multiplying: the two-thousand word reads as one thousand.
+_HAMZA_ALEF = "\u0623"  # alef with hamza above
+_BARE_ALEF = "\u0627"  # alef
+
+
+_NUMBER_WORDS_BY_SPELLING = {
     "الف": 1000,
     "ألف": 1000,
     "ألفين": 2000,
@@ -88,6 +97,14 @@ _PRICE_PATTERN = re.compile(
 )
 
 
+# Fold the table onto exactly the spelling the input is folded to, so every
+# scale word stays reachable however its alef is written.
+_NUMBER_WORDS = {
+    word.replace(_HAMZA_ALEF, _BARE_ALEF): value
+    for word, value in _NUMBER_WORDS_BY_SPELLING.items()
+}
+
+
 def detect_language(text: str) -> str:
     """Return ``ar`` when at least 30% of alphabetic chars are Arabic."""
     arabic_count = len(_ARABIC_CHAR_RE.findall(text))
@@ -98,9 +115,29 @@ def detect_language(text: str) -> str:
 def _parse_number(value: str) -> Optional[float]:
     """Parse Arabic or Latin digits and common Egyptian number words."""
     normalized = value.translate(_EASTERN_DIGITS).strip().lower()
+    normalized = normalized.replace(_HAMZA_ALEF, _BARE_ALEF)
     normalized = re.sub(r"\s+", " ", normalized)
     if normalized in _NUMBER_WORDS:
         return float(_NUMBER_WORDS[normalized])
+
+    # A price filter usually arrives with the number and its scale word in
+    # one captured run ("12 alef-lam-fe"). ``_NUMBER_WORDS`` is the only place
+    # that writes out every spelling each scale word is typed with, so the
+    # scale word is looked up there instead of repeating a second list of
+    # spellings here: a hardcoded list that missed one spelling turned 12000
+    # into 12 EGP.
+    parts = normalized.split(" ")
+    for take in (2, 1):
+        if len(parts) <= take:
+            continue
+        factor = _NUMBER_WORDS.get(" ".join(parts[-take:]))
+        if factor is None:
+            continue
+        try:
+            digits = float(" ".join(parts[:-take]).replace(",", ""))
+        except ValueError:
+            continue
+        return digits * factor
 
     multiplier = 1
     for word, factor in (
@@ -124,16 +161,28 @@ def _parse_number(value: str) -> Optional[float]:
 
 def parse_arabic_intent(message: str) -> Dict[str, Any]:
     """Parse an Egyptian Arabic product query and optional maximum price."""
-    msg = message.strip()
+    msg = message.strip().replace(_HAMZA_ALEF, _BARE_ALEF)
     max_price: Optional[float] = None
     query = msg
     match = _PRICE_PATTERN.search(msg)
     if match:
-        max_price = _parse_number(match.group(1))
-        query = f"{msg[:match.start()]} {msg[match.end():]}"
+        # The alternation stops at the first scale-word spelling that fits, so
+        # a longer one is cut short: the two-thousand word is also the one-
+        # thousand word with a suffix, and matching the shorter form turns 2000
+        # into 1000. When nothing else was consumed after the captured run,
+        # any letters glued to it belong to the same word, so the capture is
+        # extended to the end of that word. A space-separated currency word
+        # has already been consumed by the pattern, so it is never swallowed.
+        end = match.end(1)
+        if match.end() == end:
+            while end < len(msg) and _ARABIC_CHAR_RE.match(msg[end]):
+                end += 1
+        max_price = _parse_number(msg[match.start(1) : end])
+        query = f"{msg[:match.start()]} {msg[max(match.end(), end):]}"
     else:
         standalone = re.search(
-            r"([0-9٠-٩][0-9٠-٩,٬.]*|ألفين|ألف|الف|خمستاشر(?:\s+ألف)?|نص مليون|عشر تلاف|عشرة آلاف)"
+            r"([0-9٠-٩][0-9٠-٩,٬.]*"
+            r"|ألفين|ألف|الف|خمستاشر(?:\s+ألف)?|نص مليون|عشر تلاف|عشرة آلاف)"
             r"\s*(?:جنيه|جنية|egp)?\s*$",
             msg,
             re.IGNORECASE,

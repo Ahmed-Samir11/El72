@@ -210,6 +210,37 @@ void main() {
       expect(result.inStock, true);
     });
 
+    test('is only launchable over http or https', () {
+      // Scraped markup decides ``url``; a page can serve a ``file:``, ``data:``
+      // or custom-scheme address, and handing that to another program is not
+      // a choice the app should make on a tap.
+      SearchResultModel withUrl(String url) => SearchResultModel(
+        storeId: 'amazon_eg',
+        storeName: 'Amazon Egypt',
+        title: 'Phone',
+        price: 1000.0,
+        currency: 'EGP',
+        url: url,
+        imageUrl: '',
+        inStock: true,
+      );
+
+      for (final url in const ['https://amazon.eg/p', 'http://example.com/p']) {
+        expect(withUrl(url).isLaunchable, true, reason: url);
+      }
+      for (final url in const [
+        '',
+        'amazon.eg/p',
+        '/product/123',
+        'file:///etc/passwd',
+        'data:text/html,<script>bad()</script>',
+        'javascript:alert(1)',
+        'app-store://deeplink',
+      ]) {
+        expect(withUrl(url).isLaunchable, false, reason: url);
+      }
+    });
+
     test('throws on missing store_id', () {
       expect(
         () => SearchResultModel.fromJson({
@@ -314,6 +345,25 @@ void main() {
         }),
         throwsFormatException,
       );
+    });
+
+    test('tracker_created defaults to false and reports the server value', () {
+      // A 200 response can create nothing at all, so success must come from
+      // this flag and never from ``searchResults`` being non-empty.
+      final without = ChatResponseModel.fromJson({
+        'message': 'x',
+        'session_id': 's',
+        'search_results': [],
+      });
+      expect(without.trackerCreated, false);
+
+      final flagged = ChatResponseModel.fromJson({
+        'message': 'x',
+        'session_id': 's',
+        'search_results': [],
+        'tracker_created': true,
+      });
+      expect(flagged.trackerCreated, true);
     });
   });
 }

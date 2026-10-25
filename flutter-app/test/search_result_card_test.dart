@@ -1,0 +1,92 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:elhaq_tracker/l10n/app_localizations.dart';
+import 'package:elhaq_tracker/src/core/styles/app_theme.dart';
+import 'package:elhaq_tracker/src/data/models/chat_message_model.dart';
+import 'package:elhaq_tracker/src/ui/chatbot/search_result_card.dart';
+
+SearchResultModel _withUrl(String url) => SearchResultModel(
+  storeId: '2b_egypt',
+  storeName: '2B Egypt',
+  title: 'Monitor',
+  price: 100.0,
+  currency: 'EGP',
+  url: url,
+  imageUrl: '',
+  inStock: true,
+);
+
+Widget _cardApp(SearchResultModel result) {
+  return MaterialApp(
+    theme: AppTheme.light(),
+    localizationsDelegates: const [
+      AppLocalizations.delegate,
+      GlobalMaterialLocalizations.delegate,
+      GlobalWidgetsLocalizations.delegate,
+      GlobalCupertinoLocalizations.delegate,
+    ],
+    supportedLocales: const [Locale('en'), Locale('ar')],
+    // A Scaffold is required: the card reports a refused launch through the
+    // nearest ScaffoldMessenger.
+    home: Scaffold(
+      body: Center(
+        child: SearchResultCard(
+          result: result,
+          onAddToFeed: () {},
+          isEnabled: true,
+        ),
+      ),
+    ),
+  );
+}
+
+FilledButton _feedButton(WidgetTester tester) =>
+    tester.widget<FilledButton>(find.byType(FilledButton));
+
+void main() {
+  testWidgets('a web address is offered for tracking', (tester) async {
+    for (final url in const [
+      'https://2b.com.eg/en/product.html',
+      'http://example.com/product',
+    ]) {
+      await tester.pumpWidget(_cardApp(_withUrl(url)));
+      expect(_withUrl(url).isLaunchable, true, reason: url);
+      expect(_feedButton(tester).onPressed, isNotNull, reason: url);
+      await tester.pumpWidget(const SizedBox());
+    }
+  });
+
+  testWidgets(
+    'a scraped url that is not a web page is neither offered nor launched',
+    (tester) async {
+      for (final url in const [
+        '',
+        'file:///etc/passwd',
+        'data:text/html,<script>alert(1)</script>',
+        'javascript:alert(1)',
+        'app-store://deeplink',
+        'not a url',
+      ]) {
+        await tester.pumpWidget(_cardApp(_withUrl(url)));
+
+        // No tracker can be created from it, so the button is inert...
+        expect(_withUrl(url).isLaunchable, false, reason: url);
+        expect(_feedButton(tester).onPressed, isNull, reason: url);
+
+        // ...and tapping the card says so instead of handing the address to
+        // another program.
+        await tester.tap(find.byType(InkWell).first);
+        await tester.pump();
+        expect(
+          find.text('Unable to open Monitor'),
+          findsOneWidget,
+          reason: url,
+        );
+
+        await tester.pumpWidget(const SizedBox());
+      }
+    },
+  );
+}

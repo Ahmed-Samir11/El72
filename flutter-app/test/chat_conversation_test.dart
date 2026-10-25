@@ -1,0 +1,51 @@
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:elhaq_tracker/src/data/models/chat_conversation.dart';
+import 'package:elhaq_tracker/src/data/models/chat_message_model.dart';
+
+ChatMessageModel _message(int i) => ChatMessageModel(
+  id: 'id-$i',
+  sessionId: 'session-1',
+  role: 'user',
+  content: 'message $i',
+  createdAt: DateTime.utc(2026, 10, 24),
+);
+
+void main() {
+  test('the chat holds a bounded history and drops the oldest first', () {
+    final chat = ChatConversation();
+    for (var i = 0; i < ChatConversation.maxMessages + 7; i++) {
+      chat.addMessage(_message(i));
+    }
+
+    // The conversation lives for the whole app run, so an unbounded list is a
+    // slow leak; the cap trims from the front, the half the user is least likely
+    // to still be reading, and keeps the newest exchanges intact.
+    expect(chat.messages.length, ChatConversation.maxMessages);
+    expect(chat.messages.first.content, 'message 7');
+    expect(
+      chat.messages.last.content,
+      'message ${ChatConversation.maxMessages + 6}',
+    );
+  });
+
+  test('reset empties the chat and marks in-flight replies stale', () {
+    final chat = ChatConversation()
+      ..addMessage(_message(0))
+      ..draft = 'half typed'
+      ..sessionId = 'session-1';
+    chat.isSending = true;
+    final revisionUnderRequest = chat.revision;
+
+    chat.reset();
+
+    expect(chat.messages, isEmpty);
+    expect(chat.searchResults, isEmpty);
+    expect(chat.sessionId, isNull);
+    expect(chat.draft, isEmpty);
+    // The typing indicator must not stay lit on a chat the user cleared...
+    expect(chat.isSending, isFalse);
+    // ...and the request that was still arriving is recognisable as abandoned.
+    expect(chat.revision, revisionUnderRequest + 1);
+  });
+}

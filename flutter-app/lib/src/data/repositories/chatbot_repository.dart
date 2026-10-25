@@ -97,6 +97,30 @@ class ChatbotRepository {
     return await _storage.read(key: 'access_token');
   }
 
+  /// A session id as it may appear in a URL path segment.
+  //
+  /// The app generates a UUID, but the value is overwritten with whatever the
+  /// chatbot echoes back, and it is interpolated into `/chatbot/sessions/<id>`.
+  /// An id carrying `/`, `?`, `#` or `..` would silently move the request to a
+  /// different route instead of staying an identifier, so it is rejected before
+  /// the request is built. Other calls put the id in the JSON body, where it
+  /// cannot affect routing, and need no such check.
+  static final _uuidPattern = RegExp(
+    r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+    caseSensitive: false,
+  );
+
+  static String _sessionPathSegment(String sessionId) {
+    if (!_uuidPattern.hasMatch(sessionId)) {
+      throw ArgumentError.value(
+        sessionId,
+        'sessionId',
+        'must be a UUID before it is used as a path segment',
+      );
+    }
+    return sessionId;
+  }
+
   /// Request [Options] carrying the Bearer token, if one is stored.
   ///
   /// Requests go through `_dio.get`/`_dio.post` with these options so the
@@ -234,7 +258,7 @@ class ChatbotRepository {
     Options options,
   ) async {
     final response = await _dio.get(
-      '/chatbot/sessions/$sessionId',
+      '/chatbot/sessions/${_sessionPathSegment(sessionId)}',
       options: options,
     );
 

@@ -31,6 +31,7 @@ POSTGRES_MIGRATIONS = [
     "migrations/postgres/0002_payment_history_fk_alignment.sql",
     "migrations/postgres/0003_payment_audit_log_action_events.sql",
     "migrations/postgres/0004_schema_compatibility_repairs.sql",
+    "migrations/postgres/0005_free_tier_100_credits.sql",
     "migrations/0007_cash_payments.sql",
     "migrations/0008_payment_audit_log_cash_events.sql",
     "migrations/0009_admin_dispute_refunds.sql",
@@ -118,6 +119,27 @@ def test_fk_alignment_has_uuid_precondition_guard():
     )
     assert "uuid" in body.lower(), "0002 should fail explicitly on a UUID users.id"
     assert "RAISE EXCEPTION" in body.upper()
+
+
+def test_free_tier_top_up_sums_credit_reasons_null_safely():
+    """A credit transaction whose ``reason`` is unexpected must still count.
+
+    The allowance is the balance minus every transaction other than this
+    migration's own grants. Written as ``reason <> 'free_tier_100'`` the
+    comparison evaluates to NULL for a transaction whose reason is NULL, which
+    silently drops a real credit movement from the sum and so over-grants
+    on every run. ``IS DISTINCT FROM`` is the null-safe form of the same test.
+    """
+    body = _strip_comments(
+        (INFRA_SQL / "migrations/postgres/0005_free_tier_100_credits.sql").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert "IS DISTINCT FROM" in body.upper()
+    assert "reason <>" not in body.lower(), (
+        "0005 must compare reasons null-safely: `<>` hides a NULL reason from"
+        " the allowance sum"
+    )
 
 
 def test_env_example_has_no_plaintext_passwords():

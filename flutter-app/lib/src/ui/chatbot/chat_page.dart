@@ -27,7 +27,11 @@ class ChatPage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final repository = ref.read(chatbotRepositoryProvider);
-    final conversation = ref.read(chatConversationProvider);
+    // Watched, not read: logout invalidates chatConversationProvider, and the
+    // page must bind to the replacement instance instead of holding the disposed
+    // conversation. (Chat state changes also repaint through the state's own
+    // listener; this watch only covers provider replacement.)
+    final conversation = ref.watch(chatConversationProvider);
     return _ChatPageBody(repository: repository, conversation: conversation);
   }
 }
@@ -60,6 +64,20 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
   }
 
   @override
+  void didUpdateWidget(_ChatPageBody oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // The conversation lives in a provider that logout (and the demo account)
+    // invalidates, so this widget can be rebuilt against a different instance.
+    // Re-attach to the new one; the old listener would keep a disposed chat
+    // repainting this page forever.
+    if (identical(oldWidget.conversation, widget.conversation)) return;
+    oldWidget.conversation.removeListener(_onConversationChanged);
+    widget.conversation.addListener(_onConversationChanged);
+    // The draft belongs to the conversation, so show the new instance's draft.
+    _controller.text = widget.conversation.draft;
+  }
+
+  @override
   void dispose() {
     _conversation.removeListener(_onConversationChanged);
     _controller.dispose();
@@ -71,6 +89,17 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
   void _onConversationChanged() {
     if (mounted) setState(() {});
   }
+
+  /// Whether a reply that lands now still belongs to the conversation its
+  /// request was sent against.
+  //
+  /// Both ways it can stop belonging: [ChatConversation.reset] (the refresh
+  /// button, or a logout) bumps [ChatConversation.revision], and an invalidated
+  /// provider replaces the instance outright. Either way the answer must be
+  /// dropped, not written back into a chat the user already cleared.
+  bool _isCurrent(ChatConversation conversation, int revision) =>
+      identical(conversation, _conversation) &&
+      conversation.revision == revision;
 
   /// Generate a cryptographically secure random UUID v4 string.
   /// Used for message IDs and session IDs.
@@ -107,6 +136,7 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
     // arrives after the user switched tabs is still recorded there; only the
     // snackbars need a mounted page.
     final conversation = _conversation;
+    final revision = conversation.revision;
 
     // Generate or reuse session ID
     final sessionId = conversation.sessionId ??= _generateSessionId();
@@ -131,6 +161,12 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
         message: text,
       );
 
+      if (!_isCurrent(conversation, revision)) {
+        // The user reset the chat (or logged out) while this was in flight.
+        debugPrint('Dropping a chat reply that arrived after its conversation');
+        return;
+      }
+
       // Adopt the server's session ID — the server may create a new session
       // if the client-generated ID didn't match an existing one.
       conversation.sessionId = response.sessionId;
@@ -151,6 +187,8 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
     } catch (e) {
       // Log the detailed error for debugging, show generic message to user
       debugPrint('Chatbot error: $e');
+
+      if (!_isCurrent(conversation, revision)) return;
       conversation.isSending = false;
 
       if (e is UnauthorizedException) {
@@ -183,6 +221,7 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
     if (!mounted) return;
 
     final conversation = _conversation;
+    final revision = conversation.revision;
 
     // Defensive null guard: session ID must be set before adding to feed
     final sessionId = conversation.sessionId;
@@ -199,12 +238,14 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
         productUrl: result.url,
       );
 
+      if (!_isCurrent(conversation, revision)) return;
+
       if (!mounted) return;
 
-      // The chatbot answers 200 even when the tracker could not be created;
-      // it only echoes the product back on success. Otherwise show its
-      // explanation (e.g. "couldn't add", "no credits").
-      if (response.searchResults.isEmpty) {
+      // The chatbot answers 200 whether or not a tracker was created; tracker_created
+      // is the answer, so the service's explanation ("couldn't add", "no
+      // results") is shown instead of a success toast.
+      if (!response.trackerCreated) {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text(response.message)));
@@ -219,6 +260,7 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
         ),
       );
     } catch (e) {
+      if (!_isCurrent(conversation, revision)) return;
       if (!mounted) return;
 
       // Log the detailed error for debugging
@@ -236,14 +278,16 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
       if (e is InsufficientCreditsException) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text(e.toString())));
+        ).showSnackBar(SnackBar(content: Text(e.message)));
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Failed to add tracker. Please try again.')),
         );
       }
     } finally {
-      conversation.isSending = false;
+      if (_isCurrent(conversation, revision)) {
+        conversation.isSending = false;
+      }
     }
   }
 

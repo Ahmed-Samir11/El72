@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -9,23 +11,81 @@ import 'package:elhaq_tracker/src/data/models/chat_message_model.dart';
 import 'package:elhaq_tracker/src/data/providers.dart';
 import 'package:elhaq_tracker/src/data/repositories/chatbot_repository.dart';
 import 'package:elhaq_tracker/src/ui/chatbot/chat_page.dart';
+import 'package:elhaq_tracker/src/ui/chatbot/chat_widgets.dart';
 import 'package:elhaq_tracker/src/ui/chatbot/search_result_card.dart';
 
-/// Returns a fixed search response without touching the network.
+/// Returns fixed chatbot answers without touching the network.
+///
+/// [holdReply] keeps `sendMessage` waiting until the test releases it, which is
+/// how a reply that lands after the user reset the chat is exercised.
+/// [trackerCreated] drives the add-to-feed outcome, exactly as the service
+/// does: 200 either way, the flag says whether a tracker exists.
+/// [addFailure] makes the add-to-feed call throw the domain exception the
+/// repository maps an HTTP status to.
 class _FakeChatbotRepository extends ChatbotRepository {
-  _FakeChatbotRepository(this.results);
+  _FakeChatbotRepository({
+    List<SearchResultModel>? results,
+    bool trackerCreated = false,
+    bool holdReply = false,
+    Exception? addFailure,
+  }) : _results = results ?? const [],
+       _trackerCreated = trackerCreated,
+       _holdReply = holdReply,
+       _addFailure = addFailure,
+       super();
 
-  final List<SearchResultModel> results;
+  final List<SearchResultModel> _results;
+  final bool _trackerCreated;
+  final bool _holdReply;
+  final Exception? _addFailure;
+
+  final Completer<ChatResponseModel> _release = Completer<ChatResponseModel>();
+
+  int _addToFeedCalls = 0;
+  int get addToFeedCalls => _addToFeedCalls;
 
   @override
   Future<ChatResponseModel> sendMessage({
     required String sessionId,
     required String message,
   }) async {
-    return ChatResponseModel(
-      message: 'I found ${results.length} products',
+    final response = ChatResponseModel(
+      message: 'I found ${_results.length} products',
       sessionId: sessionId,
-      searchResults: results,
+      searchResults: _results,
+    );
+    if (_holdReply) {
+      await _release.future;
+    }
+    return response;
+  }
+
+  /// Lets a held reply land. Used by the reset test.
+  void releaseReply() {
+    if (!_release.isCompleted) {
+      _release.complete(
+        ChatResponseModel(
+          message: 'A reply that arrived late',
+          sessionId: 'late',
+          searchResults: _results,
+        ),
+      );
+    }
+  }
+
+  @override
+  Future<ChatResponseModel> addToFeed({
+    required String sessionId,
+    String? productUrl,
+    double? targetPrice,
+  }) async {
+    _addToFeedCalls++;
+    if (_addFailure != null) throw _addFailure;
+    return ChatResponseModel(
+      message: _trackerCreated ? 'Tracker created' : 'No results were added.',
+      sessionId: sessionId,
+      searchResults: _results.isEmpty ? const [] : _results.sublist(0, 1),
+      trackerCreated: _trackerCreated,
     );
   }
 }
@@ -58,16 +118,25 @@ Widget _app(ProviderContainer container, Widget home) {
   );
 }
 
-ProviderContainer _container(List<SearchResultModel> results) {
+ProviderContainer _containerWith(ChatbotRepository repository) {
   final container = ProviderContainer(
-    overrides: [
-      chatbotRepositoryProvider.overrideWithValue(
-        _FakeChatbotRepository(results),
-      ),
-    ],
+    overrides: [chatbotRepositoryProvider.overrideWithValue(repository)],
   );
   addTearDown(container.dispose);
   return container;
+}
+
+/// Types a query and sends it, then waits for the reply.
+Future<void> _send(WidgetTester tester, String text) async {
+  await tester.enterText(find.byType(TextField), text);
+  await tester.tap(find.byIcon(Icons.send));
+  await tester.pumpAndSettle();
+}
+
+/// Tap the first result card's "Add to Feed" button.
+Future<void> _addToFeed(WidgetTester tester) async {
+  await tester.tap(find.widgetWithText(FilledButton, 'Add to Feed').first);
+  await tester.pump();
 }
 
 void main() {
@@ -75,11 +144,10 @@ void main() {
     tester,
   ) async {
     final results = List.generate(3, _result);
-    await tester.pumpWidget(_app(_container(results), const ChatPage()));
+    final container = _containerWith(_FakeChatbotRepository(results: results));
+    await tester.pumpWidget(_app(container, const ChatPage()));
 
-    await tester.enterText(find.byType(TextField), '2k monitor under 12k');
-    await tester.tap(find.byIcon(Icons.send));
-    await tester.pumpAndSettle();
+    await _send(tester, '2k monitor under 12k');
 
     // A layout failure (e.g. an unbounded ListView) would surface here.
     expect(tester.takeException(), isNull);
@@ -91,12 +159,11 @@ void main() {
   });
 
   testWidgets('chat survives leaving and returning to the tab', (tester) async {
-    final container = _container(List.generate(2, _result));
+    final results = List.generate(2, _result);
+    final container = _containerWith(_FakeChatbotRepository(results: results));
     await tester.pumpWidget(_app(container, const ChatPage()));
 
-    await tester.enterText(find.byType(TextField), '2k monitor under 12k');
-    await tester.tap(find.byIcon(Icons.send));
-    await tester.pumpAndSettle();
+    await _send(tester, '2k monitor under 12k');
     await tester.enterText(find.byType(TextField), 'unsent draft');
 
     // Switching tabs disposes the chat page (the dashboard rebuilds tabs).
@@ -109,5 +176,129 @@ void main() {
     expect(find.text('I found 2 products'), findsOneWidget);
     expect(find.byType(SearchResultCard), findsNWidgets(2));
     expect(find.text('unsent draft'), findsOneWidget);
+  });
+
+  testWidgets('a created tracker is announced by name, not by result count', (
+    tester,
+  ) async {
+    final repository = _FakeChatbotRepository(
+      results: List.generate(1, _result),
+      trackerCreated: true,
+    );
+    final container = _containerWith(repository);
+    await tester.pumpWidget(_app(container, const ChatPage()));
+
+    await _send(tester, '2k monitor under 12k');
+    await _addToFeed(tester);
+    await tester.pumpAndSettle();
+
+    expect(repository.addToFeedCalls, 1);
+    expect(
+      find.text(
+        'Tracker created for "Samsung Odyssey G5 27" 2K Monitor 0". '
+        'You will be notified on price changes.',
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('a failed add shows the chatbot explanation, not success', (
+    tester,
+  ) async {
+    // The service echoes the product back even when it created nothing, so
+    // only tracker_created may announce success.
+    final repository = _FakeChatbotRepository(
+      results: List.generate(1, _result),
+      trackerCreated: false,
+    );
+    final container = _containerWith(repository);
+    await tester.pumpWidget(_app(container, const ChatPage()));
+
+    await _send(tester, '2k monitor under 12k');
+    await _addToFeed(tester);
+    await tester.pumpAndSettle();
+
+    expect(repository.addToFeedCalls, 1);
+    expect(find.text('No results were added.'), findsOneWidget);
+    expect(find.textContaining('Tracker created for'), findsNothing);
+  });
+
+  testWidgets('running out of credits while adding says so', (tester) async {
+    final repository = _FakeChatbotRepository(
+      results: List.generate(1, _result),
+      addFailure: const InsufficientCreditsException(
+        'You have run out of credits. Purchase a plan to create trackers.',
+      ),
+    );
+    final container = _containerWith(repository);
+    await tester.pumpWidget(_app(container, const ChatPage()));
+
+    await _send(tester, '2k monitor under 12k');
+    await _addToFeed(tester);
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text(
+        'You have run out of credits. Purchase a plan to create trackers.',
+      ),
+      findsOneWidget,
+    );
+    // The typing indicator is gone: the add finished, it did not hang.
+    expect(find.byType(BotTypingIndicator), findsNothing);
+  });
+
+  testWidgets('resetting while a reply is in flight drops the reply', (
+    tester,
+  ) async {
+    final repository = _FakeChatbotRepository(
+      results: List.generate(2, _result),
+      holdReply: true,
+    );
+    final container = _containerWith(repository);
+    await tester.pumpWidget(_app(container, const ChatPage()));
+
+    await tester.enterText(find.byType(TextField), '2k monitor under 12k');
+    await tester.tap(find.byIcon(Icons.send));
+    await tester.pump();
+
+    // The user clears the chat while the search is still running.
+    await tester.tap(find.byIcon(Icons.refresh));
+    await tester.pumpAndSettle();
+
+    expect(find.text('No messages yet. Start a conversation.'), findsOneWidget);
+    // reset() also abandons the request, so no typing indicator is left.
+    expect(find.byType(BotTypingIndicator), findsNothing);
+
+    // The abandoned answer arrives afterwards and must not come back.
+    repository.releaseReply();
+    await tester.pumpAndSettle();
+
+    expect(find.text('A reply that arrived late'), findsNothing);
+    expect(find.text('2k monitor under 12k'), findsNothing);
+    expect(find.byType(SearchResultCard), findsNothing);
+    expect(find.text('No messages yet. Start a conversation.'), findsOneWidget);
+  });
+
+  testWidgets('an invalidated conversation is replaced, not kept', (
+    tester,
+  ) async {
+    final repository = _FakeChatbotRepository(
+      results: List.generate(2, _result),
+    );
+    final container = _containerWith(repository);
+    await tester.pumpWidget(_app(container, const ChatPage()));
+
+    await _send(tester, '2k monitor under 12k');
+    expect(find.text('I found 2 products'), findsOneWidget);
+
+    // logout/demo invalidates chatConversationProvider; the page must bind to
+    // the new instance instead of the disposed one it captured.
+    final before = container.read(chatConversationProvider);
+    container.invalidate(chatConversationProvider);
+    await tester.pumpAndSettle();
+
+    expect(identical(container.read(chatConversationProvider), before), false);
+    expect(find.text('No messages yet. Start a conversation.'), findsOneWidget);
+    expect(find.byType(SearchResultCard), findsNothing);
   });
 }

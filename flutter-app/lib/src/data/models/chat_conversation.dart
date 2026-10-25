@@ -10,8 +10,19 @@ import 'chat_message_model.dart';
 /// arrives while the tab is not visible is still recorded here and shown
 /// when the user comes back.
 class ChatConversation extends ChangeNotifier {
+  /// Cap on the messages held in memory. The conversation object lives for the
+  /// whole app run, so an ever-growing list is a slow leak; the server keeps the
+  /// full history regardless. Oldest messages are dropped first.
+  static const int maxMessages = 200;
+
   final List<ChatMessageModel> _messages = [];
   final List<SearchResultModel> _searchResults = [];
+
+  /// Bumped whenever the conversation is cleared while a reply is in flight.
+  /// A caller captures it before sending and ignores the response when the value
+  /// no longer matches — a chat the user reset must not be repopulated by a
+  /// message they abandoned.
+  int _revision = 0;
 
   /// Server session id; null until the first message is sent.
   String? sessionId;
@@ -29,6 +40,10 @@ class ChatConversation extends ChangeNotifier {
 
   bool get isSending => _isSending;
 
+  /// The revision an in-flight request was started under. Compare it with
+  /// [revision] when the reply lands.
+  int get revision => _revision;
+
   set isSending(bool value) {
     if (_isSending == value) return;
     _isSending = value;
@@ -37,6 +52,9 @@ class ChatConversation extends ChangeNotifier {
 
   void addMessage(ChatMessageModel message) {
     _messages.add(message);
+    if (_messages.length > maxMessages) {
+      _messages.removeRange(0, _messages.length - maxMessages);
+    }
     notifyListeners();
   }
 
@@ -53,6 +71,11 @@ class ChatConversation extends ChangeNotifier {
     _searchResults.clear();
     sessionId = null;
     draft = '';
+    // A reset also abandons the reply that may still be arriving: the typing
+    // indicator must stop, and the pending response has to be recognisable as
+    // stale to whoever sent it.
+    _isSending = false;
+    _revision++;
     notifyListeners();
   }
 }

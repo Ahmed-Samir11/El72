@@ -143,6 +143,19 @@ class SearchResultModel {
   final String imageUrl;
   final bool inStock;
 
+  /// Whether this result's url may be handed to a browser at all.
+  //
+  /// `url` is scraped out of third-party pages, so it can be empty, malformed,
+  /// or carry a scheme that is not a web page (`file:`, `data:`, some app's
+  /// custom scheme). Only absolute http/https may leave the app; the card's
+  /// tap-to-open and its "Add to Feed" button are both gated on this so a hostile
+  /// page cannot make the app launch another program.
+  bool get isLaunchable {
+    final uri = Uri.tryParse(url);
+    if (uri == null || !uri.isAbsolute) return false;
+    return uri.scheme == 'http' || uri.scheme == 'https';
+  }
+
   const SearchResultModel({
     required this.storeId,
     required this.storeName,
@@ -209,11 +222,20 @@ class ChatResponseModel {
   final List<SearchResultModel> searchResults;
   final String language;
 
+  /// Whether the chatbot created a tracked item while answering.
+  //
+  /// The add-to-feed endpoint answers 200 whether or not a tracker was made, so
+  /// the UI must read this flag instead of assuming a non-empty
+  /// [searchResults] means success — an ordinary search reply also carries
+  /// results, and a failed add can still echo the product it tried.
+  final bool trackerCreated;
+
   const ChatResponseModel({
     required this.message,
     required this.sessionId,
     required this.searchResults,
     this.language = 'en',
+    this.trackerCreated = false,
   });
 
   factory ChatResponseModel.fromJson(Map<String, dynamic> json) {
@@ -239,6 +261,7 @@ class ChatResponseModel {
           .map((r) => SearchResultModel.fromJson(r))
           .toList(),
       language: json['language'] as String? ?? 'en',
+      trackerCreated: json['tracker_created'] as bool? ?? false,
     );
   }
 }

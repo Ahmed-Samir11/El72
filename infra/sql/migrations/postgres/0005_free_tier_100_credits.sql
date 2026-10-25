@@ -9,15 +9,18 @@
 -- A row's free allowance is its balance minus the sum of its credit
 -- transactions other than this migration's 'free_tier_100' grants (i.e.
 -- undoing deductions and paid top-ups): the starting balance plus any
--- free-tier grant already given. Only rows whose allowance is below 100 are
--- topped up, by the difference. Once granted, the allowance computes to
+-- free-tier grant already given. A transaction whose reason is unexpected
+-- (including NULL) stays inside the sum because IS DISTINCT FROM is null-safe:
+-- ``reason <> 'free_tier_100'`` evaluates to NULL for such a row, which would
+-- ignore a real credit movement and over-grant. Only rows whose allowance is
+-- below 100 are topped up, by the difference. Once granted, the allowance computes to
 -- exactly 100, so re-running this migration (the bootstrap re-applies every
 -- file) is a no-op and rows provisioned at 100 are never touched.
 
 WITH allowance AS (
     SELECT c.user_id,
            c.balance - COALESCE(
-               SUM(t.amount) FILTER (WHERE t.reason <> 'free_tier_100'), 0
+               SUM(t.amount) FILTER (WHERE t.reason IS DISTINCT FROM 'free_tier_100'), 0
            ) AS starting_credits
     FROM public.user_credits AS c
     JOIN public.users AS u ON u.id = c.user_id
