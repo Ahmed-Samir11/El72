@@ -15148,3 +15148,250 @@ WARNING: Diff truncated from 306696 to 50000 chars
 Review completed in 256.7s
 Decision: REQUEST_CHANGES (confidence: 0.78)
 Findings: 7
+## PR Review: chatbot: cached searches, LLM-free extraction, store health and stable result ids
+Model: local/qwen-27b
+Files changed: 32
+WARNING: Diff truncated from 318203 to 50000 chars
+
+### Raw LLM Response
+{
+  "summary": "This PR adds chatbot caching, store health, stable result addressing, shared JWT/robots groundwork, and supporting SQL migrations. The visible migration and schema work is unusually well documented and mostly idempotent, but the migration has operational locking/backfill risks and the newest-search-group design needs a clearer sortable identifier or query strategy.",
+  "decision": "REQUEST_CHANGES",
+  "confidence": 0.74,
+  "findings": [
+    {
+      "file": "infra/sql/migrations/0011_chatbot_query_cache.sql",
+      "line": 90,
+      "severity": "WARNING",
+      "category": "performance",
+      "title": "Index swap and schema change can block production traffic",
+      "description": "The migration drops an existing index and creates a replacement index without CONCURRENTLY, and also adds NOT NULL columns to chat_search_results. On a populated table this can hold ACCESS EXCLUSIVE or SHARE locks and block reads/writes for the duration of the migration.",
+      "suggestion": "If chat_search_results is large, perform the index swap with DROP INDEX CONCURRENTLY and CREATE INDEX CONCURRENTLY outside the migration transaction, or schedule a maintenance window. Consider adding nullable columns first, backfilling, then enforcing constraints in a separate low-impact migration."
+    },
+    {
+      "file": "infra/sql/migrations/0011_chatbot_query_cache.sql",
+      "line": 121,
+      "severity": "WARNING",
+      "category": "performance",
+      "title": "Legacy backfill UPDATE is unbounded",
+      "description": "The backfill updates every row where search_id IS NULL and uses a correlated NOT EXISTS check. On a large chat_search_results table this can become a long-running UPDATE that holds locks and delays the migration.",
+      "suggestion": "Batch the backfill by session or by id range, or precompute sessions that need backfilling. Add an index supporting the scan, for example on (search_id, session_id, created_at, id), and run the backfill with LIMIT batches if the table may be large."
+    },
+    {
+      "file": "infra/sql/schema/postgres.sql",
+      "line": 396,
+      "severity": "WARNING",
+      "category": "correctness",
+      "title": "search_id does not by itself identify the newest search group",
+      "description": "The schema comment says the newest group is what ordinal and reference-less add-to-feed resolve against, but search_id is a nullable UUID. If it is generated with gen_random_uuid or uuid4, ordering by search_id is not chronological, and the added index does not help find the newest group.",
+      "suggestion": "Use a sortable identifier such as UUID v7, or add a search_created_at/search_seq column and index (session_id, search_created_at DESC, position). Alternatively, document that the service resolves the newest group by max(created_at) and add an index on (session_id, created_at DESC)."
+    },
+    {
+      "file": "infra/sql/migrations/0011_chatbot_query_cache.sql",
+      "line": 52,
+      "severity": "INFO",
+      "category": "correctness",
+      "title": "Column type retype guard does not validate data",
+      "description": "The migration retypes expires_at_epoch from floating-point types to BIGINT based only on the column type. If an earlier revision accidentally stored fractional values, the ALTER can fail.",
+      "suggestion": "Either validate that no fractional values exist before altering, or use a rounding cast such as expires_at_epoch::BIGINT with an explicit rounding rule, and log affected rows if any are found."
+    },
+    {
+      "file": "infra/sql/schema/postgres.sql",
+      "line": 400,
+      "severity": "INFO",
+      "category": "correctness",
+      "title": "Add defensive CHECK constraints for cache payload and position",
+      "description": "chat_query_cache.results is JSONB but is not constrained to be an array, and chat_search_results.position has no non-negative check. These constraints would catch service bugs earlier.",
+      "suggestion": "Add CHECK (jsonb_typeof(results) = 'array') to chat_query_cache and CHECK (position >= 0) to chat_search_results, matching the service's expected shape."
+    },
+    {
+      "file": "infra/sql/migrations/0011_chatbot_query_cache.sql",
+      "line": 142,
+      "severity": "INFO",
+      "category": "correctness",
+      "title": "Backfill intentionally leaves legacy rows unreachable when a session already has live rows",
+      "description": "The backfill refuses to touch any session that already contains a non-null search_id. This avoids interleaving old and new results, but it leaves old NULL rows permanently unreachable for that session.",
+      "suggestion": "This may be acceptable, but document it clearly and consider adding a test that mixed legacy/live sessions behave as intended. If old rows should remain addressable, archive or re-stamp them under a separate legacy search id."
+    },
+    {
+      "file": "review_history.md",
+      "line": 14314,
+      "severity": "INFO",
+      "category": "documentation",
+      "title": "Generated review history is committed in the feature PR",
+      "description": "The PR adds a large generated review history block, including stale findings that do not match the current diff, such as a soft robots mode when the compose file now sets strict. This bloats the diff and can confuse future reviewers.",
+      "suggestion": "Keep generated review artifacts out of feature branches, or commit them in a separate chore branch. If they must be kept, mark them clearly as historical and avoid including stale findings in the main feature diff."
+    },
+    {
+      "file": "requirements-test.txt",
+      "line": 44,
+      "severity": "INFO",
+      "category": "architecture",
+      "title": "Verify runtime robots dependency is present",
+      "description": "The visible diff adds robotexclusionrulesparser to requirements-test.txt. The chatbot runtime uses the shared robots handler, so the production requirements must also include it or the runtime must have a documented fallback.",
+      "suggestion": "Confirm services/chatbot/requirements.txt and any scraper runtime requirements include robotexclusionrulesparser, or make the import optional with a clear fallback and test coverage."
+    },
+    {
+      "file": "docker-compose.yml",
+      "line": 96,
+      "severity": "INFO",
+      "category": "architecture",
+      "title": "Many new tunables are strings without startup validation",
+      "description": "The compose file introduces many cache, crawl, robots, and store-health environment variables. If any are invalid, the service may fail late or silently fall back to defaults.",
+      "suggestion": "Validate and normalize these settings at startup, log the effective configuration, and fail fast on invalid integers or unsupported robots modes."
+    }
+  ],
+  "missed_tests": [
+    "Migration 0011 applied to a populated chat_search_results table with legacy rows, mixed legacy/live sessions, and rerun idempotency.",
+    "Backfill ordering, deterministic legacy search_id generation, and behavior when a session already contains a live search_id.",
+    "Index swap behavior on a large table, including whether queries remain fast after dropping the old index.",
+    "Cache profile version invalidation and negative TTL preservation after a DB restart.",
+    "Add-to-feed result_id ownership checks: a foreign session or user cannot resolve another user's result_id.",
+    "Arabic ordinal resolution after restart and after multiple searches in the same session.",
+    "Store health cooldown after STORE_FAILURE_THRESHOLD consecutive failures and GET /chatbot/stores status reporting.",
+    "Robots strict mode: Crawl-Delay honored exactly, and delays above MAX_CRAWL_DELAY reported as robots_denied.",
+    "Rate limiting keyed by JWT sub with fallback to client address."
+  ],
+  "positive_notes": [
+    "The migration and schema are heavily commented and explain the operational and product-addressing intent.",
+    "The migration is mostly idempotent and guards type/constraint changes with catalog checks.",
+    "The cache table design includes an expiry index and separates positive and negative TTLs.",
+    "Stable result addressing with position and search_id is a strong fix for restart-sensitive ordinal commands.",
+    "The PR adds substantial test coverage and documents the intended architecture in a plan file."
+  ]
+}
+
+
+Review completed in 272.7s
+Decision: REQUEST_CHANGES (confidence: 0.74)
+Findings: 9
+## PR Review: chatbot: cached searches, LLM-free extraction, store health and stable result ids
+Model: local/qwen-27b
+Files changed: 32
+WARNING: Diff truncated from 319868 to 50000 chars
+
+### Raw LLM Response
+{
+  "summary": "This PR adds a substantial chatbot performance/reliability layer: deterministic extraction, bounded caches, store health, stable result addressing, shared JWT/robots handling, and supporting SQL migrations. The visible infra/schema changes are well documented and mostly idempotent, but the diff is truncated so core chatbot logic cannot be fully verified; several migration/index/cache/security verification points should be addressed before merge.",
+  "decision": "REQUEST_CHANGES",
+  "confidence": 0.72,
+  "findings": [
+    {
+      "file": "infra/sql/migrations/0011_chatbot_query_cache.sql",
+      "line": 100,
+      "severity": "WARNING",
+      "category": "performance",
+      "title": "New composite index may not support the documented newest-search lookup",
+      "description": "The migration comments say the newest search group is found by created_at, but the created index is (session_id, search_id, position). A query that needs the latest search_id for a session, e.g. WHERE session_id = ? AND search_id IS NOT NULL ORDER BY created_at DESC LIMIT 1, cannot use this index for the created_at ordering and may still scan all rows in the session.",
+      "suggestion": "Add an index that matches the actual lookup, such as (session_id, created_at DESC) or (session_id, search_id, created_at), or change the service query to use an indexed path. Add a regression test that asserts the query plan or at least the behavior for many searches in one session."
+    },
+    {
+      "file": "infra/sql/migrations/0011_chatbot_query_cache.sql",
+      "line": 105,
+      "severity": "WARNING",
+      "category": "correctness",
+      "title": "Nullable search_id can allow new ungrouped rows to break ordinal resolution",
+      "description": "search_id is nullable to support legacy rows, but if any new insert path forgets to set it, those rows become invisible to the grouped read or can mix with legacy fallback behavior. The migration does not enforce that post-migration rows are grouped.",
+      "suggestion": "Ensure every insert path sets search_id and add tests for that. If feasible, add a trigger or post-migration constraint that rejects NULL search_id for rows created after the migration, or make the service fail loudly when search_id is missing."
+    },
+    {
+      "file": "infra/sql/migrations/0011_chatbot_query_cache.sql",
+      "line": 31,
+      "severity": "WARNING",
+      "category": "architecture",
+      "title": "Index creation inside a single-transaction migration can lock chat_search_results",
+      "description": "CREATE INDEX IF NOT EXISTS is run inside the migration transaction. On a large chat_search_results table this can block writes for the duration of the index build. The migration notes the table is small, but production data volume may differ.",
+      "suggestion": "Either document the maintenance window, pre-create the index concurrently outside the bootstrap transaction, or split the migration so index creation can use CREATE INDEX CONCURRENTLY in a non-transactional step."
+    },
+    {
+      "file": "infra/sql/schema/postgres.sql",
+      "line": 405,
+      "severity": "WARNING",
+      "category": "security",
+      "title": "Global query cache must not persist session/user-specific fields",
+      "description": "chat_query_cache is keyed globally by store/query/price window. If cached results include result_id, position, session_id, user_id, or other session-specific fields, they can leak across sessions or cause stale result addressing. The plan says these fields are stripped, but the schema itself does not prevent it.",
+      "suggestion": "Strip session-specific fields before cache writes and add tests proving cached payloads are detached and free of result_id/position/session/user fields. Consider a DB CHECK or normalized cache payload shape if practical."
+    },
+    {
+      "file": "requirements-test.txt",
+      "line": 44,
+      "severity": "WARNING",
+      "category": "architecture",
+      "title": "Runtime dependency for robots parsing is not visible in production requirements",
+      "description": "The visible diff adds robotexclusionrulesparser only to requirements-test.txt. The chatbot runtime uses services/common/robots.py, so if services/chatbot/requirements.txt does not also include this package, production may fall back to a stub or fail.",
+      "suggestion": "Confirm and, if needed, add robotexclusionrulesparser to services/chatbot/requirements.txt. Add a container smoke test that imports the chatbot entrypoint and the robots helper."
+    },
+    {
+      "file": "infra/sql/migrations/0011_chatbot_query_cache.sql",
+      "line": 150,
+      "severity": "WARNING",
+      "category": "testing",
+      "title": "Backfill intentionally leaves legacy rows unreachable in mixed sessions",
+      "description": "The backfill excludes sessions that already contain grouped rows, so old NULL-search_id rows in mixed sessions remain NULL and are ignored by grouped reads. This may be intentional, but it changes user-visible history for sessions that were partially upgraded.",
+      "suggestion": "Add tests for mixed sessions: old rows plus new grouped rows. Confirm the UI/service behavior is acceptable, or backfill old rows into a synthetic legacy group if they should remain visible."
+    },
+    {
+      "file": "infra/sql/schema/postgres.sql",
+      "line": 415,
+      "severity": "INFO",
+      "category": "performance",
+      "title": "chat_query_cache has no index on store_id",
+      "description": "The cache table has a unique cache_key and an expiry index, but store_id is only a plain column. If store health or cache diagnostics query by store_id, these queries may scan the table.",
+      "suggestion": "Add an index on store_id if any operational query filters by store. Otherwise document that store_id is only for human inspection."
+    },
+    {
+      "file": "infra/sql/schema/postgres.sql",
+      "line": 400,
+      "severity": "INFO",
+      "category": "performance",
+      "title": "Cache payload size is not enforced at the database level",
+      "description": "CACHE_MAX_PRODUCTS is configured in docker-compose, but chat_query_cache.results is unconstrained JSONB. A service bug could insert oversized result sets and grow the cache table despite the intended cap.",
+      "suggestion": "Consider a CHECK constraint such as jsonb_array_length(results) <= 40, or enforce the cap in a helper and add tests for oversized payloads."
+    },
+    {
+      "file": "infra/sql/migrations/0011_chatbot_query_cache.sql",
+      "line": 120,
+      "severity": "INFO",
+      "category": "correctness",
+      "title": "Backfill uses md5-derived UUIDs",
+      "description": "md5(session_id::text || '#chatbot-pre-0011-legacy')::uuid is deterministic and likely valid, but md5 is non-cryptographic and collisions are theoretically possible across different sessions.",
+      "suggestion": "Use a deterministic UUID generator such as uuid_generate_v5(session_id) if available, or document the collision risk. At minimum, add a test that the cast works on the target PostgreSQL version."
+    },
+    {
+      "file": "plans/chatbot-enhancements.md",
+      "line": 1,
+      "severity": "INFO",
+      "category": "documentation",
+      "title": "Plan file describes future PRs that are not implemented in this diff",
+      "description": "The plan includes PR 2, PR 3, and PR 4 work (intents, Flutter UX, analytics streams) that are not visible in this PR. This is useful context but can confuse reviewers about the actual scope.",
+      "suggestion": "Add a short note at the top saying this PR implements only PR 1, or split the plan into per-PR sections with explicit scope."
+    }
+  ],
+  "missed_tests": [
+    "Migration idempotency on a fresh database and on a database where an earlier revision of 0011 already ran, including the expires_at_epoch retype and named constraint guard.",
+    "Backfill behavior for legacy sessions with no grouped rows, sessions with mixed legacy/grouped rows, and sessions with no rows.",
+    "Arabic ordinal resolution after a restart against backfilled legacy rows and against the newest of two searches in the same session.",
+    "Cache writes strip session-specific fields such as result_id, position, session_id, and user_id before storing global cache entries.",
+    "Negative DB cache entries preserve CACHE_NEGATIVE_TTL_SECONDS instead of being promoted into memory with the positive TTL.",
+    "CACHE_PROFILE_VERSION invalidates all cache entries when changed.",
+    "Docker image import smoke test for services/common/auth.py and services/common/robots.py from the chatbot container.",
+    "Runtime dependency test that robotexclusionrulesparser is available in the chatbot image, not only in test requirements.",
+    "Strict robots behavior: disallowed paths are refused, declared Crawl-Delay is honored exactly, and delays above MAX_CRAWL_DELAY report robots_denied.",
+    "Add-to-feed ownership check: a guessed session_id owned by another user cannot expose or add another user's search results.",
+    "product_url deprecated alias is scoped to the current session/user and cannot add arbitrary products.",
+    "Store health/cooldown behavior after container restart, especially whether blocked-store cooldowns are persisted or only in-process."
+  ],
+  "positive_notes": [
+    "The migration is idempotent and carefully guards column type changes and named constraints.",
+    "The cache table design is thoughtful: hashed cache keys, expiry index, negative TTL, sweep strategy, and profile-version invalidation are documented.",
+    "The backfill is deterministic, scoped to legacy rows, and avoids re-ranking sessions that already have grouped rows.",
+    "docker-compose now requires SECRET_KEY and defaults robots handling to strict, which is a security improvement.",
+    "The plan is unusually thorough and ties each change to a concrete audit finding.",
+    "The PR adds test-only sqlglot validation for schema/migration files, which should catch malformed SQL before bootstrap."
+  ]
+}
+
+
+Review completed in 266.0s
+Decision: REQUEST_CHANGES (confidence: 0.72)
+Findings: 10
