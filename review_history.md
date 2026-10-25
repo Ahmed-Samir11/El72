@@ -14902,3 +14902,144 @@ WARNING: Diff truncated from 264958 to 50000 chars
 Review completed in 204.8s
 Decision: REQUEST_CHANGES (confidence: 0.72)
 Findings: 13
+## PR Review: chatbot: cached searches, LLM-free extraction, store health and stable result ids
+Model: local/qwen-27b
+Files changed: 32
+WARNING: Diff truncated from 282954 to 50000 chars
+
+### Raw LLM Response
+{
+  "summary": "This PR adds a substantial chatbot performance and reliability layer: deterministic JSON-LD/HTML extraction, bounded search/result caches, store health/cooldowns, stable result addressing, shared JWT/robots groundwork, and supporting migrations/tests. The direction is strong, but the migration backfill, new stable result IDs, and deployment/import/dependency paths need more defensive verification before merge.",
+  "decision": "REQUEST_CHANGES",
+  "confidence": 0.72,
+  "findings": [
+    {
+      "file": "infra/sql/migrations/0011_chatbot_query_cache.sql",
+      "line": 93,
+      "severity": "WARNING",
+      "category": "correctness",
+      "title": "Backfill can leave mixed old/new positions in resumed sessions",
+      "description": "The backfill only re-ranks a session when MAX(position) is 0. If a pre-migration session later receives new results after the migration, the new rows will have non-zero positions, so the old rows remain at 0. That can make ordinal lookups ambiguous or resolve to the wrong row.",
+      "suggestion": "Track legacy rows explicitly, for example use position NULL or -1, add a migration watermark/created_at cutoff, or backfill only rows that predate the migration. Avoid using 0 as both a valid first position and an unset marker."
+    },
+    {
+      "file": "infra/sql/schema/postgres.sql",
+      "line": 391,
+      "severity": "WARNING",
+      "category": "correctness",
+      "title": "position NOT NULL DEFAULT 0 cannot distinguish legacy rows from the first result",
+      "description": "The service uses 0-based positions, so position 0 is a valid first result. Pre-existing rows also receive position 0, making it impossible to tell whether a row is legacy or intentionally first. This complicates safe backfill and ordinal resolution.",
+      "suggestion": "Consider making position nullable or using a sentinel such as -1 for unset rows. If keeping 0, add a separate legacy flag or migration watermark so backfill can safely identify old rows."
+    },
+    {
+      "file": "services/chatbot/main.py",
+      "line": 1,
+      "severity": "WARNING",
+      "category": "security",
+      "title": "Stable result IDs need session/user scoping",
+      "description": "The PR introduces result_id and stable result addressing, but the visible diff does not show that add-to-feed or ordinal resolution validates the result against the current session and authenticated user. If result_id is accepted without ownership checks, a guessed or leaked ID could reference another user's search results.",
+      "suggestion": "Scope result_id lookups by session_id and user_id, and return the same generic 'nothing to add' response for foreign sessions. Add tests proving another user's result_id cannot be added."
+    },
+    {
+      "file": "services/chatbot/Dockerfile",
+      "line": 18,
+      "severity": "WARNING",
+      "category": "architecture",
+      "title": "Shared library import path may not match runtime layout",
+      "description": "The plan describes copying services/common to /app/common, while other services may import services.common.*. If the chatbot modules use the same package path, the container can fail at startup with ImportError.",
+      "suggestion": "Verify the chatbot imports match the copied layout, e.g. common.auth vs services.common.auth. Add a container smoke test that imports the chatbot entrypoint and shared auth/robots modules."
+    },
+    {
+      "file": "requirements-test.txt",
+      "line": 44,
+      "severity": "WARNING",
+      "category": "architecture",
+      "title": "Runtime robots parser dependency should be confirmed in production requirements",
+      "description": "The visible diff adds robotexclusionrulesparser to requirements-test.txt. The chatbot runtime uses the shared robots handler, so if services/chatbot/requirements.txt does not also include this package, production may fall back to a stub or fail.",
+      "suggestion": "Confirm services/chatbot/requirements.txt includes robotexclusionrulesparser, or make the import optional with an explicit, documented fallback and a startup warning."
+    },
+    {
+      "file": "scripts/db-bootstrap.sh",
+      "line": 1,
+      "severity": "WARNING",
+      "category": "architecture",
+      "title": "Migration registration is not visible in the diff",
+      "description": "The plan says migration 0011 must be registered in scripts/db-bootstrap.sh and guarded by test_migration_files.py. The visible diff does not show that registration. If it is missing, existing migrated databases may not receive chat_query_cache or chat_search_results.position.",
+      "suggestion": "Ensure scripts/db-bootstrap.sh applies 0011_chatbot_query_cache.sql and that the migration-file test passes. Fresh databases are covered by schema/postgres.sql, but migrated databases need the migration."
+    },
+    {
+      "file": "services/chatbot/cache.py",
+      "line": 1,
+      "severity": "WARNING",
+      "category": "security",
+      "title": "Cache key may not invalidate on crawler/robots configuration changes",
+      "description": "The described cache key is based on store, query, and price bounds. If ROBOTS_TXT_MODE, crawler settings, locale, or extraction strategy changes, cached results from a previous configuration can be served under a stricter policy or with different assumptions.",
+      "suggestion": "Include a normalized configuration version or relevant policy fields in the cache key, or add cache invalidation when crawler/robots settings change."
+    },
+    {
+      "file": "docker-compose.yml",
+      "line": 95,
+      "severity": "INFO",
+      "category": "documentation",
+      "title": "Windows-specific LLM model path is committed",
+      "description": "The compose file contains a Windows-style local model path. This is likely local-development-only, but it can be confusing or break non-Windows environments if copied.",
+      "suggestion": "Move the local model path to a local override file or document that it is a developer-only value."
+    },
+    {
+      "file": "plans/chatbot-enhancements.md",
+      "line": 1,
+      "severity": "INFO",
+      "category": "documentation",
+      "title": "Plan document includes future PR scope not implemented here",
+      "description": "The plan describes PRs 2-4, Flutter changes, Redis Streams, and other services that are not part of this diff. This is useful context but may make the PR scope look larger than it is.",
+      "suggestion": "Clearly mark the future phases as out of scope for this PR, or split the plan into a separate design document if it will not all be implemented together."
+    },
+    {
+      "file": "review_history.md",
+      "line": 1,
+      "severity": "INFO",
+      "category": "documentation",
+      "title": "Generated review history is included in the PR",
+      "description": "The diff adds a large generated review history file. This can be useful for auditability but adds noise to the PR and may contain stale or truncated review content.",
+      "suggestion": "Consider keeping review history in a separate branch, artifact, or generated file that is excluded from normal PR diffs."
+    },
+    {
+      "file": "docker-compose.yml",
+      "line": 104,
+      "severity": "INFO",
+      "category": "architecture",
+      "title": "Cache sweep frequency is not exposed as a tunable",
+      "description": "The plan mentions CACHE_SWEEP_EVERY_WRITES=20, but the compose file exposes other cache tunables without this one. Operators may expect to tune sweep frequency alongside TTL and max products.",
+      "suggestion": "Expose CACHE_SWEEP_EVERY_WRITES in docker-compose.yml with a default, or document that it is intentionally fixed."
+    }
+  ],
+  "missed_tests": [
+    "Migration test: a pre-migration session that receives new results after migration does not produce ambiguous ordinal resolution.",
+    "Migration test: running 0011_chatbot_query_cache.sql twice is idempotent and does not re-rank live sessions.",
+    "Schema test: position uses a sentinel or nullable value that distinguishes legacy rows from the first result.",
+    "Add-to-feed test: result_id from another user or session is rejected and does not expose foreign search results.",
+    "Docker smoke test: the chatbot image can import its entrypoint plus shared auth and robots modules.",
+    "Dependency test: services/chatbot/requirements.txt includes robotexclusionrulesparser for runtime use.",
+    "Cache test: changing ROBOTS_TXT_MODE or crawler configuration invalidates or bypasses cached results.",
+    "Cache test: DB negative entries are promoted into memory with the negative TTL, not the positive TTL.",
+    "Cache test: returned cached result lists are detached copies and mutation by the service does not corrupt cache entries.",
+    "Robots test: a declared Crawl-Delay is honored exactly, and a delay above MAX_CRAWL_DELAY reports robots_denied instead of crawling faster.",
+    "Arabic NLP test: standalone 'أf' and digit-prefixed forms like '10أf' parse correctly.",
+    "Arabic NLP test: combining-mark normalization does not break product queries or add commands.",
+    "Rate-limit test: JWT sub is used when present and client IP is used when absent.",
+    "Store health test: cooldown after STORE_FAILURE_THRESHOLD and status reporting for blocked/timeout/robots_denied stores."
+  ],
+  "positive_notes": [
+    "The move to deterministic JSON-LD and card extraction before LLM fallback is a strong latency and reliability improvement.",
+    "Bounded TTL/LRU in-process state plus a Postgres mirror addresses the previous unbounded in-process cache and restart loss.",
+    "Store health/cooldowns and store_status make partial failures visible to users instead of silently returning empty results.",
+    "The migrations are written to be idempotent and include an expiry index for cache sweeps.",
+    "The PR adds a substantial test plan and appears to include focused tests for extractors, cache, store health, and chatbot behavior.",
+    "Shared JWT and robots handling in services/common reduces duplication and drift between services."
+  ]
+}
+
+
+Review completed in 265.3s
+Decision: REQUEST_CHANGES (confidence: 0.72)
+Findings: 11
