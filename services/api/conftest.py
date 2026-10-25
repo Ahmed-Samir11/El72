@@ -5,9 +5,17 @@ and every TestClient shares the same "testclient" client IP. Without a reset
 between tests, per-minute quotas would accumulate across the whole suite and
 start returning spurious 429s. The autouse fixture below gives every test a
 fresh rate-limit state.
+
+SECRET_KEY has no default in the service itself (a hard-coded signing key would
+let anyone forge tokens), so the suite supplies a test-only value before any
+API module is imported.
 """
 
+import os
+
 import pytest
+
+os.environ.setdefault("SECRET_KEY", "test-secret-key-not-used-in-production")
 
 
 @pytest.fixture(autouse=True)

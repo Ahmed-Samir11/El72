@@ -35,6 +35,7 @@ POSTGRES_MIGRATIONS = [
     "migrations/0008_payment_audit_log_cash_events.sql",
     "migrations/0009_admin_dispute_refunds.sql",
     "migrations/0010_subscriptions.sql",
+    "migrations/0011_chatbot_query_cache.sql",
 ]
 TIMESCALE_MIGRATIONS = [
     "migrations/timescaledb/0000_baseline.sql",
@@ -133,3 +134,215 @@ def test_env_example_has_no_plaintext_passwords():
                 "",
                 "CHANGE_ME",
             ), f"{key} appears to carry a committed secret in .env.example"
+
+
+def test_numbered_migrations_are_applied_by_the_bootstrap():
+    """A migration the bootstrap never applies leaves a column missing.
+
+    The chatbot inserts ``chat_search_results.position`` and writes its cache
+    through ``chat_query_cache``, so a database bootstrapped without 0011 fails
+    at query time rather than at startup. Legacy migrations are applied by
+    operators only, hence the narrower scan of the numbered files.
+    """
+    text = BOOTSTRAP.read_text(encoding="utf-8")
+    referenced = set(re.findall(r"infra/sql/[A-Za-z0-9_./-]+\.sql", text))
+
+    for directory in (
+        INFRA_SQL / "migrations",
+        INFRA_SQL / "migrations/postgres",
+        INFRA_SQL / "migrations/timescaledb",
+    ):
+        for path in sorted(directory.glob("*.sql")):
+            rel = "infra/sql/" + path.relative_to(INFRA_SQL).as_posix()
+            assert rel in referenced, f"{rel} is never applied by the bootstrap"
+
+
+def test_migration_tables_are_declared_in_the_canonical_schema():
+    """A fresh database and a migrated one must end up with the same shape.
+
+    ``0011_chatbot_query_cache.sql`` creates what an existing deployment is
+    missing; ``schema/postgres.sql`` is what a new one starts from. If they
+    drift, the chatbot's cache writes fail on exactly one of the two paths.
+    """
+    migration = (INFRA_SQL / "migrations/0011_chatbot_query_cache.sql").read_text(
+        encoding="utf-8"
+    )
+    schema = (INFRA_SQL / "schema/postgres.sql").read_text(encoding="utf-8")
+
+    for table in re.findall(r"CREATE TABLE IF NOT EXISTS (\w+)", migration):
+        assert (
+            f"CREATE TABLE IF NOT EXISTS {table} (" in schema
+        ), f"{table} is created by 0011 but missing from schema/postgres.sql"
+
+    for index in re.findall(r"CREATE INDEX IF NOT EXISTS (\w+)", migration):
+        assert (
+            f"CREATE INDEX IF NOT EXISTS {index}" in schema
+        ), f"{index} is created by 0011 but missing from schema/postgres.sql"
+
+    # position is added by ALTER TABLE here and must exist in the fresh table.
+    assert "ADD COLUMN IF NOT EXISTS position" in migration
+    assert re.search(
+        r"position INTEGER NOT NULL", schema
+    ), "chat_search_results.position is missing from schema/postgres.sql"
+
+
+def test_the_backfill_only_touches_unstamped_sessions():
+    """Legacy re-ranking must be decided by the search id, never by position.
+
+    The service writes position 0 for the first result of *every* search, so a
+    row sitting at the default position may be a live one — the old heuristic
+    ("max position in the session is still 0") would re-rank and re-stamp a
+    session whose searches each returned a single row. Only rows with no search
+    id are ranked, and only in a session that has no grouped rows at all, which
+    makes a rerun of the migration a no-op.
+    """
+    migration = (INFRA_SQL / "migrations/0011_chatbot_query_cache.sql").read_text(
+        encoding="utf-8"
+    )
+    body = _strip_comments(migration)
+
+    assert re.search(
+        r"UPDATE\s+chat_search_results", body, re.IGNORECASE
+    ), "legacy rows should be re-ranked"
+    assert "ROW_NUMBER() OVER" in body.upper()
+
+    assert re.search(
+        r"WHERE search_id IS NULL", body, re.IGNORECASE
+    ), "only unstamped rows should be ranked"
+    assert re.search(
+        r"target\.search_id IS NULL", body, re.IGNORECASE
+    ), "a stamped row must never be rewritten"
+    assert re.search(
+        r"NOT EXISTS \(\s*SELECT 1\s+FROM chat_search_results AS live\s+"
+        r"WHERE live\.session_id = target\.session_id\s+AND live\.search_id "
+        r"IS NOT NULL\s*\)",
+        body,
+        re.IGNORECASE,
+    ), "a session that already has grouped rows must be skipped entirely"
+    assert (
+        "session_max_position" not in body
+    ), "position must not be used to identify a legacy row"
+
+
+def test_legacy_rows_are_stamped_with_a_search_id():
+    """Ordinal resolution reads the newest search group, so old rows need an id.
+
+    A session can hold several searches and every search restarts at position 0,
+    which is why position alone cannot identify the list the user is looking at.
+    Rows written before migration 0011 have no search id; if the migration left
+    them NULL the service's grouped read would never see them, so the same
+    statement stamps an old session's rows with one deterministic id.
+    """
+    migration = (INFRA_SQL / "migrations/0011_chatbot_query_cache.sql").read_text(
+        encoding="utf-8"
+    )
+    schema = (INFRA_SQL / "schema/postgres.sql").read_text(encoding="utf-8")
+    body = _strip_comments(migration)
+
+    assert re.search(
+        r"ADD COLUMN IF NOT EXISTS search_id UUID", body, re.IGNORECASE
+    ), "0011 should add the search id column"
+    assert re.search(
+        r"search_id UUID", schema, re.IGNORECASE
+    ), "search_id is missing from schema/postgres.sql"
+
+    assert re.search(
+        r"SET search_id = ranked\.legacy_search_id", body, re.IGNORECASE
+    ), "legacy rows should receive a search id"
+    assert re.search(
+        r"md5\(session_id::text", body, re.IGNORECASE
+    ), "the legacy id must come from the session, so it is stable per session"
+
+    assert re.search(
+        r"ON chat_search_results \(session_id, search_id, position\)",
+        body,
+        re.IGNORECASE,
+    ), "the grouped read needs the (session, search, position) index"
+    assert re.search(
+        r"DROP INDEX IF EXISTS idx_chat_search_results_session_position",
+        body,
+        re.IGNORECASE,
+    ), "the superseded pair index should not linger as write overhead"
+
+
+def test_sql_files_parse_as_postgres():
+    """Every schema and migration file has to parse as PostgreSQL.
+
+    The bootstrap applies each file with ``psql --single-transaction``, so one
+    malformed statement rolls the whole file back and the deployment comes up
+    half-migrated — a broken migration is a production outage, not a lint nit.
+    sqlglot's postgres dialect catches it here; it is a test-only dependency
+    (declared in requirements-test.txt) because no service imports it.
+    """
+    import sqlglot
+
+    # psql interpolates this helper's :'monitor_password' variable, so it is
+    # not plain SQL and cannot be parsed by a SQL parser.
+    skipped = {"provision_monitor_password.sql"}
+
+    for path in sorted(INFRA_SQL.rglob("*.sql")):
+        if path.name in skipped:
+            continue
+        sql = path.read_text(encoding="utf-8")
+        parsed = [s for s in sqlglot.parse(sql, read="postgres") if s is not None]
+        if not parsed:
+            # A file with nothing but comments (or empty) parses to nothing,
+            # which is fine; anything else must produce a statement.
+            assert not _strip_comments(
+                sql
+            ).strip(), f"{path} contains SQL that does not parse as PostgreSQL"
+
+
+def test_cache_expiry_is_an_integer_with_a_non_negative_check():
+    """Expiry is compared numerically by the chatbot; floats buy nothing.
+
+    A fresh database and a migrated one must agree on the type and on the
+    constraint name, otherwise the two paths drift silently and only one of
+    them rejects a bogus expiry.
+    """
+    migration = (INFRA_SQL / "migrations/0011_chatbot_query_cache.sql").read_text(
+        encoding="utf-8"
+    )
+    schema = (INFRA_SQL / "schema/postgres.sql").read_text(encoding="utf-8")
+
+    for name, sql in (("0011", migration), ("schema", schema)):
+        assert (
+            "expires_at_epoch BIGINT NOT NULL" in sql
+        ), f"{name} should store expiry as an integer number of seconds"
+        assert (
+            "chat_query_cache_expiry_non_negative" in sql
+        ), f"{name} should declare the non-negative expiry constraint"
+        assert (
+            "idx_chat_search_results_session_search" in sql
+        ), f"{name} should index ordinal lookups by (session_id, search_id, position)"
+    assert (
+        "expires_at_epoch DOUBLE PRECISION" not in migration
+    ), "the migrated column should not fall back to a float expiry"
+    assert (
+        "expires_at_epoch DOUBLE PRECISION" not in schema
+    ), "the fresh column should not fall back to a float expiry"
+
+
+def test_the_expiry_retype_is_conditional():
+    """A fresh database must not pay for a rewrite it does not need.
+
+    The migration keeps the retype for deployments whose earlier revision
+    created a floating-point expiry, but it has to check the catalog first:
+    schema/postgres.sql already declares BIGINT, so an unconditional ALTER
+    would lock and rewrite the cache table on every bootstrap.
+    """
+    migration = (INFRA_SQL / "migrations/0011_chatbot_query_cache.sql").read_text(
+        encoding="utf-8"
+    )
+
+    assert (
+        "information_schema.columns" in migration
+    ), "the retype should be guarded on the live column type"
+    assert re.search(
+        r"DO\s+\$\$", migration, re.IGNORECASE
+    ), "the guard should be a conditional block"
+    assert re.search(
+        r"ALTER\s+COLUMN\s+expires_at_epoch\s+TYPE\s+BIGINT",
+        migration,
+        re.IGNORECASE,
+    ), "the migration should still repair an older float column"
