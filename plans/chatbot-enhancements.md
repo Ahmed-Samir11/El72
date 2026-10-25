@@ -103,14 +103,16 @@ Writes upsert on `cache_key` (a repeat search refreshes the row instead of
 appending a copy), and expired rows are swept by the service on the first cache
 read of a process and every `CACHE_SWEEP_EVERY_WRITES=20` writes — so the table
 grows with distinct queries, not with page size or with repeat searches. The
-column is an integer with a named non-negative check (`chat_query_cache_expiry_non_negative`), declared identically in both paths, and the cache key
+column is an integer with a named non-negative check (`chat_query_cache_expiry_non_negative`, added through a `pg_constraint` guard because `ADD CONSTRAINT` cannot skip an existing constraint inline), declared identically in both paths, and the cache key
 carries a `CACHE_PROFILE_VERSION` tag so a change in crawling or extraction
 behavior invalidates every entry at once instead of waiting out the TTL.
 
 Add to `infra/sql/schema/postgres.sql` **and** a new
 `infra/sql/migrations/0011_chatbot_query_cache.sql`, registered in
 `scripts/db-bootstrap.sh` (guarded by `services/common/test_migration_files.py`,
-which fails if a numbered migration is never applied). Negative results (store
+which fails if a numbered migration is never applied — and which parses every
+schema and migration file with sqlglot's PostgreSQL dialect, since a malformed
+statement would roll the whole bootstrap file back in production). Negative results (store
 returned nothing) are cached too, under `CACHE_NEGATIVE_TTL_SECONDS=120`, so
 blocked stores stop being re-crawled; a negative entry read back from the DB
 keeps that short expiry instead of gaining the full TTL. The same migration adds

@@ -56,9 +56,24 @@ BEGIN
 END
 $$;
 
-ALTER TABLE chat_query_cache
-    ADD CONSTRAINT IF NOT EXISTS chat_query_cache_expiry_non_negative
-    CHECK (expires_at_epoch >= 0);
+-- The non-negative expiry check must exist on both a migrated and a rerun
+-- database, and ADD CONSTRAINT has no way to skip an existing constraint
+-- inline, so the guard is a catalog lookup. Declared in schema/postgres.sql
+-- under the same name, so the two paths converge on one constraint.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'chat_query_cache_expiry_non_negative'
+          AND conrelid = 'chat_query_cache'::regclass
+    ) THEN
+        ALTER TABLE chat_query_cache
+            ADD CONSTRAINT chat_query_cache_expiry_non_negative
+            CHECK (expires_at_epoch >= 0);
+    END IF;
+END
+$$;
 
 ALTER TABLE chat_search_results
     ADD COLUMN IF NOT EXISTS position INTEGER NOT NULL DEFAULT 0;
@@ -78,20 +93,21 @@ DROP INDEX IF EXISTS idx_chat_search_results_session_position;
 CREATE INDEX IF NOT EXISTS idx_chat_search_results_session_search
     ON chat_search_results (session_id, search_id, position);
 
--- Rows written before this migration all carry the default 0, which makes an
--- ordinal request against an old session ambiguous. Re-rank them by insertion
--- time, but only inside a session in which *nothing* is ranked yet: a session
--- that already carries real positions is a live one, and re-ranking part of it
--- (the ranking below only ever sees the rows still at the default) would shuffle
--- it on every rerun. Rows already at the default inside a ranked session are
--- left alone, which makes the whole statement a no-op once rerun.
+-- Rows written before this migration carry only the column defaults: position
+-- 0 and no search id. That makes an ordinal request against an old session
+-- ambiguous, so they are re-ranked by insertion time and stamped with one
+-- deterministic id per session. The guard is the missing search id, never the
+-- position: the service writes position 0 for the first result of every search,
+-- so a default-looking position says nothing about whether a row is legacy.
 --
 -- Positions are 0-based here exactly as the service writes them (the first
 -- result the user was shown has position 0), and the Arabic ordinal is 1-based:
 -- "رقم N" resolves to the row at position N-1 in services/chatbot/main.py, which
 -- is asserted by test_add_command_resolves_position_against_saved_results. A
--- mixed session (some rows ranked, some still at the default) cannot occur,
--- because every write from the service supplies an explicit position.
+-- session resumed after this migration does gain rows from a newer search, and
+-- those rows carry their own search id; the statement below refuses to touch
+-- any session that already has one, so an old list is ranked once and never
+-- re-ranked.
 --
 -- The same statement stamps the legacy rows with one deterministic search id
 -- per session (md5 of the session id, cast to uuid). A session's rows written
@@ -101,18 +117,26 @@ UPDATE chat_search_results AS target
    SET search_id = ranked.legacy_search_id,
        position = ranked.rank_minus_one
   FROM (
-    SELECT id, session_id,
-           md5(session_id::text || '#chatbot-pre-0011-legacy')::uuid AS legacy_search_id,
-    SELECT id, session_id,
+    -- Only unstamped rows are ranked, and they are ranked inside their own
+    -- session. A session that already has grouped rows is excluded below, so
+    -- this can never interleave a live search into an old list, and the scan
+    -- stays proportional to the legacy rows rather than to the whole table.
+    SELECT id,
+           session_id,
+           md5(session_id::text || '#chatbot-pre-0011-legacy')::uuid
+               AS legacy_search_id,
            (ROW_NUMBER() OVER (
                PARTITION BY session_id
                ORDER BY created_at, id
-           ) - 1)::INTEGER AS rank_minus_one,
-           -- Highest position already stored in this session: 0 means the
-           -- session predates this column and has nothing ranked yet.
-           MAX(position) OVER (PARTITION BY session_id) AS session_max_position
+           ) - 1)::INTEGER AS rank_minus_one
       FROM chat_search_results
+      WHERE search_id IS NULL
   ) AS ranked
  WHERE target.id = ranked.id
-   AND ranked.session_max_position = 0
-   AND target.position = 0;
+   AND target.search_id IS NULL
+   AND NOT EXISTS (
+       SELECT 1
+       FROM chat_search_results AS live
+       WHERE live.session_id = target.session_id
+         AND live.search_id IS NOT NULL
+   );

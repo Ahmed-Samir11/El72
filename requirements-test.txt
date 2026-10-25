@@ -44,3 +44,8 @@ openai>=1.0.0
 # services/common/robots.py (used by the scraper and the chatbot) parses robots.txt
 # with this package; without it the chatbot tests fall back to a stub parser.
 robotexclusionrulesparser>=1.7.1
+
+# services/common/test_migration_files.py parses every schema and migration file
+# with the PostgreSQL dialect, so a malformed migration fails the test job instead
+# of a bootstrap. No service imports it, hence test-only.
+sqlglot>=25.4.1

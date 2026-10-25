@@ -186,14 +186,15 @@ def test_migration_tables_are_declared_in_the_canonical_schema():
     ), "chat_search_results.position is missing from schema/postgres.sql"
 
 
-def test_the_position_backfill_only_touches_unranked_sessions():
-    """Re-ranking legacy rows must stay idempotent, live sessions included.
+def test_the_backfill_only_touches_unstamped_sessions():
+    """Legacy re-ranking must be decided by the search id, never by position.
 
-    The migration re-ranks ``chat_search_results`` rows that still carry the
-    column default. Limiting the statement to sessions in which *nothing* is
-    ranked yet is what keeps a rerun after new inserts harmless: a session that
-    already has real positions is never touched, so a fresh row written into an
-    old session cannot be shuffled by a later run of the same migration.
+    The service writes position 0 for the first result of *every* search, so a
+    row sitting at the default position may be a live one — the old heuristic
+    ("max position in the session is still 0") would re-rank and re-stamp a
+    session whose searches each returned a single row. Only rows with no search
+    id are ranked, and only in a session that has no grouped rows at all, which
+    makes a rerun of the migration a no-op.
     """
     migration = (INFRA_SQL / "migrations/0011_chatbot_query_cache.sql").read_text(
         encoding="utf-8"
@@ -205,24 +206,22 @@ def test_the_position_backfill_only_touches_unranked_sessions():
     ), "legacy rows should be re-ranked"
     assert "ROW_NUMBER() OVER" in body.upper()
 
-    # The ranking window must span the whole session: filtering the rows before
-    # the window would rank the surviving ones 0..n and corrupt live sessions.
     assert re.search(
-        r"FROM\s+chat_search_results\s*\)\s*AS ranked", body, re.IGNORECASE
-    ), "the ranking window should see every row of the session"
-
-    # Sessions that already carry positions are left alone entirely.
+        r"WHERE search_id IS NULL", body, re.IGNORECASE
+    ), "only unstamped rows should be ranked"
     assert re.search(
-        r"MAX\(position\)\s+OVER\s*\(\s*PARTITION\s+BY\s+session_id\s*\)",
+        r"target\.search_id IS NULL", body, re.IGNORECASE
+    ), "a stamped row must never be rewritten"
+    assert re.search(
+        r"NOT EXISTS \(\s*SELECT 1\s+FROM chat_search_results AS live\s+"
+        r"WHERE live\.session_id = target\.session_id\s+AND live\.search_id "
+        r"IS NOT NULL\s*\)",
         body,
         re.IGNORECASE,
-    ), "the backfill should detect already-ranked sessions"
-    assert re.search(
-        r"session_max_position\s*=\s*0", body, re.IGNORECASE
-    ), "already-ranked sessions must be skipped"
-    assert re.search(
-        r"target\.position\s*=\s*0", body, re.IGNORECASE
-    ), "only rows still at the default may be written"
+    ), "a session that already has grouped rows must be skipped entirely"
+    assert (
+        "session_max_position" not in body
+    ), "position must not be used to identify a legacy row"
 
 
 def test_legacy_rows_are_stamped_with_a_search_id():
@@ -264,6 +263,34 @@ def test_legacy_rows_are_stamped_with_a_search_id():
         body,
         re.IGNORECASE,
     ), "the superseded pair index should not linger as write overhead"
+
+
+def test_sql_files_parse_as_postgres():
+    """Every schema and migration file has to parse as PostgreSQL.
+
+    The bootstrap applies each file with ``psql --single-transaction``, so one
+    malformed statement rolls the whole file back and the deployment comes up
+    half-migrated — a broken migration is a production outage, not a lint nit.
+    sqlglot's postgres dialect catches it here; it is a test-only dependency
+    (declared in requirements-test.txt) because no service imports it.
+    """
+    import sqlglot
+
+    # psql interpolates this helper's :'monitor_password' variable, so it is
+    # not plain SQL and cannot be parsed by a SQL parser.
+    skipped = {"provision_monitor_password.sql"}
+
+    for path in sorted(INFRA_SQL.rglob("*.sql")):
+        if path.name in skipped:
+            continue
+        sql = path.read_text(encoding="utf-8")
+        parsed = [s for s in sqlglot.parse(sql, read="postgres") if s is not None]
+        if not parsed:
+            # A file with nothing but comments (or empty) parses to nothing,
+            # which is fine; anything else must produce a statement.
+            assert not _strip_comments(
+                sql
+            ).strip(), f"{path} contains SQL that does not parse as PostgreSQL"
 
 
 def test_cache_expiry_is_an_integer_with_a_non_negative_check():
