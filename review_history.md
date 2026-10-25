@@ -15043,3 +15043,108 @@ WARNING: Diff truncated from 282954 to 50000 chars
 Review completed in 265.3s
 Decision: REQUEST_CHANGES (confidence: 0.72)
 Findings: 11
+## PR Review: chatbot: cached searches, LLM-free extraction, store health and stable result ids
+Model: local/qwen-27b
+Files changed: 32
+WARNING: Diff truncated from 306696 to 50000 chars
+
+### Raw LLM Response
+{
+  "summary": "This PR introduces a substantial chatbot performance and reliability layer: deterministic extraction, bounded query/result caches, store health/cooldowns, stable result addressing, shared JWT/robots handling, and supporting migrations/tests. The direction is strong, but the visible migration contains a likely invalid SQL statement and a backfill predicate that can corrupt live rows, so changes are required before merge.",
+  "decision": "REQUEST_CHANGES",
+  "confidence": 0.78,
+  "findings": [
+    {
+      "file": "infra/sql/migrations/0011_chatbot_query_cache.sql",
+      "line": 96,
+      "severity": "CRITICAL",
+      "category": "correctness",
+      "title": "Malformed backfill subquery in migration",
+      "description": "The UPDATE ... FROM (...) subquery contains two SELECT clauses separated by a comma: `SELECT id, session_id, md5(...) AS legacy_search_id, SELECT id, session_id, ... FROM chat_search_results`. This is not valid PostgreSQL and will fail when the migration is applied.",
+      "suggestion": "Collapse the subquery into one SELECT that computes all columns together, for example: `SELECT id, session_id, md5(...)::uuid AS legacy_search_id, (ROW_NUMBER() OVER (...) - 1)::INTEGER AS rank_minus_one, MAX(position) OVER (PARTITION BY session_id) AS session_max_position FROM chat_search_results`."
+    },
+    {
+      "file": "infra/sql/migrations/0011_chatbot_query_cache.sql",
+      "line": 106,
+      "severity": "CRITICAL",
+      "category": "correctness",
+      "title": "Backfill can overwrite live rows because position 0 is a valid ranked position",
+      "description": "The backfill uses `ranked.session_max_position = 0 AND target.position = 0` to identify legacy rows. However, the service intentionally writes position 0 for the first result of a search. A live session with one result, or multiple one-result searches, can therefore have `session_max_position = 0` and be re-ranked/re-stamped on a rerun. This can overwrite `search_id` and change `position`, breaking the intended per-search grouping.",
+      "suggestion": "Do not use `position = 0` alone as the legacy marker. Require `target.search_id IS NULL`, and ideally also restrict to rows created before the migration, e.g. `target.search_id IS NULL AND ranked.session_max_position = 0 AND target.created_at < <migration_timestamp>`. Alternatively, use a sentinel value or a dedicated backfill marker column."
+    },
+    {
+      "file": "infra/sql/schema/postgres.sql",
+      "line": 395,
+      "severity": "WARNING",
+      "category": "security",
+      "title": "Global cache key can leak or reuse session-scoped result identifiers if payloads are not stripped",
+      "description": "`chat_query_cache` is keyed by store/query/price window and not by user or session. If the JSONB `results` payload ever contains `result_id`, `position`, or other session-scoped fields, those values can be returned to another user or reused in a different session, causing stale result addressing or cross-session references.",
+      "suggestion": "Ensure cached payloads are normalized to store/query-level product data only and explicitly strip `result_id` and `position` before writing to the cache. Regenerate those fields for the current session after retrieval, and keep add-to-feed ownership checks scoped to the authenticated user/session."
+    },
+    {
+      "file": "requirements-test.txt",
+      "line": 44,
+      "severity": "WARNING",
+      "category": "architecture",
+      "title": "Robots parser dependency is visible only in test requirements",
+      "description": "The visible diff adds `robotexclusionrulesparser` to `requirements-test.txt`, but the chatbot runtime uses `services/common/robots.py`. If the runtime requirements do not also include this package, production containers may fail or silently fall back to a stub parser.",
+      "suggestion": "Confirm `services/chatbot/requirements.txt` includes `robotexclusionrulesparser>=1.7.1`, or make the import optional with an explicit, logged fallback and tests for both paths."
+    },
+    {
+      "file": "infra/sql/migrations/0011_chatbot_query_cache.sql",
+      "line": 90,
+      "severity": "WARNING",
+      "category": "performance",
+      "title": "Backfill scans and updates the entire chat_search_results table",
+      "description": "The backfill uses a window function over the whole `chat_search_results` table and then updates matching rows. On a large table this can be expensive and may hold locks for a long time, especially when combined with index creation in the same migration.",
+      "suggestion": "Batch the backfill by session or created_at range, run it before creating the new index if possible, and consider `CREATE INDEX CONCURRENTLY` if the migration is expected to run on a live database. Add a maintenance script or separate migration step if online upgrades are supported."
+    },
+    {
+      "file": "infra/sql/schema/postgres.sql",
+      "line": 392,
+      "severity": "INFO",
+      "category": "correctness",
+      "title": "search_id is nullable and not necessarily chronological",
+      "description": "`chat_search_results.search_id` is nullable and generated as a UUID. If application logic resolves the 'newest search group' by ordering on `search_id`, random UUIDs will not provide chronological ordering. Nullable `search_id` also allows ungrouped rows to accumulate if a writer forgets to set it.",
+      "suggestion": "After the backfill, consider making `search_id NOT NULL` for new rows, or resolve the newest group by `created_at`/a time-ordered identifier. Document the intended ordering mechanism clearly."
+    },
+    {
+      "file": "plans/chatbot-enhancements.md",
+      "line": 1,
+      "severity": "INFO",
+      "category": "documentation",
+      "title": "Plan references migration registration not visible in the diff",
+      "description": "The plan states that migration 0011 is registered in `scripts/db-bootstrap.sh` and guarded by a test, but the visible diff does not show that registration. If the migration is not registered, fresh bootstraps may miss it.",
+      "suggestion": "Ensure `scripts/db-bootstrap.sh` applies `0011_chatbot_query_cache.sql` and that the migration-file test is updated to cover it."
+    }
+  ],
+  "missed_tests": [
+    "Migration test: apply `0011_chatbot_query_cache.sql` to a legacy `chat_search_results` table and verify it executes successfully.",
+    "Migration test: rerun the migration after live rows have been inserted and verify rows with `search_id` set are not overwritten.",
+    "Migration test: a session with one live result at position 0 and a valid `search_id` is not re-ranked on rerun.",
+    "Migration test: a session with multiple one-result searches is not collapsed into one legacy search group.",
+    "Cache test: DB negative cache entries are promoted into memory using the negative TTL, not the positive TTL.",
+    "Cache test: mutating a returned cached result list does not mutate the cached entry.",
+    "Cache test: DB cache writes handle UUID, Decimal, datetime, or other non-JSON-serializable fields by normalizing them first.",
+    "Cache test: cached payloads do not contain `result_id` or `position` from another session.",
+    "Cache test: cache key normalization handles case, whitespace, numeric formats, and store/query delimiter collisions.",
+    "Arabic NLP tests: standalone `أf`, `10أf`, combining-mark normalization, and multiplier handling are parsed correctly.",
+    "Store health tests: cooldown after `STORE_FAILURE_THRESHOLD`, status reporting, and cached/blocked/timeout states.",
+    "Concurrency tests: `SEARCH_DEADLINE` cancels pending stores and does not hang the reply.",
+    "Security tests: add-to-feed rejects sessions owned by another user and does not leak foreign session existence.",
+    "Rate-limit tests: limiter keys on JWT `sub` when present and falls back to client address."
+  ],
+  "positive_notes": [
+    "The PR has a clear architectural plan and documents the performance, cache, health, and result-addressing goals well.",
+    "The cache design is thoughtfully bounded: TTL/LRU in memory, DB mirror, negative caching, profile versioning, and sweep behavior.",
+    "Store health and cooldowns make failures observable instead of silently dropping stores.",
+    "Robots handling is centralized in `services/common` and the visible compose default is strict.",
+    "Stable result addressing through `position` and `search_id` is a good foundation for multi-turn chat UX.",
+    "The migration attempts to be idempotent and keeps schema and migration definitions aligned."
+  ]
+}
+
+
+Review completed in 256.7s
+Decision: REQUEST_CHANGES (confidence: 0.78)
+Findings: 7
