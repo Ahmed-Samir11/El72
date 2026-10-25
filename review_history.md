@@ -14619,3 +14619,126 @@ WARNING: Diff truncated from 178325 to 50000 chars
 Review completed in 264.5s
 Decision: REQUEST_CHANGES (confidence: 0.74)
 Findings: 9
+## PR Review: chatbot: cached searches, LLM-free extraction, store health and stable result ids
+Model: local/qwen-27b
+Files changed: 32
+WARNING: Diff truncated from 240873 to 50000 chars
+
+### Raw LLM Response
+{
+  "summary": "This PR adds a substantial chatbot performance, reliability, and observability layer: deterministic extraction, bounded query/result caches, store health/cooldowns, stable result addressing, shared JWT/robots handling, and supporting migrations/tests. The visible infrastructure changes are mostly sound, but the migration backfill, robots crawl-delay handling, and externally supplied result identifiers need closer scrutiny before merge.",
+  "decision": "REQUEST_CHANGES",
+  "confidence": 0.68,
+  "findings": [
+    {
+      "file": "infra/sql/migrations/0011_chatbot_query_cache.sql",
+      "line": 31,
+      "severity": "WARNING",
+      "category": "correctness",
+      "title": "Position backfill can re-rank mixed old/new sessions",
+      "description": "The backfill updates every row where position = 0. If the migration is re-run after the application has already inserted new results into an old session, the first new result may also have position = 0 and can be grouped with legacy rows, potentially overwriting its correct position. The migration is described as idempotent, but this statement is only safe when all position = 0 rows are legacy rows.",
+      "suggestion": "Make the backfill explicitly one-time or scoped to pre-migration rows. Options: add a boolean backfilled marker, add the column nullable and backfill before setting NOT NULL, or only backfill rows created before a known migration timestamp. Add a test that runs the migration twice after new rows have been inserted."
+    },
+    {
+      "file": "docker-compose.yml",
+      "line": 118,
+      "severity": "WARNING",
+      "category": "architecture",
+      "title": "Capping Crawl-Delay conflicts with strict robots.txt mode",
+      "description": "The compose comment says strict mode honors a declared Crawl-Delay, but the implementation caps the delay with MAX_CRAWL_DELAY. If a site declares a longer crawl-delay than the cap, the chatbot will crawl faster than robots.txt permits, which is not strict robots compliance.",
+      "suggestion": "In strict mode, honor the declared Crawl-Delay exactly, or rename/document the mode as 'strict-with-capped-delay'. Expose MAX_CRAWL_DELAY in compose and add tests for declared delays above and below the cap."
+    },
+    {
+      "file": "services/chatbot/main.py",
+      "line": 1,
+      "severity": "WARNING",
+      "category": "security",
+      "title": "result_id must be validated against the requesting session/user",
+      "description": "The PR introduces stable result_id values that clients can use to add products to feeds. If add-to-feed accepts result_id without verifying that the result belongs to the current session and authenticated user, a caller could reference arbitrary results from other sessions or users.",
+      "suggestion": "Resolve result_id by joining chat_search_results with the current session/user, or validate chat_search_results.session_id and user_id before accepting the request. Return 404/403 for foreign result ids. Add tests for cross-session and cross-user result_id access."
+    },
+    {
+      "file": "infra/sql/schema/postgres.sql",
+      "line": 397,
+      "severity": "WARNING",
+      "category": "performance",
+      "title": "Query cache table needs bounded upsert and expiry sweep",
+      "description": "chat_query_cache has a unique cache_key and an expiry index, but the schema alone does not show how repeated cache writes are handled or how expired rows are removed. Without upsert handling and periodic sweeps, the table can either fail on repeated keys or grow unbounded between restarts.",
+      "suggestion": "Ensure cache writes use INSERT ... ON CONFLICT (cache_key) DO UPDATE, run an expired-row sweep on startup and periodically, and keep JSONB payloads bounded by CACHE_MAX_PRODUCTS. Add tests for repeated cache writes and expired-row cleanup."
+    },
+    {
+      "file": "infra/sql/schema/postgres.sql",
+      "line": 390,
+      "severity": "INFO",
+      "category": "performance",
+      "title": "Ordinal result lookup would benefit from a composite index",
+      "description": "chat_search_results already has an index on session_id, but ordinal lookups such as 'رقm 3' likely filter by session_id and position. Without a composite index, PostgreSQL may scan all rows for a session.",
+      "suggestion": "Add CREATE INDEX IF NOT EXISTS idx_chat_search_results_session_position ON chat_search_results(session_id, position); if ordinal lookups are common."
+    },
+    {
+      "file": "infra/sql/migrations/0011_chatbot_query_cache.sql",
+      "line": 18,
+      "severity": "INFO",
+      "category": "correctness",
+      "title": "expires_at_epoch could use an integer type and constraints",
+      "description": "expires_at_epoch is DOUBLE PRECISION. Epoch seconds do not need floating-point precision, and float comparisons can introduce avoidable edge cases. The column also has no non-negative constraint.",
+      "suggestion": "Use BIGINT NOT NULL with CHECK (expires_at_epoch >= 0), or at least add a CHECK constraint. Update the schema and migration consistently."
+    },
+    {
+      "file": "services/chatbot/Dockerfile",
+      "line": 1,
+      "severity": "INFO",
+      "category": "architecture",
+      "title": "Shared common import path should be smoke-tested",
+      "description": "The PR copies services/common into the chatbot image. If the copied layout and Python import path do not match, the container can fail at startup with ImportError. This is easy to miss in unit tests that run from the repository root.",
+      "suggestion": "Add a container smoke test that imports the chatbot entrypoint and the shared auth/robots modules, or assert the expected import path in the Dockerfile build."
+    },
+    {
+      "file": "services/chatbot/conftest.py",
+      "line": 1,
+      "severity": "INFO",
+      "category": "testing",
+      "title": "Robots parser stub can hide a missing runtime dependency",
+      "description": "The test setup can install a permissive stub when robotexclusionrulesparser is absent. This keeps tests collectable, but it can mask a missing runtime dependency or incorrect robots behavior in the chatbot image.",
+      "suggestion": "Ensure CI installs the real robotexclusionrulesparser package for chatbot tests, and make the stub clearly fail or skip when real robots behavior is being tested."
+    },
+    {
+      "file": "plans/chatbot-enhancements.md",
+      "line": 1,
+      "severity": "INFO",
+      "category": "documentation",
+      "title": "Plan references migration registration not visible in the diff",
+      "description": "The plan says migration 0011 is registered in scripts/db-bootstrap.sh and guarded by a migration-file test, but the visible diff does not show that registration. If the migration is not registered, fresh bootstraps may not create the cache table.",
+      "suggestion": "Confirm scripts/db-bootstrap.sh applies 0011_chatbot_query_cache.sql, or update the plan if registration is handled elsewhere. Add or keep the migration-registration test."
+    }
+  ],
+  "missed_tests": [
+    "Migration test: run 0011 twice after new chat_search_results rows have been inserted and verify positions are not corrupted.",
+    "Cache test: negative DB cache entries are promoted into memory with the negative TTL, not the positive TTL.",
+    "Cache test: mutating a returned cached result list does not mutate the cached entry.",
+    "Cache test: cache key normalization handles case, whitespace, numeric bounds, and store_id delimiter collisions.",
+    "Cache test: DB cache writes handle UUID/Decimal/datetime values or normalize them before JSON serialization.",
+    "Cache test: cached payloads do not leak result_id or position from another session, or those fields are regenerated per session.",
+    "Add-to-feed test: result_id is validated against the current session/user and rejects foreign result ids.",
+    "Arabic NLP tests: standalone 'أf', '10أf', combining-mark normalization, and multiplier handling do not break product queries or add commands.",
+    "Robots tests: strict mode honors disallowed paths and declared Crawl-Delay; capped delay behavior is explicit.",
+    "Store health tests: cooldown after STORE_FAILURE_THRESHOLD, status reporting for blocked/timeout/robots_denied/cached stores, and GET /chatbot/stores shape.",
+    "Rate-limit tests: JWT sub is used when present and IP fallback is used when absent.",
+    "Docker smoke test: the chatbot image can import its entrypoint and shared auth/robots modules.",
+    "Extractor tests: malformed JSON-LD, aggregateOffer, multiple offers, out-of-stock enum/list availability, image variants, and card fallback are covered.",
+    "Concurrency tests: SEARCH_DEADLINE cancels pending stores and does not leak resources or hang the reply."
+  ],
+  "positive_notes": [
+    "Deterministic JSON-LD and HTML extraction before falling back to the LLM is a strong latency and reliability improvement.",
+    "Bounded TTL/LRU state plus a Postgres mirror replaces the previous unbounded in-process cache and survives restarts.",
+    "Store health, cooldowns, and store_status make partial failures visible to users instead of silently returning empty results.",
+    "Stable result addressing with result_id and position is a good foundation for multi-turn Arabic commands.",
+    "The migrations are idempotent in shape, include an expiry index, and add the cache table to both migration and canonical schema.",
+    "The PR includes a large test plan and appears to add focused tests for extractors, cache, store health, and chatbot behavior."
+  ]
+}
+
+
+Review completed in 235.3s
+Decision: REQUEST_CHANGES (confidence: 0.68)
+Findings: 9
