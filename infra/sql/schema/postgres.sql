@@ -425,6 +425,11 @@ CREATE INDEX IF NOT EXISTS idx_chat_messages_session_id ON chat_messages(session
 CREATE INDEX IF NOT EXISTS idx_chat_search_results_session_id ON chat_search_results(session_id);
 -- Ordinal requests ("أadd رقم 3") filter a session by position; without the
 -- pair, PostgreSQL scans every row the session ever produced.
+-- Which search is newest is decided by created_at inside one session, so the
+-- session index above already bounds that lookup to the session's own rows;
+-- the triple below serves the grouped read itself. A separate
+-- (session_id, created_at) index would buy little on a table that holds at most
+-- a few dozen rows per search.
 CREATE INDEX IF NOT EXISTS idx_chat_search_results_session_search
     ON chat_search_results (session_id, search_id, position);
 CREATE INDEX IF NOT EXISTS idx_chat_query_cache_expiry ON chat_query_cache(expires_at_epoch);
