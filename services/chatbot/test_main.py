@@ -571,6 +571,69 @@ def test_a_result_id_must_belong_to_the_session_that_asks(
     assert "private" not in response.json()["message"]
 
 
+def test_add_to_feed_rejects_a_session_owned_by_another_user(
+    client, override_db, override_auth, db_session, auth_headers, monkeypatch
+):
+    """A session id is not a capability.
+
+    Result rows are already scoped by session_id, but the session itself is
+    named by the client, so ownership has to be checked: guessing another
+    user's session uuid must not track their products, must not reveal the
+    session exists, and must not write into it.
+    """
+    import uuid as _uuid
+
+    posted = _capture_add_posts(monkeypatch)
+
+    victim_session = str(_uuid.uuid4())
+    row_id = _uuid.uuid4()
+    db_session.execute(
+        text("INSERT INTO chat_sessions (id, user_id) VALUES (:id, :user_id)"),
+        {"id": victim_session, "user_id": 1},
+    )
+    db_session.execute(
+        text(
+            "INSERT INTO chat_search_results "
+            "(id, session_id, store_id, product_title, price_local, "
+            "currency, url, position) "
+            "VALUES (:id, :sid, :store_id, :title, :price, :currency, :url, "
+            ":position)"
+        ),
+        {
+            "id": str(row_id),
+            "sid": victim_session,
+            "store_id": "amazon_eg",
+            "title": "Private monitor",
+            "price": 100.0,
+            "currency": "EGP",
+            "url": "https://example.com/private",
+            "position": 0,
+        },
+    )
+    db_session.commit()
+
+    # A different user asks, with the same (valid) token headers.
+    app.dependency_overrides[get_authenticated_user_id] = lambda: 2
+
+    response = client.post(
+        "/chatbot/add-to-feed",
+        json={"session_id": victim_session, "result_id": str(row_id)},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    # No tracker was created, the product is not named, and the victim's
+    # session stayed untouched.
+    assert posted == []
+    body = response.json()["message"]
+    assert "Private" not in body and "private" not in body
+    messages = db_session.execute(
+        text("SELECT COUNT(*) FROM chat_messages WHERE session_id = :sid"),
+        {"sid": victim_session},
+    ).scalar()
+    assert messages == 0
+
+
 def test_add_command_resolves_position_against_saved_results(
     client, override_db, override_auth, db_session, auth_headers, monkeypatch
 ):

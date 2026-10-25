@@ -406,6 +406,20 @@ async def add_to_feed(
     alias. Without a reference the most recent search result for the session
     is added.
     """
+    # The result reference is resolved inside a session the client names, so
+    # the session itself has to be checked against the authenticated user first:
+    # a guessed session UUID must not read (or track) another user's searches.
+    if not _session_is_owned(db, add_to_feed_request.session_id, user_id):
+        # Answered exactly as if the session had nothing to add. A distinct
+        # "not yours" reply would itself confirm the session exists.
+        message = format_message("no_search_results", "en")
+        return ChatResponse(
+            message=message,
+            session_id=add_to_feed_request.session_id,
+            search_results=[],
+            language="en",
+        )
+
     return await _handle_add_to_feed(
         AddToFeedRequest(
             session_id=add_to_feed_request.session_id,
@@ -676,6 +690,24 @@ def _active_results(db: Session, session_id: UUID) -> List[dict]:
     if results:
         _active_results_cache.set(str(session_id), results)
     return results
+
+
+def _session_is_owned(db: Session, session_id: UUID, user_id: int) -> bool:
+    """Whether [session_id] is a session belonging to [user_id].
+
+    Session ids are UUID4, but they are also the only scope a result lookup
+    has, so ownership is checked rather than trusted. The chat path gets this
+    for free from [_ensure_session]; add-to-feed names a session directly, so
+    it must ask.
+    """
+    row = db.execute(
+        text(
+            "SELECT 1 AS owned FROM chat_sessions "
+            "WHERE id = :session_id AND user_id = :user_id"
+        ),
+        {"session_id": str(session_id), "user_id": user_id},
+    ).fetchone()
+    return row is not None
 
 
 def _session_language(db: Session, session_id: UUID) -> str:

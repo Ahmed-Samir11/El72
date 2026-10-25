@@ -506,6 +506,89 @@ async def test_robots_denied_store_is_not_crawled(search_service):
     await search_service.close()
 
 
+class DeclaredDelayRobotsPolicy:
+    """A robots policy that declares a Crawl-Delay of [delay] seconds."""
+
+    def __init__(self, delay):
+        self.delay = delay
+
+    async def is_allowed(self, url: str) -> bool:
+        return True
+
+    async def get_declared_crawl_delay(self, url: str):
+        return self.delay
+
+
+@pytest.mark.asyncio
+async def test_a_declared_crawl_delay_is_honored_exactly(search_service, monkeypatch):
+    """A store asking for a pause gets exactly that pause, never a shortened one.
+
+    Capping the wait below what robots.txt declared would be non-compliant
+    crawling dressed up as compliance, so the cap is a budget limit that
+    refuses the store instead (see the next test).
+    """
+    slept = []
+
+    async def record_sleep(seconds):
+        slept.append(seconds)
+
+    monkeypatch.setattr("services.chatbot.search_service.asyncio.sleep", record_sleep)
+    monkeypatch.setattr("services.chatbot.search_service.MAX_CRAWL_DELAY", 10.0)
+    search_service.robots = DeclaredDelayRobotsPolicy(2.5)
+
+    calls = {"count": 0}
+
+    async def mock_extract(query, store, **_):
+        calls["count"] += 1
+        return SearchResultsSchema(products=[])
+
+    search_service._extract_search_results = mock_extract
+
+    _, statuses = await search_service._search_all_stores("laptop")
+
+    assert slept == [2.5] * len(STORES)
+    assert calls["count"] == len(STORES)
+    assert {s["state"] for s in statuses} == {"empty"}
+    await search_service.close()
+
+
+@pytest.mark.asyncio
+async def test_a_crawl_delay_beyond_the_budget_refuses_the_store(
+    search_service, monkeypatch
+):
+    """A delay this deployment cannot wait out is reported, not rounded down.
+
+    The store keeps its robots.txt verdict (it is not crawled faster than asked)
+    and the user sees why on /chatbot/stores, instead of getting a silently
+    non-compliant crawl.
+    """
+    slept = []
+
+    async def record_sleep(seconds):
+        slept.append(seconds)
+
+    monkeypatch.setattr("services.chatbot.search_service.asyncio.sleep", record_sleep)
+    monkeypatch.setattr("services.chatbot.search_service.MAX_CRAWL_DELAY", 5.0)
+    search_service.robots = DeclaredDelayRobotsPolicy(30)
+
+    calls = {"count": 0}
+
+    async def mock_extract(query, store, **_):
+        calls["count"] += 1
+        return SearchResultsSchema(products=[])
+
+    search_service._extract_search_results = mock_extract
+
+    results, statuses = await search_service._search_all_stores("laptop")
+
+    assert results == []
+    assert slept == []
+    assert calls["count"] == 0
+    assert {s["state"] for s in statuses} == {"robots_denied"}
+    assert "Crawl-Delay 30s" in statuses[0]["detail"]
+    await search_service.close()
+
+
 @pytest.mark.asyncio
 async def test_a_repeatedly_failing_store_cools_down(search_service):
     """A store that keeps failing stops being crawled until it gets a retry."""

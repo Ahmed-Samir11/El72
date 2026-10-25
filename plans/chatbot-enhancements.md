@@ -95,8 +95,15 @@ CREATE TABLE IF NOT EXISTS chat_query_cache (
     store_id TEXT NOT NULL,
     results JSONB NOT NULL,                -- the result list
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    expires_at_epoch DOUBLE PRECISION NOT NULL
+    expires_at_epoch BIGINT NOT NULL     -- whole seconds; swept past expiry
 );
+```
+
+Writes upsert on `cache_key` (a repeat search refreshes the row instead of
+appending a copy), and expired rows are swept by the service on the first cache
+read of a process and every `CACHE_SWEEP_EVERY_WRITES=20` writes — so the table
+grows with distinct queries, not with page size or with repeat searches. The
+column is an integer with a named non-negative check (`chat_query_cache_expiry_non_negative`), declared identically in both paths.
 ```
 
 Add to `infra/sql/schema/postgres.sql` **and** a new
@@ -106,8 +113,11 @@ which fails if a numbered migration is never applied). Negative results (store
 returned nothing) are cached too, under `CACHE_NEGATIVE_TTL_SECONDS=120`, so
 blocked stores stop being re-crawled; a negative entry read back from the DB
 keeps that short expiry instead of gaining the full TTL. The same migration adds
-`chat_search_results.position` and re-ranks pre-existing rows per session, so
-"أadd رقم 3" against an old session is not ambiguous.
+`chat_search_results.position`, the `(session_id, position)` index the ordinal
+lookup needs, and re-ranks pre-existing rows per session, so "أadd رقم 3" against
+an old session is not ambiguous. The backfill only writes inside a session in which
+nothing is ranked yet, so rerunning it after new inserts cannot shuffle a live
+session's positions.
 
 **4. Crawler hardening (fixes D, E, F, G).**
 
@@ -120,7 +130,10 @@ keeps that short expiry instead of gaining the full TTL. The same migration adds
   behind a helper so an unsupported kwarg degrades instead of crashing.
 * Move `robots_handler.py` into `services/common/robots.py` (shared library is
   the one allowed cross-service path) and have both the scraper and the chatbot
-  use it. Search pages are checked before crawling, crawl-delay respected.
+  use it. Search pages are checked before crawling, and a declared Crawl-Delay is
+  honored *exactly*: a store declaring more than `MAX_CRAWL_DELAY` (10s in compose)
+  is reported as `robots_denied` and cooled down rather than crawled faster than it
+  asked, which is the honest reading of `ROBOTS_TXT_MODE=strict`.
 * `_crawl_page()` returns `(content, status_code, final_url)`; a non-2xx or a
   redirect to a login/challenge page is a store failure, not a product page.
 * Per-store failure is recorded, not swallowed: the response gains
@@ -138,6 +151,11 @@ keeps that short expiry instead of gaining the full TTL. The same migration adds
   deprecated alias.
 * `add_to_feed` resolves the reply language from the session's last user
   message instead of hardcoding `"en"`.
+* `add_to_feed` first checks the named session belongs to the authenticated
+  user: the result lookup is scoped by `session_id`, so without that check a
+  guessed session uuid would expose (and let anyone track) another user's
+  searches. The reply is the plain "nothing to add" one, so it never confirms
+  the foreign session exists.
 * Add `created: bool` to `ChatResponse` and return **402** (not 200) for
   insufficient credits and **409** for "already tracked", so the Flutter
   client stops inferring failure from an empty array.
@@ -297,15 +315,19 @@ card the app already wants.
   invoked **only** when both paths come up empty, malformed JSON-LD tolerated.
 * `test_cache.py` — warm hit returns without crawling; negative cache blocks
   re-crawl of a dead store; TTL expiry; key normalization (case, whitespace,
-  `40k` vs `40000`).
+  `40k` vs `40000`); upsert on repeat writes and the expired-row sweep; DB
+  payloads detached from the caller and free of session-only fields.
 * `test_intents.py` — parametrized (message → intent, slots) across EN +
   Egyptian Arabic, including the follow-up ellipsis cases.
 * `test_main.py` — extended: `result_id` round-trip, 402/409 statuses,
-  `created` flag, session `updated_at` bump, real session timestamps,
-  Arabic reply language on add-to-feed, `store_status` shape, user-keyed
-  rate limit, add-command strictness.
+  `created` flag, session `updated_at` bump, real session timestamps, Arabic
+  reply language on add-to-feed, `store_status` shape, user-keyed rate limit,
+  add-command strictness, add-to-feed rejected for a session owned by another
+  user.
 * `test_search_service.py` — existing 20 tests must keep passing; add
-  grouping/dedupe and sort-mode tests.
+  grouping/dedupe and sort-mode tests, and the crawl-delay pair: a declared
+  delay is waited out exactly, a delay past `MAX_CRAWL_DELAY` reports the store
+  `robots_denied` instead of crawling faster than asked.
 * `services/analyzer/test_chat_intents.py` — mocked stream entry →
   `retailer_analytics` upsert, `XACK` called, DLQ on bad payload.
 * `services/common/test_auth.py`, `test_robots.py` — shared helpers.

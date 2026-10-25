@@ -109,10 +109,14 @@ services:
       CACHE_MAX_PRODUCTS: "40"
       STORE_FAILURE_THRESHOLD: "3"
       STORE_COOLDOWN_SECONDS: "600"
+      # Longest Crawl-Delay the chatbot will wait out. A store declaring more is
+      # reported as robots_denied, never crawled faster than it asked; raise
+      # this deliberately if a store's declared delay is worth the wait.
+      MAX_CRAWL_DELAY: "10"
       # Honor robots.txt like the scraper does (services/scraper/.env.example
       # ships STRICT too): "strict" refuses disallowed paths and honors a
-      # declared Crawl-Delay. "soft" logs but still crawls, which is only for
-      # local debugging against a store whose robots.txt is misconfigured.
+      # declared Crawl-Delay exactly. "soft" logs but still crawls, which is only
+      # for local debugging against a store whose robots.txt is misconfigured.
       ROBOTS_TXT_MODE: "strict"
     ports:
       - "0.0.0.0:8003:8003"

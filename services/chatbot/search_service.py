@@ -114,8 +114,11 @@ MAX_RESULTS_PER_STORE = 3
 # are dropped so the client (receive timeout 120s) gets partial results instead
 # of a timeout.
 SEARCH_DEADLINE = float(os.getenv("SEARCH_DEADLINE", "100"))
-# A site that declares a Crawl-Delay asked for it; cap the wait so one greedy
-# directive cannot eat the whole search budget.
+# The longest Crawl-Delay this service will wait out. It is a budget limit, not
+# a licence to crawl faster than a site asked: a store declaring more than this
+# is reported as robots_denied (and then cooled down) instead of being crawled
+# at the capped rate. Raise it deliberately, per deployment, if a store's delay
+# is worth waiting for.
 MAX_CRAWL_DELAY = float(os.getenv("MAX_CRAWL_DELAY", "5"))
 
 
@@ -1016,12 +1019,25 @@ class ChatbotSearchService:
                 detail="disallowed by robots.txt",
             )
 
-        # Only a Crawl-Delay the site actually declared is honored, and only
-        # up to [MAX_CRAWL_DELAY] so one greedy directive cannot eat the search
-        # budget.
+        # Strict robots.txt compliance: a declared Crawl-Delay is honored exactly
+        # as declared. When it is longer than this deployment's crawl budget
+        # can absorb, the store is skipped and reported rather than crawled
+        # faster than it asked for.
         declared_delay = await self.robots.get_declared_crawl_delay(search_url)
-        if declared_delay:
-            await asyncio.sleep(min(declared_delay, MAX_CRAWL_DELAY))
+        if declared_delay is not None:
+            if declared_delay > MAX_CRAWL_DELAY:
+                return [], self.store_health.record(
+                    store.store_id,
+                    STATE_ROBOTS_DENIED,
+                    detail=(
+                        f"Crawl-Delay {declared_delay:g}s exceeds MAX_CRAWL_DELAY "
+                        f"({MAX_CRAWL_DELAY:g}s): raise MAX_CRAWL_DELAY "
+                        f"(SEARCH_DEADLINE {SEARCH_DEADLINE:g}s) to crawl this "
+                        f"store"
+                    ),
+                )
+            if declared_delay > 0:
+                await asyncio.sleep(declared_delay)
 
         async with _search_semaphore:
             try:

@@ -396,7 +396,9 @@ CREATE TABLE IF NOT EXISTS chat_search_results (
 -- Warm store searches, keyed by the normalized (store, query, price window)
 -- the chatbot builds. Mirrored from its in-process cache so a repeat search
 -- answers from the database instead of re-crawling the store, and so warm
--- results survive a container restart. Rows are swept once past expiry.
+-- results survive a container restart. Writes upsert on cache_key, and expired
+-- rows are swept (first cache read of a process, then every 20 writes), so the
+-- table grows with distinct queries, not with page size or repeat searches.
 CREATE TABLE IF NOT EXISTS chat_query_cache (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     cache_key TEXT NOT NULL UNIQUE,
@@ -404,13 +406,21 @@ CREATE TABLE IF NOT EXISTS chat_query_cache (
     results JSONB NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     -- Epoch seconds rather than a timestamptz: the chatbot compares expiry
-    -- numerically, keeping the query identical on PostgreSQL and on the in-memory
-    -- SQLite its unit tests use.
-    expires_at_epoch DOUBLE PRECISION NOT NULL
+    -- numerically, which keeps the query identical on PostgreSQL and on the in-memory
+    -- SQLite its unit tests use. Negative (empty-result) entries get a short
+    -- expiry here, not the full CACHE_TTL_SECONDS.
+    expires_at_epoch BIGINT NOT NULL,
+    -- Named exactly as 0011_chatbot_query_cache.sql adds it, so a fresh database
+    -- and a migrated one agree on the constraint, not just the column type.
+    CONSTRAINT chat_query_cache_expiry_non_negative CHECK (expires_at_epoch >= 0)
 );
 
 CREATE INDEX IF NOT EXISTS idx_chat_messages_session_id ON chat_messages(session_id);
 CREATE INDEX IF NOT EXISTS idx_chat_search_results_session_id ON chat_search_results(session_id);
+-- Ordinal requests ("أadd رقم 3") filter a session by position; without the
+-- pair, PostgreSQL scans every row the session ever produced.
+CREATE INDEX IF NOT EXISTS idx_chat_search_results_session_position
+    ON chat_search_results (session_id, position);
 CREATE INDEX IF NOT EXISTS idx_chat_query_cache_expiry ON chat_query_cache(expires_at_epoch);
 CREATE INDEX IF NOT EXISTS idx_chat_sessions_user_id ON chat_sessions(user_id);
 

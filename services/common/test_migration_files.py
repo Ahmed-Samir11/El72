@@ -186,11 +186,14 @@ def test_migration_tables_are_declared_in_the_canonical_schema():
     ), "chat_search_results.position is missing from schema/postgres.sql"
 
 
-def test_the_position_backfill_only_touches_unranked_rows():
-    """Re-ranking legacy rows must stay idempotent.
+def test_the_position_backfill_only_touches_unranked_sessions():
+    """Re-ranking legacy rows must stay idempotent, live sessions included.
 
     The migration re-ranks ``chat_search_results`` rows that still carry the
-    column default; without that filter a rerun would shuffle live sessions.
+    column default. Limiting the statement to sessions in which *nothing* is
+    ranked yet is what keeps a rerun after new inserts harmless: a session that
+    already has real positions is never touched, so a fresh row written into an
+    old session cannot be shuffled by a later run of the same migration.
     """
     migration = (INFRA_SQL / "migrations/0011_chatbot_query_cache.sql").read_text(
         encoding="utf-8"
@@ -200,7 +203,53 @@ def test_the_position_backfill_only_touches_unranked_rows():
     assert re.search(
         r"UPDATE\s+chat_search_results", body, re.IGNORECASE
     ), "legacy rows should be re-ranked"
-    assert re.search(
-        r"WHERE\s+position\s*=\s*0", body, re.IGNORECASE
-    ), "the backfill must be limited to unranked rows to stay idempotent"
     assert "ROW_NUMBER() OVER" in body.upper()
+
+    # The ranking window must span the whole session: filtering the rows before
+    # the window would rank the surviving ones 0..n and corrupt live sessions.
+    assert re.search(
+        r"FROM\s+chat_search_results\s*\)\s*AS ranked", body, re.IGNORECASE
+    ), "the ranking window should see every row of the session"
+
+    # Sessions that already carry positions are left alone entirely.
+    assert re.search(
+        r"MAX\(position\)\s+OVER\s*\(\s*PARTITION\s+BY\s+session_id\s*\)",
+        body,
+        re.IGNORECASE,
+    ), "the backfill should detect already-ranked sessions"
+    assert re.search(
+        r"session_max_position\s*=\s*0", body, re.IGNORECASE
+    ), "already-ranked sessions must be skipped"
+    assert re.search(
+        r"target\.position\s*=\s*0", body, re.IGNORECASE
+    ), "only rows still at the default may be written"
+
+
+def test_cache_expiry_is_an_integer_with_a_non_negative_check():
+    """Expiry is compared numerically by the chatbot; floats buy nothing.
+
+    A fresh database and a migrated one must agree on the type and on the
+    constraint name, otherwise the two paths drift silently and only one of
+    them rejects a bogus expiry.
+    """
+    migration = (INFRA_SQL / "migrations/0011_chatbot_query_cache.sql").read_text(
+        encoding="utf-8"
+    )
+    schema = (INFRA_SQL / "schema/postgres.sql").read_text(encoding="utf-8")
+
+    for name, sql in (("0011", migration), ("schema", schema)):
+        assert (
+            "expires_at_epoch BIGINT NOT NULL" in sql
+        ), f"{name} should store expiry as an integer number of seconds"
+        assert (
+            "chat_query_cache_expiry_non_negative" in sql
+        ), f"{name} should declare the non-negative expiry constraint"
+        assert (
+            "idx_chat_search_results_session_position" in sql
+        ), f"{name} should index ordinal lookups by (session_id, position)"
+    assert (
+        "expires_at_epoch DOUBLE PRECISION" not in migration
+    ), "the migrated column should not fall back to a float expiry"
+    assert (
+        "expires_at_epoch DOUBLE PRECISION" not in schema
+    ), "the fresh column should not fall back to a float expiry"

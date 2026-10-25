@@ -22,31 +22,59 @@ CREATE TABLE IF NOT EXISTS chat_query_cache (
     -- Epoch seconds rather than a timestamptz: the chatbot compares expiry
     -- numerically, which keeps the query identical on PostgreSQL and on the
     -- in-memory SQLite its unit tests use. Negative (empty-result) entries get
-    -- a short expiry here, not the full CACHE_TTL_SECONDS.
-    expires_at_epoch DOUBLE PRECISION NOT NULL
+    -- a short expiry here, not the full CACHE_TTL_SECONDS. Whole seconds are
+    -- enough, so the column is an integer; the non-negative rule is added below
+    -- as a named constraint so a fresh database (which builds the table from
+    -- schema/postgres.sql) and a migrated one agree on the constraint name too.
+    expires_at_epoch BIGINT NOT NULL
 );
 
 -- Lets the chatbot sweep expired rows in one statement instead of deleting
--- on every write.
+-- on every write. The service sweeps on its first cache read of a process and
+-- every CACHE_SWEEP_EVERY_WRITES writes, and writes are upserts keyed by
+-- cache_key, so a repeated search refreshes a row instead of piling up copies.
 CREATE INDEX IF NOT EXISTS idx_chat_query_cache_expiry
     ON chat_query_cache (expires_at_epoch);
+
+-- Retype for a database where an earlier revision of this migration already
+-- ran with a floating-point expiry. Fractional seconds were never used, so no
+-- cache entry depends on them.
+ALTER TABLE chat_query_cache
+    ALTER COLUMN expires_at_epoch TYPE BIGINT;
+
+ALTER TABLE chat_query_cache
+    ADD CONSTRAINT IF NOT EXISTS chat_query_cache_expiry_non_negative
+    CHECK (expires_at_epoch >= 0);
 
 ALTER TABLE chat_search_results
     ADD COLUMN IF NOT EXISTS position INTEGER NOT NULL DEFAULT 0;
 
+-- Ordinal requests ("number 3") filter a session by position; without the pair
+-- index PostgreSQL scans every row the session ever produced. Declared in
+-- schema/postgres.sql as well, so both paths end up with it.
+CREATE INDEX IF NOT EXISTS idx_chat_search_results_session_position
+    ON chat_search_results (session_id, position);
+
 -- Rows written before this migration all carry the default 0, which makes an
--- ordinal request against an old session ambiguous. Re-rank them inside their
--- session by insertion time. Only rows still at the default are touched, so
--- already-ranked sessions are left alone and re-running this is a no-op.
+-- ordinal request against an old session ambiguous. Re-rank them by insertion
+-- time, but only inside a session in which *nothing* is ranked yet: a session
+-- that already carries real positions is a live one, and re-ranking part of it
+-- (the ranking below only ever sees the rows still at the default) would shuffle
+-- it on every rerun. Rows already at the default inside a ranked session are
+-- left alone, which makes the whole statement a no-op once rerun.
 UPDATE chat_search_results AS target
    SET position = ranked.rank_minus_one
   FROM (
-    SELECT id,
+    SELECT id, session_id,
            (ROW_NUMBER() OVER (
                PARTITION BY session_id
                ORDER BY created_at, id
-           ) - 1)::INTEGER AS rank_minus_one
+           ) - 1)::INTEGER AS rank_minus_one,
+           -- Highest position already stored in this session: 0 means the
+           -- session predates this column and has nothing ranked yet.
+           MAX(position) OVER (PARTITION BY session_id) AS session_max_position
       FROM chat_search_results
-     WHERE position = 0
   ) AS ranked
- WHERE target.id = ranked.id;
+ WHERE target.id = ranked.id
+   AND ranked.session_max_position = 0
+   AND target.position = 0;
