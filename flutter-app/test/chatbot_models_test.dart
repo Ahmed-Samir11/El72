@@ -236,9 +236,16 @@ void main() {
         'data:text/html,<script>bad()</script>',
         'javascript:alert(1)',
         'app-store://deeplink',
+        // A scheme alone is not an address: there is no host to open.
+        'https://',
+        'http://',
+        'https:///',
       ]) {
         expect(withUrl(url).isLaunchable, false, reason: url);
       }
+      // The scheme is case-insensitive; `Uri` folds it, so an uppercase product
+      // link scraped from a page is still openable.
+      expect(withUrl('HTTPS://noon.com/p/1').isLaunchable, true);
     });
 
     test('throws on missing store_id', () {

@@ -94,6 +94,23 @@ correct product names, stores and images:
 | I | Arabic scale words: `alef-lam-feh` ("and something") after a number was not multiplied, and hamza-alef spellings of the scale words were unreachable | input folds hamza-alef onto bare alef and the number-word table is folded the same way; a captured scale word extends to the whole word | `services/chatbot/test_arabic_nlp.py` (already on the branch, failing before the fix): `12 alef-lam-feh` = 12000, `alefineh` = 2000 |
 | I | `plans/chatbot-demo-monitors.md` committed internal dev addresses | addresses replaced with `<dev-host>:<port>` placeholders | — |
 
+## Review response (PR #43 re-review, 6 findings, 0 CRITICAL)
+
+| # | Finding | Fix | Test |
+|---|---------|-----|------|
+| W | a reply landing on a conversation the provider had already disposed passed `_isCurrent`: `identical()` stays true and the revision counter dies with the object | `ChatConversation.isDisposed` (set in `dispose()`) joins `_isCurrent`, and writes are ignored once disposed | `chat_conversation_test.dart`: late `addMessage`/`reset`/`isSending` after `dispose()` change nothing |
+| I | `didUpdateWidget` removed a listener from a possibly disposed conversation | removal skipped when `oldWidget.conversation.isDisposed`; same guard in `dispose()` | covered by the disposed-instance test's use-after-dispose guard |
+| W | `search_result_card` called `ScaffoldMessenger.of(context)` after `await launchUrl`, which throws if the tab was left meanwhile | the messenger is captured before the await and passed to `unableToOpen` | `search_result_card_test.dart` still asserts the unable-to-open toast |
+| I | `isLaunchable` accepted a bare `https://` (`isAbsolute` is true with no host) | requires a non-empty `host` | `chatbot_models_test.dart`: `https://`, `http://`, `https:///` rejected; `HTTPS://…` accepted |
+| I | `_authOptions` sent `Authorization: Bearer ` for an empty stored token | header only when the token is non-null and non-empty | — |
+| I | an `UnauthorizedException` while the tab was off screen left no trace in the conversation | the bot message is recorded before the mounted check; only the toast needs the page | `chat_page_test.dart`'s 402 path still shows the toast; auth path is UI + chat |
+
+Missed-test suggestions reviewed: the card's non-http refusal and the
+session-id path guard already have tests; `TrackedItem.displayName` is covered
+by `tracked_item_model_test.dart`; the disposed-conversation case is now
+covered at model level (a widget test cannot observe a provider disposal that
+happens while no consumer is attached).
+
 ## Test strategy
 - API: link parsing (parametrized), title persisted and exposed (incl.
   non-dict `specs`), Amazon image/title extraction, beacon skipping; credit

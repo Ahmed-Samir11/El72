@@ -30,10 +30,10 @@ class SearchResultCard extends StatelessWidget {
     final colorScheme = Theme.of(context).colorScheme;
     final locale = Localizations.localeOf(context);
 
-    void unableToOpen() {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(l10n.unableToOpen(result.title))));
+    void unableToOpen(ScaffoldMessengerState messenger) {
+      messenger.showSnackBar(
+        SnackBar(content: Text(l10n.unableToOpen(result.title))),
+      );
     }
 
     return Card(
@@ -42,20 +42,25 @@ class SearchResultCard extends StatelessWidget {
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
         onTap: () async {
+          // Taken before any await: if the user navigates away while the browser
+          // is starting, this context is no longer in the tree and looking the
+          // messenger up again would throw; the instance taken now is still the
+          // live one.
+          final messenger = ScaffoldMessenger.of(context);
           // The url was scraped out of a third-party page, so it may be empty,
           // malformed or not a web address at all (`file:`, `data:`, some app's
           // custom scheme). Only absolute http/https may leave the app; anything
           // else is reported instead of being handed to another program.
           if (!result.isLaunchable) {
-            unableToOpen();
+            unableToOpen(messenger);
             return;
           }
           final uri = Uri.parse(result.url);
           try {
-            if (!await launchUrl(uri)) unableToOpen();
+            if (!await launchUrl(uri)) unableToOpen(messenger);
           } catch (error) {
             debugPrint('Could not open product page: $error');
-            unableToOpen();
+            unableToOpen(messenger);
           }
         },
         child: Padding(

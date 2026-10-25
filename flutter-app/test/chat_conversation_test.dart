@@ -48,4 +48,26 @@ void main() {
     // ...and the request that was still arriving is recognisable as abandoned.
     expect(chat.revision, revisionUnderRequest + 1);
   });
+
+  test('a disposed conversation ignores late writes', () {
+    final chat = ChatConversation()..addMessage(_message(0));
+    final revision = chat.revision;
+
+    // Invalidating chatConversationProvider disposes the instance, while a chat
+    // page whose tab is off screen keeps holding it. A reply that lands after
+    // that must not resurrect a chat that no longer exists, and must not trip
+    // ChangeNotifier's use-after-dispose guard.
+    chat.dispose();
+    expect(chat.isDisposed, isTrue);
+
+    chat
+      ..addMessage(_message(1))
+      ..reset();
+    chat.isSending = true;
+
+    expect(chat.messages.length, 1);
+    expect(chat.messages.first.content, 'message 0');
+    expect(chat.revision, revision);
+    expect(chat.isSending, isFalse);
+  });
 }

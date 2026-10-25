@@ -71,7 +71,12 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
     // Re-attach to the new one; the old listener would keep a disposed chat
     // repainting this page forever.
     if (identical(oldWidget.conversation, widget.conversation)) return;
-    oldWidget.conversation.removeListener(_onConversationChanged);
+    // A conversation the provider already disposed has no listeners left to
+    // take off; asking a disposed ChangeNotifier to forget one is a use-after-
+    // dispose of the very object the replacement is meant to leave behind.
+    if (!oldWidget.conversation.isDisposed) {
+      oldWidget.conversation.removeListener(_onConversationChanged);
+    }
     widget.conversation.addListener(_onConversationChanged);
     // The draft belongs to the conversation, so show the new instance's draft.
     _controller.text = widget.conversation.draft;
@@ -79,7 +84,9 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
 
   @override
   void dispose() {
-    _conversation.removeListener(_onConversationChanged);
+    if (!_conversation.isDisposed) {
+      _conversation.removeListener(_onConversationChanged);
+    }
     _controller.dispose();
     super.dispose();
   }
@@ -93,12 +100,15 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
   /// Whether a reply that lands now still belongs to the conversation its
   /// request was sent against.
   //
-  /// Both ways it can stop belonging: [ChatConversation.reset] (the refresh
-  /// button, or a logout) bumps [ChatConversation.revision], and an invalidated
-  /// provider replaces the instance outright. Either way the answer must be
-  /// dropped, not written back into a chat the user already cleared.
+  /// Three ways it can stop belonging: [ChatConversation.reset] (the refresh
+  /// button, or a logout) bumps [ChatConversation.revision]; an invalidated
+  /// provider replaces the instance outright; and a page whose tab is off screen
+  /// keeps holding an instance the provider has already disposed. Either way the
+  /// answer must be dropped, not written back into a chat the user cleared or
+  /// that no longer exists.
   bool _isCurrent(ChatConversation conversation, int revision) =>
       identical(conversation, _conversation) &&
+      !conversation.isDisposed &&
       conversation.revision == revision;
 
   /// Generate a cryptographically secure random UUID v4 string.
@@ -192,7 +202,19 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
       conversation.isSending = false;
 
       if (e is UnauthorizedException) {
-        // Token expired or invalid — prompt re-authentication.
+        // Token expired or invalid — prompt re-authentication, in the chat as
+        // well as in a toast: a tab that is off screen now is reopened to a
+        // conversation whose reply otherwise vanished without a trace. Only the
+        // toast needs a mounted page.
+        conversation.addMessage(
+          ChatMessageModel(
+            id: _generateUuid(),
+            sessionId: conversation.sessionId ?? '',
+            role: 'bot',
+            content: e.message,
+            createdAt: DateTime.now(),
+          ),
+        );
         if (!mounted) return;
         ScaffoldMessenger.of(
           context,

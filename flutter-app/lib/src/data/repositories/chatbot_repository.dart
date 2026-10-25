@@ -128,8 +128,12 @@ class ChatbotRepository {
   /// `_dio.fetch` has no host.
   Future<Options> _authOptions() async {
     final token = await _getToken();
+    // An empty string would send `Authorization: Bearer `, which the service
+    // reads as a malformed token rather than as "unauthenticated".
     return Options(
-      headers: {if (token != null) 'Authorization': 'Bearer $token'},
+      headers: {
+        if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
+      },
     );
   }
 

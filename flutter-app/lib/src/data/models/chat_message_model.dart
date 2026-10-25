@@ -153,6 +153,7 @@ class SearchResultModel {
   bool get isLaunchable {
     final uri = Uri.tryParse(url);
     if (uri == null || !uri.isAbsolute) return false;
+    if (uri.host.isEmpty) return false;
     return uri.scheme == 'http' || uri.scheme == 'https';
   }
 
