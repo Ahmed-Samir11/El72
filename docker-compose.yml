@@ -102,10 +102,18 @@ services:
       CRAWL_TIMEOUT: "25"
       SEARCH_DEADLINE: "100"
       CACHE_TTL_SECONDS: "900"
+      # Empty results are negative entries with a shorter life, and an entry
+      # holds at most CACHE_MAX_PRODUCTS products: the cache table then grows
+      # with demand (distinct queries) rather than with store page size.
+      CACHE_NEGATIVE_TTL_SECONDS: "120"
+      CACHE_MAX_PRODUCTS: "40"
       STORE_FAILURE_THRESHOLD: "3"
       STORE_COOLDOWN_SECONDS: "600"
-      # Honor robots.txt like the scraper does; "strict" refuses disallowed paths.
-      ROBOTS_TXT_MODE: "soft"
+      # Honor robots.txt like the scraper does (services/scraper/.env.example
+      # ships STRICT too): "strict" refuses disallowed paths and honors a
+      # declared Crawl-Delay. "soft" logs but still crawls, which is only for
+      # local debugging against a store whose robots.txt is misconfigured.
+      ROBOTS_TXT_MODE: "strict"
     ports:
       - "0.0.0.0:8003:8003"
     healthcheck:

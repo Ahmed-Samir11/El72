@@ -63,21 +63,30 @@ PRODUCT_TRANSLATIONS = {
     "كتب": "books",
 }
 
-_NUMBER_WORDS = {
+# Scale words: a number written next to one of these is in thousands or
+# millions. They are kept apart from the spelled-out values so a thousand
+# cannot hide among the tens, and so "12 alf" reads as 12 x 1000 rather
+# than as a bare 1000.
+_MULTIPLIER_WORDS = {
     "الف": 1000,
     "ألف": 1000,
     "ألفين": 2000,
-    "مليون": 1_000_000,
-    "مليونين": 2_000_000,
-    "نص مليون": 500_000,
+    "مليون": 1000000,
+    "مليونين": 2000000,
+    "أف": 1000,
+}
+
+# Spelled-out values, including the Egyptian contractions for hundreds.
+_NUMBER_WORDS = {
+    "نص مليون": 500000,
     "مية": 100,
     "مائه": 100,
     "مئة": 100,
-    "عشر تلاف": 10_000,
-    "عشرة الاف": 10_000,
-    "عشرة آلاف": 10_000,
+    "عشر تلاف": 10000,
+    "عشرة الاف": 10000,
+    "عشرة آلاف": 10000,
     "خمستاشر": 15,
-    "خمستاشر ألف": 15_000,
+    "خمستاشر ألف": 15000,
     "خمسة عشر": 15,
     "عشرين": 20,
     "تلاتين": 30,
@@ -90,15 +99,28 @@ _NUMBER_WORDS = {
     "تمانين": 80,
     "ثمانين": 80,
     "تسعين": 90,
-    "أف": 1000,
 }
+
+# Longest alternative first: "alfin" must win before "alf", and a spelled
+# number before the bare scale word inside it.
+_SCALE = "|".join(sorted(_MULTIPLIER_WORDS, key=len, reverse=True))
+_SPOKEN = "|".join(sorted(_NUMBER_WORDS, key=len, reverse=True))
+
+# One price amount, in either shape: digits with an optional scale word, or
+# a spelled-out number. Shared by the "under X" pattern and the trailing-value
+# pattern, so the two cannot drift apart.
+_AMOUNT = rf"(?:[0-9٠-٩][0-9٠-٩,٬.]*\s*(?:{_SCALE})?" rf"|{_SPOKEN}|{_SCALE})"
 
 _PRICE_PATTERN = re.compile(
     r"(?:بسعر\s+)?(?:أقل\s+من|اقل\s+من|تحت|بحد\s+أقصى|بحد\s+اقصى|"
     r"ميزانيتي|مش\s+أكتر\s+من|مش\s+اكتر\s+من|(?<![\u0600-\u06FF])ب)\s+"
-    r"([0-9٠-٩][0-9٠-٩,٬.]*\s*(?:أف|ألف|الف|ألفين|مليون|مليونين)?|"
-    r"(?:ألفين|ألف|الف|خمستاشر(?:\s+ألف)?|نص مليون|عشر تلاف|عشرة آلاف|عشرة الاف))"
+    rf"({_AMOUNT})"
     r"\s*(?:جنيه|جنية|egp)?",
+    re.IGNORECASE,
+)
+
+_STANDALONE_PRICE = re.compile(
+    rf"({_AMOUNT})\s*(?:جنيه|جنية|egp)?\s*$",
     re.IGNORECASE,
 )
 
@@ -119,13 +141,10 @@ def _parse_number(value: str) -> Optional[float]:
         return float(_NUMBER_WORDS[normalized])
 
     multiplier = 1
-    for word, factor in (
-        ("مليونين", 2_000_000),
-        ("مليون", 1_000_000),
-        ("ألفين", 2_000),
-        ("ألف", 1_000),
-        ("أف", 1_000),
-        ("الف", 1_000),
+    for word, factor in sorted(
+        _MULTIPLIER_WORDS.items(),
+        key=lambda item: len(item[0]),
+        reverse=True,
     ):
         if word in normalized:
             normalized = normalized.replace(word, "").strip()
@@ -149,12 +168,7 @@ def parse_arabic_intent(message: str) -> Dict[str, Any]:
         max_price = _parse_number(match.group(1))
         query = f"{msg[:match.start()]} {msg[match.end():]}"
     else:
-        standalone = re.search(
-            r"([0-9٠-٩][0-9٠-٩,٬.]*|ألفين|ألف|الف|خمستاشر(?:\s+ألف)?|نص مليون|عشر تلاف|عشرة آلاف)"
-            r"\s*(?:جنيه|جنية|egp)?\s*$",
-            msg,
-            re.IGNORECASE,
-        )
+        standalone = _STANDALONE_PRICE.search(msg)
         if standalone:
             max_price = _parse_number(standalone.group(1))
             query = msg[: standalone.start()]

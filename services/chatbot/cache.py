@@ -12,13 +12,21 @@ Results are therefore cached per ``(store_id, query, price bounds)``:
 Empty results are cached too, with a shorter TTL: a store that returned nothing
 for a query will not have started returning something seconds later, and a
 blocked store should stop being re-crawled on every message.
+
+Cached payloads are copies of JSON-safe primitives only. A cached entry is
+shared by every later search of that store, so it must never alias a caller's
+list and must never carry one session's ``result_id``/``position`` into another.
 """
 
+import copy
+import hashlib
 import json
 import logging
 import os
 import time
 from collections import OrderedDict
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import text
@@ -29,6 +37,20 @@ logger = logging.getLogger(__name__)
 CACHE_TTL_SECONDS = float(os.getenv("CACHE_TTL_SECONDS", "900"))
 CACHE_NEGATIVE_TTL_SECONDS = float(os.getenv("CACHE_NEGATIVE_TTL_SECONDS", "120"))
 CACHE_MAX_ENTRIES = int(os.getenv("CACHE_MAX_ENTRIES", "256"))
+# Products per cached entry. A store page can list hundreds of items; the
+# service only ever shows a handful, and the DB mirror would otherwise grow
+# with page size rather than with demand.
+CACHE_MAX_PRODUCTS = int(os.getenv("CACHE_MAX_PRODUCTS", "40"))
+# Rows are swept periodically rather than on every write.
+CACHE_SWEEP_EVERY_WRITES = 20
+
+# Fields that belong to one session's rendering of a result. They are
+# regenerated per session in main.py, so a cached payload must not carry them.
+_SESSION_ONLY_FIELDS = frozenset({"result_id", "position"})
+
+# Separator that cannot appear in a store id or a normalized query, so a
+# store id containing "|" can never forge another entry's key.
+_KEY_SEPARATOR = "\x1f"
 
 
 class TTLLRUCache:
@@ -85,14 +107,69 @@ def make_cache_key(
     """A stable key for one store's search.
 
     Normalized so cosmetic differences hit the same entry: case, repeated
-    whitespace, trailing punctuation, ``40000.0`` vs ``40000``.
+    whitespace, trailing punctuation, ``40000.0`` vs ``40000``. The parts are
+    joined with a separator that cannot occur in them and then hashed, so no
+    combination of store id and query can collide with another entry's key.
+
+    The key deliberately has no locale or currency part: every store id here
+    names one Egyptian storefront whose pages price in EGP, so ``store_id``
+    already carries those dimensions. If a store is ever added with per-country
+    variants, its id must encode the variant, not the query.
+
+    Returns:
+        The hex digest used as ``chat_query_cache.cache_key``.
     """
+    normalized_store = " ".join((store_id or "").lower().split())
     normalized_query = " ".join((query or "").lower().split()).strip(" -,:;")
     bounds = (
         f"{min_price:g}" if min_price is not None else "-",
         f"{max_price:g}" if max_price is not None else "-",
     )
-    return f"{store_id}|{normalized_query}|{bounds[0]}|{bounds[1]}"
+    raw = _KEY_SEPARATOR.join([normalized_store, normalized_query, *bounds])
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _json_safe(value: Any) -> Any:
+    """[value] reduced to what JSON can carry.
+
+    Store extraction can hand back ``Decimal`` prices or date objects; those
+    would make the cache write fail and the whole entry fall back to a crawl.
+    """
+    if value is None or isinstance(value, (str, bool, int, float)):
+        return value
+    if isinstance(value, Decimal):
+        try:
+            return float(value)
+        except (ValueError, OverflowError):
+            return str(value)
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    return str(value)
+
+
+def _normalize_products(products: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """A detached, JSON-safe copy of [products], capped at [CACHE_MAX_PRODUCTS].
+
+    Session-only fields are dropped: the chatbot service mints a fresh row id
+    per session, and a cached id from another session would address a row that
+    session has no claim on.
+    """
+    normalized: List[Dict[str, Any]] = []
+    for product in products[:CACHE_MAX_PRODUCTS]:
+        if not isinstance(product, dict):
+            continue
+        normalized.append(
+            {
+                str(key): _json_safe(value)
+                for key, value in product.items()
+                if key not in _SESSION_ONLY_FIELDS
+            }
+        )
+    return normalized
 
 
 class SearchResultCache:
@@ -112,6 +189,9 @@ class SearchResultCache:
         self.hits = 0
         self.misses = 0
         self._writes = 0
+        # The first DB-backed search of a process sweeps what the previous
+        # process left behind, instead of waiting for 20 writes.
+        self._swept = db_session_factory is None
 
     def get(self, key: str) -> Optional[List[Dict[str, Any]]]:
         """Cached products for [key], or ``None`` when nothing is cached.
@@ -119,56 +199,77 @@ class SearchResultCache:
         Counts a hit only for a real cache read, so the metrics exposed on
         ``/metrics`` reflect the store-level cache, not the first search of a
         process.
+
+        Returns:
+            A detached list; mutating it cannot corrupt the cached entry.
         """
+        self._sweep_once()
+
         cached = self._memory.get(key)
         if cached is not None:
             self.hits += 1
-            return cached
+            return copy.deepcopy(cached)
 
-        stored = self._db_lookup(key)
+        stored, remaining_ttl = self._db_lookup(key)
         if stored is not None:
-            self._memory.set(key, stored, self.ttl_seconds)
+            # Promote with the DB row's own remaining life: a negative entry
+            # must not gain the full positive TTL just by being re-read.
+            self._memory.set(key, stored, remaining_ttl)
             self.hits += 1
-            return stored
+            return list(stored)
 
         self.misses += 1
         return None
 
     def set(self, key: str, store_id: str, products: List[Dict[str, Any]]) -> None:
         """Cache [products] for [key]; an empty list is a negative entry."""
-        ttl = self.negative_ttl_seconds if not products else self.ttl_seconds
-        self._memory.set(key, products, ttl)
+        entry = _normalize_products(products)
+        ttl = self.negative_ttl_seconds if not entry else self.ttl_seconds
+        self._memory.set(key, copy.deepcopy(entry), ttl)
         self._writes += 1
-        if self._writes % 20 == 0:
+        if self._writes % CACHE_SWEEP_EVERY_WRITES == 0:
             self._delete_expired()
         if self._db_session_factory is None:
             return
-        self._db_store(key, store_id, products, ttl)
+        self._db_store(key, store_id, entry, ttl)
 
     # -- database mirror ----------------------------------------------------
 
-    def _db_lookup(self, key: str) -> Optional[List[Dict[str, Any]]]:
-        """Read a live (unexpired) entry from ``chat_query_cache``."""
+    def _sweep_once(self) -> None:
+        """Sweep expired rows once per process, on the first DB-backed read."""
+        if self._swept:
+            return
+        self._swept = True
+        self._delete_expired()
+
+    def _db_lookup(self, key: str) -> tuple:
+        """Read a live (unexpired) entry from ``chat_query_cache``.
+
+        Returns:
+            ``(products, remaining_ttl_seconds)`` or ``(None, 0.0)``.
+        """
         if self._db_session_factory is None:
-            return None
+            return None, 0.0
+        now = time.time()
         try:
             with self._db_session_factory() as db:
                 row = db.execute(
                     text(
-                        "SELECT results FROM chat_query_cache "
+                        "SELECT results, expires_at_epoch FROM chat_query_cache "
                         "WHERE cache_key = :cache_key AND expires_at_epoch > :now"
                     ),
-                    {"cache_key": key, "now": time.time()},
+                    {"cache_key": key, "now": now},
                 ).fetchone()
             if row is None:
-                return None
+                return None, 0.0
             payload = row.results
             if isinstance(payload, str):
                 payload = json.loads(payload)
-            return list(payload)
+            remaining = float(row.expires_at_epoch) - now
+            return list(payload), max(0.0, min(remaining, self.ttl_seconds))
         except Exception as exc:  # noqa: BLE001 - a cache read must never fail a search
             logger.warning("chat_query_cache read failed: %s", exc)
-            return None
+            return None, 0.0
 
     def _db_store(
         self, key: str, store_id: str, products: List[Dict[str, Any]], ttl: float
@@ -204,7 +305,9 @@ class SearchResultCache:
         try:
             with self._db_session_factory() as db:
                 db.execute(
-                    text("DELETE FROM chat_query_cache WHERE expires_at_epoch < :now"),
+                    text(
+                        "DELETE FROM chat_query_cache " "WHERE expires_at_epoch < :now"
+                    ),
                     {"now": time.time()},
                 )
                 db.commit()

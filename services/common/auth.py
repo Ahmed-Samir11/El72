@@ -46,6 +46,28 @@ def get_secret_key(secret_key: Optional[str] = None) -> str:
     return secret
 
 
+def require_secret_key() -> str:
+    """Return the service's ``SECRET_KEY``, refusing to start without one.
+
+    A deployed service that falls back to a hard-coded signing key lets anyone
+    mint a token whose ``sub`` is any phone number, which is full access to
+    every account. The old behaviour was a silent default; here it is a startup
+    error with the fix spelled out, so it lands in the container log.
+
+    Raises:
+        RuntimeError: when the ``SECRET_KEY`` environment variable is unset
+            or empty.
+    """
+    secret = os.getenv("SECRET_KEY")
+    if not secret:
+        raise RuntimeError(
+            "SECRET_KEY is not configured. Export it before starting this "
+            "service (docker-compose already requires it through .env): a "
+            "fallback signing key would let anyone forge access tokens."
+        )
+    return secret
+
+
 def decode_access_token(
     token: str,
     secret_key: Optional[str] = None,

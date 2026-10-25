@@ -78,24 +78,36 @@ contains a numeric/currency cue the parser failed to bind. Keep the LLM result
 as an override when it returns a non-empty query (it is better at translation).
 
 **3. Cache (fixes C).**
-In-process TTL+LRU (`cachetools.TTLCache`, `CACHE_TTL_SECONDS=900`,
-`CACHE_MAX_ENTRIES=256`) keyed by `(store_id, query, min_price, max_price)`,
-plus a Postgres table so warm results survive restarts:
+In-process TTL+LRU keyed by `(store_id, query, min_price, max_price)` plus a
+Postgres table so warm results survive restarts. The in-process layer is a
+dependency-free `TTLLRUCache` in `services/chatbot/cache.py` (no `cachetools`:
+the image pins few packages and the cache is ~30 lines), `CACHE_TTL_SECONDS=900`,
+`CACHE_MAX_ENTRIES=256`. The key is the SHA-256 of the normalized tuple, so no
+store id or query can forge another entry's key by containing a delimiter. An
+entry is stored and returned as a detached copy of JSON-safe primitives, capped
+at `CACHE_MAX_PRODUCTS=40`, with session-only fields (`result_id`, `position`)
+stripped: a cached payload is shared by every later search of that store.
 
 ```sql
 CREATE TABLE IF NOT EXISTS chat_query_cache (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    cache_key TEXT NOT NULL UNIQUE,   -- store_id|query|min|max, normalized
+    cache_key TEXT NOT NULL UNIQUE,        -- sha256 of (store,query,min,max)
     store_id TEXT NOT NULL,
-    payload JSONB NOT NULL,           -- the result list
-    fetched_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    results JSONB NOT NULL,                -- the result list
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    expires_at_epoch DOUBLE PRECISION NOT NULL
 );
 ```
 
 Add to `infra/sql/schema/postgres.sql` **and** a new
-`infra/sql/migrations/0011_chat_query_cache.sql`, registered in
-`scripts/db-bootstrap.sh`. Negative results (store returned nothing) are cached
-too, with a shorter TTL, so blocked stores stop being re-crawled.
+`infra/sql/migrations/0011_chatbot_query_cache.sql`, registered in
+`scripts/db-bootstrap.sh` (guarded by `services/common/test_migration_files.py`,
+which fails if a numbered migration is never applied). Negative results (store
+returned nothing) are cached too, under `CACHE_NEGATIVE_TTL_SECONDS=120`, so
+blocked stores stop being re-crawled; a negative entry read back from the DB
+keeps that short expiry instead of gaining the full TTL. The same migration adds
+`chat_search_results.position` and re-ranks pre-existing rows per session, so
+"أadd رقم 3" against an old session is not ambiguous.
 
 **4. Crawler hardening (fixes D, E, F, G).**
 
@@ -246,7 +258,7 @@ card the app already wants.
 | `services/chatbot/test_intents.py` | intent + slot table-driven tests |
 | `services/chatbot/test_cache.py` | TTL, negative cache, key normalization |
 | `services/chatbot/test_store_health.py` | cooldown, status reporting |
-| `infra/sql/migrations/0011_chat_query_cache.sql` | cache table migration |
+| `infra/sql/migrations/0011_chatbot_query_cache.sql` | cache table + result position |
 | `services/analyzer/test_chat_intents.py` | stream consumer → analytics upsert |
 
 ### Modified
@@ -258,12 +270,14 @@ card the app already wants.
 | `services/chatbot/models.py` | `result_id`, `created`, `store_status`, field bounds, UUID ids |
 | `services/chatbot/arabic_nlp.py` | strict `parse_add_command`, range/min parsing for Arabic |
 | `services/chatbot/i18n.py` | new message keys (compare, history, deals, removed tracker, store-unreachable) |
-| `services/chatbot/requirements.txt` | `cachetools` |
-| `services/chatbot/Dockerfile` | copy new modules |
+| `services/chatbot/requirements.txt` | `robotexclusionrulesparser` (shared robots handler) |
+| `services/chatbot/Dockerfile` | copy new modules and `services/common/` -> `/app/common` |
 | `services/api/main.py` | consume `services/common/auth.py` |
+| `services/api/dependencies.py` | `SECRET_KEY` required at startup, shared decoder |
+| `services/scraper/robots_handler.py` | compatibility shim over `services/common/robots.py` |
 | `services/scraper/crawl4ai_base.py` | consume `services/common/robots.py` |
 | `services/analyzer/app.py` | `cg_intents` consumer group for `stream:chat_intents` |
-| `infra/sql/schema/postgres.sql` | `chat_query_cache` table |
+| `infra/sql/schema/postgres.sql` | `chat_query_cache` table, `chat_search_results.position` |
 | `docker-compose.yml` | `ANALYZER_BASE_URL`, `REDIS_URL` for chatbot |
 | `scripts/db-bootstrap.sh` | register migration 0011 |
 | `flutter-app/lib/src/ui/chatbot/chat_page.dart` | progress, quick commands, session resume, l10n |

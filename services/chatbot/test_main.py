@@ -519,6 +519,58 @@ def test_add_to_feed_by_result_id(
     assert posted == ["https://example.com/second"]
 
 
+def test_a_result_id_must_belong_to_the_session_that_asks(
+    client, override_db, override_auth, db_session, auth_headers, monkeypatch
+):
+    """Another session's row id addresses nothing here.
+
+    Searches are saved per session, so the lookup is scoped by session_id: a
+    foreign id (or a forged one) must not track someone else's product, and
+    cached payloads must not smuggle one in either.
+    """
+    import uuid as _uuid
+
+    posted = _capture_add_posts(monkeypatch)
+
+    owner, intruder = str(_uuid.uuid4()), str(_uuid.uuid4())
+    for sid in (owner, intruder):
+        db_session.execute(
+            text("INSERT INTO chat_sessions (id, user_id) VALUES (:id, :user_id)"),
+            {"id": sid, "user_id": 1},
+        )
+    owned_row = _uuid.uuid4()
+    db_session.execute(
+        text(
+            "INSERT INTO chat_search_results "
+            "(id, session_id, store_id, product_title, price_local, "
+            "currency, url, position) "
+            "VALUES (:id, :sid, :store_id, :title, :price, :currency, :url, "
+            ":position)"
+        ),
+        {
+            "id": str(owned_row),
+            "sid": owner,
+            "store_id": "amazon_eg",
+            "title": "Someone else's monitor",
+            "price": 100.0,
+            "currency": "EGP",
+            "url": "https://example.com/private",
+            "position": 0,
+        },
+    )
+    db_session.commit()
+
+    response = client.post(
+        "/chatbot/add-to-feed",
+        json={"session_id": intruder, "result_id": str(owned_row)},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert posted == []
+    assert "private" not in response.json()["message"]
+
+
 def test_add_command_resolves_position_against_saved_results(
     client, override_db, override_auth, db_session, auth_headers, monkeypatch
 ):

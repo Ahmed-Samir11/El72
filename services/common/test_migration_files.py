@@ -35,6 +35,7 @@ POSTGRES_MIGRATIONS = [
     "migrations/0008_payment_audit_log_cash_events.sql",
     "migrations/0009_admin_dispute_refunds.sql",
     "migrations/0010_subscriptions.sql",
+    "migrations/0011_chatbot_query_cache.sql",
 ]
 TIMESCALE_MIGRATIONS = [
     "migrations/timescaledb/0000_baseline.sql",
@@ -133,3 +134,73 @@ def test_env_example_has_no_plaintext_passwords():
                 "",
                 "CHANGE_ME",
             ), f"{key} appears to carry a committed secret in .env.example"
+
+
+def test_numbered_migrations_are_applied_by_the_bootstrap():
+    """A migration the bootstrap never applies leaves a column missing.
+
+    The chatbot inserts ``chat_search_results.position`` and writes its cache
+    through ``chat_query_cache``, so a database bootstrapped without 0011 fails
+    at query time rather than at startup. Legacy migrations are applied by
+    operators only, hence the narrower scan of the numbered files.
+    """
+    text = BOOTSTRAP.read_text(encoding="utf-8")
+    referenced = set(re.findall(r"infra/sql/[A-Za-z0-9_./-]+\.sql", text))
+
+    for directory in (
+        INFRA_SQL / "migrations",
+        INFRA_SQL / "migrations/postgres",
+        INFRA_SQL / "migrations/timescaledb",
+    ):
+        for path in sorted(directory.glob("*.sql")):
+            rel = "infra/sql/" + path.relative_to(INFRA_SQL).as_posix()
+            assert rel in referenced, f"{rel} is never applied by the bootstrap"
+
+
+def test_migration_tables_are_declared_in_the_canonical_schema():
+    """A fresh database and a migrated one must end up with the same shape.
+
+    ``0011_chatbot_query_cache.sql`` creates what an existing deployment is
+    missing; ``schema/postgres.sql`` is what a new one starts from. If they
+    drift, the chatbot's cache writes fail on exactly one of the two paths.
+    """
+    migration = (INFRA_SQL / "migrations/0011_chatbot_query_cache.sql").read_text(
+        encoding="utf-8"
+    )
+    schema = (INFRA_SQL / "schema/postgres.sql").read_text(encoding="utf-8")
+
+    for table in re.findall(r"CREATE TABLE IF NOT EXISTS (\w+)", migration):
+        assert (
+            f"CREATE TABLE IF NOT EXISTS {table} (" in schema
+        ), f"{table} is created by 0011 but missing from schema/postgres.sql"
+
+    for index in re.findall(r"CREATE INDEX IF NOT EXISTS (\w+)", migration):
+        assert (
+            f"CREATE INDEX IF NOT EXISTS {index}" in schema
+        ), f"{index} is created by 0011 but missing from schema/postgres.sql"
+
+    # position is added by ALTER TABLE here and must exist in the fresh table.
+    assert "ADD COLUMN IF NOT EXISTS position" in migration
+    assert re.search(
+        r"position INTEGER NOT NULL", schema
+    ), "chat_search_results.position is missing from schema/postgres.sql"
+
+
+def test_the_position_backfill_only_touches_unranked_rows():
+    """Re-ranking legacy rows must stay idempotent.
+
+    The migration re-ranks ``chat_search_results`` rows that still carry the
+    column default; without that filter a rerun would shuffle live sessions.
+    """
+    migration = (INFRA_SQL / "migrations/0011_chatbot_query_cache.sql").read_text(
+        encoding="utf-8"
+    )
+    body = _strip_comments(migration)
+
+    assert re.search(
+        r"UPDATE\s+chat_search_results", body, re.IGNORECASE
+    ), "legacy rows should be re-ranked"
+    assert re.search(
+        r"WHERE\s+position\s*=\s*0", body, re.IGNORECASE
+    ), "the backfill must be limited to unranked rows to stay idempotent"
+    assert "ROW_NUMBER() OVER" in body.upper()

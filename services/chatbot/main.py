@@ -95,12 +95,18 @@ DATABASE_URL = os.getenv(
 )
 API_BASE_URL = os.getenv("API_BASE_URL", "http://api:8000")
 
-# JWT configuration — decoding lives in services/common/auth.py, which pins
-# the algorithm and reads SECRET_KEY, so this service cannot pick a different
-# one by accident.
-SECRET_KEY = os.getenv("SECRET_KEY")
 
-if not SECRET_KEY:
+# JWT configuration — decoding lives in services/common/auth.py, which pins
+# the algorithm, so this service cannot pick a different one by accident. The
+# secret itself is read when a request is validated, not at import: import order
+# (or a container that gains the variable later) must not decide whether tokens
+# can be verified.
+def configured_secret() -> Optional[str]:
+    """The configured ``SECRET_KEY``, or ``None`` when it is unset."""
+    return os.getenv("SECRET_KEY")
+
+
+if not configured_secret():
     logger.warning("SECRET_KEY is not set; JWT validation will fail for all requests.")
 
 # ---------------------------------------------------------------------------
@@ -119,7 +125,7 @@ def rate_limit_key(request: Request) -> str:
     token = bearer_token(request.headers.get("Authorization"))
     if token:
         try:
-            payload = decode_access_token(token, SECRET_KEY)
+            payload = decode_access_token(token, configured_secret())
         except TokenDecodeError:
             payload = None
         subject = token_subject(payload) if payload else None
@@ -175,12 +181,13 @@ def verify_jwt_token(
 
     Returns the JWT payload dict. Raises HTTPException(401) on any failure.
     """
-    if not SECRET_KEY:
+    secret = configured_secret()
+    if not secret:
         raise HTTPException(
             status_code=503, detail="JWT secret not configured on server"
         )
     try:
-        return decode_access_token(credentials.credentials, SECRET_KEY)
+        return decode_access_token(credentials.credentials, secret)
     except TokenDecodeError:
         raise HTTPException(
             status_code=401,

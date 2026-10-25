@@ -17,8 +17,9 @@ Everything here is pure string work: no network, no LLM, no browser.
 import json
 import logging
 import re
+from collections import deque
 from html import unescape
-from typing import Any, Dict, List, Optional
+from typing import Any, Deque, Dict, List, Optional
 from urllib.parse import urljoin
 
 logger = logging.getLogger(__name__)
@@ -61,9 +62,9 @@ def _iter_jsonld_nodes(raw: str) -> List[dict]:
 
     nodes: List[dict] = []
     # FIFO, so products keep the order the page declares them in.
-    queue: List[Any] = [data]
+    queue: Deque[Any] = deque([data])
     while queue:
-        node = queue.pop(0)
+        node = queue.popleft()
         if isinstance(node, list):
             queue.extend(node)
         elif isinstance(node, dict):
@@ -122,15 +123,47 @@ def _price_from_offers(node: dict) -> Optional[float]:
     return None
 
 
-def _in_stock(node: dict) -> bool:
-    """Whether the JSON-LD offers say the product can be bought now."""
+def _availability_values(node: dict) -> List[str]:
+    """Every stock state the product's offers declare.
+
+    Stores spell availability in three shapes: a bare string ("OutOfStock"),
+    a schema.org URL object ({"@id": "https://schema.org/OutOfStock"}) or a
+    list of offers. Some ship a boolean ``isAvailable`` instead.
+    """
+    values: List[str] = []
     for offer in _offer_list(node):
-        availability = offer.get("availability")
+        availability = offer.get("availability", offer.get("isAvailable"))
         if isinstance(availability, str):
-            if availability.lower().replace("_", "").split("/")[-1] in _OUT_OF_STOCK:
-                return False
-            return True
-    return True
+            values.append(availability)
+        elif isinstance(availability, dict):
+            for key in ("@id", "url", "@value"):
+                nested = availability.get(key)
+                if isinstance(nested, str) and nested.strip():
+                    values.append(nested)
+                    break
+        elif isinstance(availability, list):
+            values.extend(v for v in availability if isinstance(v, str))
+        elif isinstance(availability, bool):
+            values.append("OutOfStock" if not availability else "InStock")
+    return values
+
+
+def _normalized_availability(value: str) -> str:
+    """Reduce an availability string to its schema.org enum name."""
+    return value.lower().replace("_", "").replace("-", "").split("/")[-1]
+
+
+def _in_stock(node: dict) -> bool:
+    """Whether the JSON-LD offers say the product can be bought now.
+
+    A variant group lists several offers; the product is buyable when ANY
+    offer is not explicitly out of stock, so one unavailable size cannot
+    hide a purchasable product.
+    """
+    values = _availability_values(node)
+    if not values:
+        return True
+    return any(_normalized_availability(value) not in _OUT_OF_STOCK for value in values)
 
 
 def _image_from(node: dict) -> str:

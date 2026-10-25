@@ -62,6 +62,10 @@ apply_file "$DATABASE_URL" \
 apply_file "$DATABASE_URL" \
     infra/sql/migrations/0010_subscriptions.sql
 
+# Chatbot result cache plus stable per-session result ordering.
+apply_file "$DATABASE_URL" \
+    infra/sql/migrations/0011_chatbot_query_cache.sql
+
 # Same sequence for the independent TimescaleDB instance.
 apply_file "$TIMESCALE_URL" \
     infra/sql/schema/timescaledb.sql

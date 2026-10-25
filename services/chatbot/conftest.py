@@ -4,10 +4,12 @@
 contract (``services/common/robots.py``) that the chatbot uses. CI installs it
 from ``requirements-test.txt``; where it is absent, register a minimal stub so
 the chatbot unit tests stay collectable — the parser's own behaviour is covered
-by ``services/scraper/test_robots_handler.py``.
+by ``services/scraper/test_robots_handler.py``, and the stub warns so a missing
+runtime dependency cannot hide behind it.
 """
 
 import sys
+import warnings
 from types import ModuleType
 
 import pytest
@@ -46,6 +48,14 @@ def _ensure_robots_parser() -> None:
     _stub = ModuleType("robotexclusionrulesparser")
     _stub.RobotExclusionRulesParser = _FakeParser
     sys.modules["robotexclusionrulesparser"] = _stub
+    # Loud on purpose: a stub that allows every path could mask a missing
+    # runtime dependency in the image. services/chatbot/test_deployment_layout.py
+    # asserts the real distribution is declared in the service requirements.
+    warnings.warn(
+        "robotexclusionrulesparser is not installed; chatbot robots.txt tests "
+        "run against a permissive stub.",
+        stacklevel=2,
+    )
 
 
 _ensure_robots_parser()

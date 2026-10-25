@@ -83,6 +83,14 @@ class RobotsTxtHandler:
         # Load mode from env or use default
         mode_str = os.getenv("ROBOTS_TXT_MODE", "soft").lower()
         self.mode = mode or RobotsTxtMode(mode_str)
+        if self.mode.value != "strict":
+            # "soft" and "log_only" crawl paths the store asked us not to. That
+            # is a local debugging choice, so it has to be a visible one.
+            logger.warning(
+                f"RobotsTxtHandler in mode={self.mode.value}: disallowed paths "
+                f"will still be crawled. Set ROBOTS_TXT_MODE=strict except for "
+                f"local debugging (the scraper ships STRICT by default)."
+            )
 
         self.user_agent = user_agent or os.getenv(
             "SCRAPER_USER_AGENT", self.DEFAULT_USER_AGENT

@@ -79,6 +79,47 @@ def test_extract_jsonld_products_skips_broken_blocks():
     assert products[0]["url"] == "https://store.example/p/nitro"
 
 
+def test_a_product_with_one_available_offer_is_buyable():
+    """A variant group is buyable when ANY offer is not out of stock.
+
+    The first size being sold out must not hide a product a user can order.
+    """
+    html = (
+        '<script type="application/ld+json">'
+        '{"@context": "https://schema.org", "@type": "Product", '
+        '"name": "LG UltraGear 32", "url": "/p/ultragear", '
+        '"price": 13999, '
+        '"offers": ['
+        '{"availability": "OutOfStock", "priceAmount": 13999}, '
+        '{"availability": "https://schema.org/InStock", "priceAmount": 13999}'
+        "]}</script>"
+    )
+    products = extract_jsonld_products(html, base_url="https://store.example")
+
+    assert len(products) == 1
+    assert products[0]["in_stock"] is True
+
+
+def test_availability_in_its_other_shapes_is_understood():
+    """Stores spell stock as a URL object or a boolean, not only a string."""
+    url_object = (
+        '{"@type": "Product", "name": "Alien S3", "url": "/p/s3", '
+        '"offers": {"availability": {"@id": "https://schema.org/OutOfStock"}}}'
+    )
+    boolean_flag = (
+        '{"@type": "Product", "name": "MSI RTX 5060", "url": "/p/rtx5060", '
+        '"offers": {"isAvailable": false}}'
+    )
+
+    assert not extract_jsonld_products(_ld(url_object))[0]["in_stock"]
+    assert not extract_jsonld_products(_ld(boolean_flag))[0]["in_stock"]
+
+
+def _ld(payload: str) -> str:
+    """Wrap [payload] in the script tag a store page would send."""
+    return f'<script type="application/ld+json">{payload}</script>'
+
+
 _CARD_PAGE = """
 <div class="card">
   <a href="/d/asus-tuf-a16/p/asus-tuf">

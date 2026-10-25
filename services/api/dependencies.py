@@ -11,14 +11,16 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from services.api.models import User
 from services.common.auth import (
+    ALGORITHM,
     TokenDecodeError,
     decode_access_token,
+    require_secret_key,
     token_subject,
 )
 
-# Configuration
-SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key")
-ALGORITHM = "HS256"
+# Configuration. The signing key has no default on purpose: a predictable
+# key would let anyone forge a token for any phone number.
+SECRET_KEY = require_secret_key()
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./elhaq.db")
