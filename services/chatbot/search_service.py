@@ -61,8 +61,10 @@ logger = logging.getLogger(__name__)
 
 # Concurrency limit for multi-store search. Crawls are browser tabs, not LLM
 # slots, so every store can be in flight at once; the LLM fallback stays behind
-# its own single-slot semaphore.
-MAX_CONCURRENT_STORES = int(os.getenv("MAX_CONCURRENT_STORES", "8"))
+# its own single-slot semaphore. Clamped to at least 1: a zero here would come
+# from a misconfigured container and would deadlock every search on the semaphore
+# instead of failing loudly.
+MAX_CONCURRENT_STORES = max(1, int(os.getenv("MAX_CONCURRENT_STORES", "8")))
 _search_semaphore = asyncio.Semaphore(MAX_CONCURRENT_STORES)
 
 # LM Studio Configuration (OpenAI-compatible local endpoint)
@@ -74,7 +76,7 @@ LLM_TIMEOUT = float(os.getenv("LLM_TIMEOUT", "120"))
 # Number of LLM requests in flight at once. Should match the server's parallel
 # slots (llama-server defaults to 1); extra requests only queue server-side and
 # time out client-side.
-LLM_MAX_CONCURRENCY = int(os.getenv("LLM_MAX_CONCURRENCY", "1"))
+LLM_MAX_CONCURRENCY = max(1, int(os.getenv("LLM_MAX_CONCURRENCY", "1")))
 _llm_semaphore = asyncio.Semaphore(LLM_MAX_CONCURRENCY)
 # Reasoning models spend most of the token budget "thinking" before emitting
 # JSON, which makes extraction too slow and truncates the output. Disable it
@@ -85,7 +87,7 @@ LLM_EXTRA_BODY: Dict[str, Any] = (
 )
 
 # Crawl4AI Configuration
-CRAWL_TIMEOUT = int(os.getenv("CRAWL_TIMEOUT", "25"))
+CRAWL_TIMEOUT = max(1, int(os.getenv("CRAWL_TIMEOUT", "25")))
 # "networkidle" never fires on stores with long-polling chat/analytics widgets;
 # the crawl then burns the whole timeout. The product grid is in the DOM long
 # before the network goes quiet, so the DOM-ready event is both faster and
@@ -113,13 +115,13 @@ MAX_RESULTS_PER_STORE = 3
 # Overall budget for a multi-store search. Stores still pending when it expires
 # are dropped so the client (receive timeout 120s) gets partial results instead
 # of a timeout.
-SEARCH_DEADLINE = float(os.getenv("SEARCH_DEADLINE", "100"))
+SEARCH_DEADLINE = max(1.0, float(os.getenv("SEARCH_DEADLINE", "100")))
 # The longest Crawl-Delay this service will wait out. It is a budget limit, not
 # a licence to crawl faster than a site asked: a store declaring more than this
 # is reported as robots_denied (and then cooled down) instead of being crawled
 # at the capped rate. Raise it deliberately, per deployment, if a store's delay
 # is worth waiting for.
-MAX_CRAWL_DELAY = float(os.getenv("MAX_CRAWL_DELAY", "5"))
+MAX_CRAWL_DELAY = max(0.0, float(os.getenv("MAX_CRAWL_DELAY", "5")))
 
 
 # =============================================================================

@@ -391,9 +391,10 @@ CREATE TABLE IF NOT EXISTS chat_search_results (
     -- the same product after a restart (the in-process cache is an optimization).
     position INTEGER NOT NULL DEFAULT 0,
     -- Shared by the rows of one search. Both searches of a session restart at
-    -- position 0, so the group id is what tells the newest search apart from an
-    -- older one; rows written before migration 0011 have it NULL until that
-    -- migration stamps them with one deterministic id per session.
+    -- position 0, so the group id says which rows belong to the same list; the
+    -- newest group is found by created_at, never by ordering the uuids.
+    -- Rows written before migration 0011 have it NULL until that migration
+    -- stamps them with one deterministic id per session.
     search_id UUID,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );

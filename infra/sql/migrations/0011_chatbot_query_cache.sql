@@ -88,6 +88,10 @@ COMMENT ON COLUMN chat_search_results.search_id IS 'Group id shared by every row
 -- ever produced. Declared in schema/postgres.sql as well, so both paths end up
 -- with it. The pair index an earlier revision of this migration created is
 -- dropped: it is a prefix of this one and would only slow writes down.
+-- The bootstrap applies each file with psql --single-transaction, so CREATE
+-- INDEX CONCURRENTLY is not available in a migration; the lock is brief because
+-- chat_search_results is written only by the chatbot and holds at most a few
+-- dozen rows per search.
 DROP INDEX IF EXISTS idx_chat_search_results_session_position;
 
 CREATE INDEX IF NOT EXISTS idx_chat_search_results_session_search
@@ -107,7 +111,14 @@ CREATE INDEX IF NOT EXISTS idx_chat_search_results_session_search
 -- session resumed after this migration does gain rows from a newer search, and
 -- those rows carry their own search id; the statement below refuses to touch
 -- any session that already has one, so an old list is ranked once and never
--- re-ranked.
+-- re-ranked. Rows in a session that *does* have grouped rows stay without an id:
+-- those are searches older than the newest one, which the grouped read ignores
+-- by design, and the pre-0011 window read remains the fallback for a session that
+-- has no grouped row at all.
+--
+-- The scan is proportional to the rows that predate this migration: every write
+-- made after it carries a search id, so on an already-upgraded database this
+-- statement matches nothing.
 --
 -- The same statement stamps the legacy rows with one deterministic search id
 -- per session (md5 of the session id, cast to uuid). A session's rows written
