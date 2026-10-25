@@ -262,7 +262,7 @@ class ChatResponseModel {
           .map((r) => SearchResultModel.fromJson(r))
           .toList(),
       language: json['language'] as String? ?? 'en',
-      trackerCreated: json['tracker_created'] as bool? ?? false,
+      trackerCreated: json['tracker_created'] == true,
     );
   }
 }

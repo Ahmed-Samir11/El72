@@ -43,6 +43,9 @@ Future<T> _retryGet<T>(Future<T> Function() future, int maxRetries) async {
       return await future();
     } on DioException catch (e) {
       // Only retry on transient network errors, not HTTP error responses.
+      // Anything else — including the ArgumentError the session-id path guard
+      // raises — propagates on the first attempt: a bad id is not a condition
+      // that a retry can fix.
       if (e.type == DioExceptionType.connectionTimeout ||
           e.type == DioExceptionType.connectionError ||
           e.type == DioExceptionType.receiveTimeout ||

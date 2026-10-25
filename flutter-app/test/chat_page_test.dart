@@ -22,22 +22,27 @@ import 'package:elhaq_tracker/src/ui/chatbot/search_result_card.dart';
 /// does: 200 either way, the flag says whether a tracker exists.
 /// [addFailure] makes the add-to-feed call throw the domain exception the
 /// repository maps an HTTP status to.
+/// [addExplanation] overrides the sentence the service returns for an add that
+/// did not create a tracker (an empty string means "the server said nothing").
 class _FakeChatbotRepository extends ChatbotRepository {
   _FakeChatbotRepository({
     List<SearchResultModel>? results,
     bool trackerCreated = false,
     bool holdReply = false,
     Exception? addFailure,
+    String? addExplanation,
   }) : _results = results ?? const [],
        _trackerCreated = trackerCreated,
        _holdReply = holdReply,
        _addFailure = addFailure,
+       _addExplanation = addExplanation,
        super();
 
   final List<SearchResultModel> _results;
   final bool _trackerCreated;
   final bool _holdReply;
   final Exception? _addFailure;
+  final String? _addExplanation;
 
   final Completer<ChatResponseModel> _release = Completer<ChatResponseModel>();
 
@@ -82,7 +87,9 @@ class _FakeChatbotRepository extends ChatbotRepository {
     _addToFeedCalls++;
     if (_addFailure != null) throw _addFailure;
     return ChatResponseModel(
-      message: _trackerCreated ? 'Tracker created' : 'No results were added.',
+      message:
+          _addExplanation ??
+          (_trackerCreated ? 'Tracker created' : 'No results were added.'),
       sessionId: sessionId,
       searchResults: _results.isEmpty ? const [] : _results.sublist(0, 1),
       trackerCreated: _trackerCreated,
@@ -178,7 +185,7 @@ void main() {
     expect(find.text('unsent draft'), findsOneWidget);
   });
 
-  testWidgets('a created tracker is announced by name, not by result count', (
+  testWidgets('a created tracker announces itself, not a result count', (
     tester,
   ) async {
     final repository = _FakeChatbotRepository(
@@ -193,13 +200,34 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(repository.addToFeedCalls, 1);
-    expect(
-      find.text(
-        'Tracker created for "Samsung Odyssey G5 27" 2K Monitor 0". '
-        'You will be notified on price changes.',
-      ),
-      findsOneWidget,
+    final toast =
+        (tester.widget<SnackBar>(find.byType(SnackBar)).content as Text).data ??
+        '';
+    // Localized success text, and which of the several results became a tracker.
+    expect(toast, contains('Tracker created!'));
+    expect(toast, contains('Samsung Odyssey G5 27" 2K Monitor 0'));
+  });
+
+  testWidgets('an add refusal that explains nothing still says it failed', (
+    tester,
+  ) async {
+    final repository = _FakeChatbotRepository(
+      results: List.generate(1, _result),
+      addExplanation: '',
     );
+    final container = _containerWith(repository);
+    await tester.pumpWidget(_app(container, const ChatPage()));
+
+    await _send(tester, '2k monitor under 12k');
+    await _addToFeed(tester);
+    await tester.pumpAndSettle();
+
+    // A toast reading "" would look like a success that did nothing.
+    final toast =
+        (tester.widget<SnackBar>(find.byType(SnackBar)).content as Text).data ??
+        '';
+    expect(toast, isNot(isEmpty));
+    expect(toast, contains('Failed to add tracker'));
   });
 
   testWidgets('a failed add shows the chatbot explanation, not success', (
@@ -297,8 +325,16 @@ void main() {
     container.invalidate(chatConversationProvider);
     await tester.pumpAndSettle();
 
+    expect(before.isDisposed, true);
     expect(identical(container.read(chatConversationProvider), before), false);
     expect(find.text('No messages yet. Start a conversation.'), findsOneWidget);
     expect(find.byType(SearchResultCard), findsNothing);
+
+    // Typing into the replaced chat drives the draft listener of the live
+    // instance; a page still wired to the disposed one trips ChangeNotifier's
+    // use-after-dispose guard here.
+    await tester.enterText(find.byType(TextField), 'still typing');
+    await tester.pump();
+    expect(container.read(chatConversationProvider).draft, 'still typing');
   });
 }

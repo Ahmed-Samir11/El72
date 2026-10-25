@@ -21,6 +21,13 @@ import '../chatbot/search_result_card.dart';
 /// token and resolves the user_id from the token's `sub` claim (phone number)
 /// by looking up the user in the shared operational database. The client never
 /// supplies a user_id.
+/// Fallback shown when adding a result to the feed failed and neither the
+/// service nor the exception explained why.
+//
+// NOTE(i18n): this needs a key in `app_en.arb` + `app_ar.arb`. The Arabic half
+// is left to a native speaker — see the i18n rule in `.agents/AGENTS.md`.
+const addTrackerFailedText = 'Failed to add tracker. Please try again.';
+
 class ChatPage extends ConsumerWidget {
   const ChatPage({super.key});
 
@@ -91,7 +98,10 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
     super.dispose();
   }
 
-  void _saveDraft() => _conversation.draft = _controller.text;
+  void _saveDraft() {
+    if (_conversation.isDisposed) return;
+    _conversation.draft = _controller.text;
+  }
 
   void _onConversationChanged() {
     if (mounted) setState(() {});
@@ -266,20 +276,23 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
 
       // The chatbot answers 200 whether or not a tracker was created; tracker_created
       // is the answer, so the service's explanation ("couldn't add", "no
-      // results") is shown instead of a success toast.
+      // results") is shown instead of a success toast. A blank explanation would
+      // be a toast that says nothing, so the generic failure line is used.
       if (!response.trackerCreated) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(response.message)));
+        final reason = response.message.trim();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(reason.isEmpty ? addTrackerFailedText : reason),
+          ),
+        );
         return;
       }
 
+      // Localized success text plus the product the user tapped: which result
+      // became a tracker has to be visible when the list carries several.
+      final l10n = AppLocalizations.of(context);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Tracker created for "${result.title}". You will be notified on price changes.',
-          ),
-        ),
+        SnackBar(content: Text('${l10n.trackerCreated}\n${result.title}')),
       );
     } catch (e) {
       if (!_isCurrent(conversation, revision)) return;
@@ -302,9 +315,9 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
           context,
         ).showSnackBar(SnackBar(content: Text(e.message)));
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to add tracker. Please try again.')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(addTrackerFailedText)));
       }
     } finally {
       if (_isCurrent(conversation, revision)) {

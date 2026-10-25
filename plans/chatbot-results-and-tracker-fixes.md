@@ -111,6 +111,17 @@ by `tracked_item_model_test.dart`; the disposed-conversation case is now
 covered at model level (a widget test cannot observe a provider disposal that
 happens while no consumer is attached).
 
+## Review response (PR #43 re-review, 6 findings, 0 CRITICAL, APPROVE)
+
+| # | Finding | Fix | Test |
+|---|---------|-----|------|
+| W | provider disposal can race with the page's listener | `ChatConversation.dispose()` sets `isDisposed`; `_saveDraft`, the write paths and the listener detach all check it | `chat_page_test.dart`: after `container.invalidate(...)`, the old instance reports `isDisposed`, the new conversation renders, and typing into the field drives the live instance; `chat_conversation_test.dart` covers late writes |
+| W | add-to-feed toasts were hardcoded English | success reuses the already-translated `trackerCreated` key and appends the product title; the failure fallback is one shared constant instead of two copies | `chat_page_test.dart` reads the snackbar content on both paths |
+| I | blank service message produced an empty toast | falls back to the shared failure text | `chat_page_test.dart`: an add refusal with `message: ''` still toasts a failure |
+| I | `tracker_created` cast could throw on a non-bool | `json['tracker_created'] == true` | `chatbot_models_test.dart` covers absent / false / true |
+| I | session-id validation looked like it would be retried | verified: `_retryGet` catches only `DioException`, so `ArgumentError` fails on the first attempt; documented at the retry helper | `chatbot_repository_test.dart` shows one rejection per call |
+| - | locale keys for the new failure wording | deliberately NOT added: the Arabic half must come from a native speaker (see the i18n rule in `.agents/AGENTS.md` for this model), so the shared English constant stays until then | - |
+
 ## Test strategy
 - API: link parsing (parametrized), title persisted and exposed (incl.
   non-dict `specs`), Amazon image/title extraction, beacon skipping; credit
