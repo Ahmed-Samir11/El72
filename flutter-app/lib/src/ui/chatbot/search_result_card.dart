@@ -57,10 +57,14 @@ class SearchResultCard extends StatelessWidget {
           }
           final uri = Uri.parse(result.url);
           try {
-            if (!await launchUrl(uri)) unableToOpen(messenger);
+            if (!await launchUrl(uri) && context.mounted)
+              unableToOpen(messenger);
           } catch (error) {
             debugPrint('Could not open product page: $error');
-            unableToOpen(messenger);
+            // The await above can outlive the card; a snackbar aimed at a
+            // disposed subtree is not worth the risk, so the message is only
+            // shown while this context is still in the tree.
+            if (context.mounted) unableToOpen(messenger);
           }
         },
         child: Padding(

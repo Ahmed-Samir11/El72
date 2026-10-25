@@ -389,6 +389,13 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
     final messages = _conversation.messages;
     final searchResults = _conversation.searchResults;
     final isSending = _conversation.isSending;
+    // The tracker a result creates inherits the current session, so the button
+    // is only offered once a usable session id exists. Without this the tap
+    // would be silently dropped deeper in [addToFeed], which looks like a dead
+    // button rather than a disabled one.
+    final canAddToFeed =
+        !isSending &&
+        ChatbotRepository.isSessionId(_conversation.sessionId ?? '');
 
     return Scaffold(
       appBar: AppBar(
@@ -463,7 +470,7 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
                           return SearchResultCard(
                             result: result,
                             onAddToFeed: () => addToFeed(result),
-                            isEnabled: !isSending,
+                            isEnabled: canAddToFeed,
                           );
                         },
                       ),

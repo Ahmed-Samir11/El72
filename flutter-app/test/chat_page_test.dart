@@ -337,4 +337,50 @@ void main() {
     await tester.pump();
     expect(container.read(chatConversationProvider).draft, 'still typing');
   });
+
+  testWidgets(
+    'a result is only trackable once the chat has a usable session id',
+    (tester) async {
+      final results = List.generate(1, _result);
+      final container = _containerWith(
+        _FakeChatbotRepository(results: results),
+      );
+      await tester.pumpWidget(_app(container, const ChatPage()));
+
+      // Results without a session: the tracker a tap creates inherits the
+      // current session, so there is nothing to inherit yet.
+      container.read(chatConversationProvider).setSearchResults(results);
+      await tester.pumpAndSettle();
+
+      expect(find.byType(SearchResultCard), findsOneWidget);
+      expect(
+        tester
+            .widget<FilledButton>(
+              find.widgetWithText(FilledButton, 'Add to Feed'),
+            )
+            .onPressed,
+        isNull,
+        reason:
+            'a tap would be dropped deeper in addToFeed, looking like a '
+            'dead button',
+      );
+
+      // Sending a query establishes the session; the same card becomes live.
+      await _send(tester, '2k monitor under 12k');
+      expect(
+        ChatbotRepository.isSessionId(
+          container.read(chatConversationProvider).sessionId ?? '',
+        ),
+        true,
+      );
+      expect(
+        tester
+            .widget<FilledButton>(
+              find.widgetWithText(FilledButton, 'Add to Feed'),
+            )
+            .onPressed,
+        isNotNull,
+      );
+    },
+  );
 }

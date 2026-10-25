@@ -140,15 +140,27 @@ happens while no consumer is attached).
 | I | `messages`/`searchResults` getters copy their list | accepted: the caps bound the copies, and exposing a live view would leak the mutable backing list | - |
 | I | a shrink-wrapped result list can hide overflow | accepted for this PR: the service returns a handful per store and the conversation caps the rest; list affordances are a UI polish item | - |
 
+## Review response (PR #43 re-review, round 5: 5 findings, 0 CRITICAL, REQUEST_CHANGES)
+
+Reviewer comment id `6403386723`, confidence 0.78, 835.7 s.
+
+| # | Finding | Fix | Test |
+|---|---------|-----|------|
+| W | the add-to-feed failure toast is a hardcoded English constant | NOT closable by this model (i18n rule in `.agents/AGENTS.md`): the Arabic twin must come from the maintainer. Still pending, unchanged from the previous round | `chat_page_test.dart` asserts the toast text on both paths |
+| W | the generic chat catch paths are hardcoded English | pre-existing wording, same constraint; recorded as pending Arabic rather than re-typed here | - |
+| W | `search_result_card` showed a snackbar through `ScaffoldMessenger.of(context)` after the await, i.e. after the card may have been disposed | the messenger is captured before `await launchUrl` and both post-await branches are gated on `context.mounted` | `search_result_card_test.dart` keeps the unable-to-open toast green |
+| I | tapping add-to-feed before the chat had a usable session id was dropped silently deep inside `addToFeed`, which reads as a dead button | the card is rendered disabled until `ChatbotRepository.isSessionId(_conversation.sessionId ?? '')` holds, so the tap is never offered | `chat_page_test.dart`: `a result is only trackable once the chat has a usable session id` |
+| W | "`services/chatbot/tests/test_arabic_price.py` is still failing" | FALSE: that path does not exist. `services/chatbot/test_search_service.py`, `test_main.py` and `test_arabic_nlp.py` all pass (35 tests) | `python -m pytest services/chatbot -q` |
+
 ## Test strategy
-- API: link parsing (parametrized), title persisted and exposed (incl.
   non-dict `specs`), Amazon image/title extraction, beacon skipping; credit
   tests aligned with the 100 allowance.
 - Chatbot: existing suite.
 - Flutter: chat page renders result cards without layout errors; bounded history and result caps
   survives leaving/returning; `displayName` fallbacks; add-to-feed success and
   the credits/402 path; reset mid-request; provider replacement; the card
-  refuses non-http urls.
+  refuses non-http urls; add-to-feed stays disabled until the conversation holds
+  a UUID-shaped session id.
 - Manual: end-to-end searches (English and Egyptian Arabic) against the local
   LLM; migration applied twice (second run a no-op) and on a simulated
   3-credit account.

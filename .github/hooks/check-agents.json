@@ -1,11 +1,12 @@
 {
+  "version": 1,
   "hooks": {
-    "PreToolUse": [
+    "preToolUse": [
       {
-        "matcher": "Bash",
         "type": "command",
-        "command": "${CLAUDE_PROJECT_DIR:-.}/scripts/check-agents.sh",
-        "timeout": 10
+        "command": "python scripts/check_agents.py",
+        "powershell": "python scripts/check_agents.py",
+        "timeoutSec": 15
       }
     ]
   }
