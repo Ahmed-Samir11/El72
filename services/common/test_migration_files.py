@@ -253,3 +253,28 @@ def test_cache_expiry_is_an_integer_with_a_non_negative_check():
     assert (
         "expires_at_epoch DOUBLE PRECISION" not in schema
     ), "the fresh column should not fall back to a float expiry"
+
+
+def test_the_expiry_retype_is_conditional():
+    """A fresh database must not pay for a rewrite it does not need.
+
+    The migration keeps the retype for deployments whose earlier revision
+    created a floating-point expiry, but it has to check the catalog first:
+    schema/postgres.sql already declares BIGINT, so an unconditional ALTER
+    would lock and rewrite the cache table on every bootstrap.
+    """
+    migration = (INFRA_SQL / "migrations/0011_chatbot_query_cache.sql").read_text(
+        encoding="utf-8"
+    )
+
+    assert (
+        "information_schema.columns" in migration
+    ), "the retype should be guarded on the live column type"
+    assert re.search(
+        r"DO\s+\$\$", migration, re.IGNORECASE
+    ), "the guard should be a conditional block"
+    assert re.search(
+        r"ALTER\s+COLUMN\s+expires_at_epoch\s+TYPE\s+BIGINT",
+        migration,
+        re.IGNORECASE,
+    ), "the migration should still repair an older float column"

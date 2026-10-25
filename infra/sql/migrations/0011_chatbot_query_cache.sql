@@ -38,9 +38,23 @@ CREATE INDEX IF NOT EXISTS idx_chat_query_cache_expiry
 
 -- Retype for a database where an earlier revision of this migration already
 -- ran with a floating-point expiry. Fractional seconds were never used, so no
--- cache entry depends on them.
-ALTER TABLE chat_query_cache
-    ALTER COLUMN expires_at_epoch TYPE BIGINT;
+-- cache entry depends on them. Guarded on the actual column type: on a fresh
+-- database (built from schema/postgres.sql, already BIGINT) this must not take
+-- a lock or rewrite the table for nothing.
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_name = 'chat_query_cache'
+          AND column_name = 'expires_at_epoch'
+          AND lower(data_type) IN ('double precision', 'real', 'numeric')
+    ) THEN
+        ALTER TABLE chat_query_cache
+            ALTER COLUMN expires_at_epoch TYPE BIGINT;
+    END IF;
+END
+$$;
 
 ALTER TABLE chat_query_cache
     ADD CONSTRAINT IF NOT EXISTS chat_query_cache_expiry_non_negative
@@ -62,6 +76,13 @@ CREATE INDEX IF NOT EXISTS idx_chat_search_results_session_position
 -- (the ranking below only ever sees the rows still at the default) would shuffle
 -- it on every rerun. Rows already at the default inside a ranked session are
 -- left alone, which makes the whole statement a no-op once rerun.
+--
+-- Positions are 0-based here exactly as the service writes them (the first
+-- result the user was shown has position 0), and the Arabic ordinal is 1-based:
+-- "رقم N" resolves to the row at position N-1 in services/chatbot/main.py, which
+-- is asserted by test_add_command_resolves_position_against_saved_results. A
+-- mixed session (some rows ranked, some still at the default) cannot occur,
+-- because every write from the service supplies an explicit position.
 UPDATE chat_search_results AS target
    SET position = ranked.rank_minus_one
   FROM (

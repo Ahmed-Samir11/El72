@@ -94,8 +94,9 @@ services:
       LLM_BASE_URL: "http://host.docker.internal:8080/v1"
       LLM_MODEL: "E:\\LocalModels\\NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB.gguf"
       # Search performance tunables (see services/chatbot/search_service.py).
-      # Every store is crawled at once, bounded by CRAWL_TIMEOUT, and the whole
-      # search is bounded by SEARCH_DEADLINE; results are cached for
+      # Every configured store is crawled for a search, but at most
+      # MAX_CONCURRENT_STORES at a time, each bounded by CRAWL_TIMEOUT and the
+      # whole search bounded by SEARCH_DEADLINE; results are cached for
       # CACHE_TTL_SECONDS and a repeatedly failing store cools down for
       # STORE_COOLDOWN_SECONDS.
       MAX_CONCURRENT_STORES: "8"

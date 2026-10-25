@@ -702,6 +702,74 @@ def test_add_command_resolves_position_against_saved_results(
     assert add_response.json()["message"].startswith("تمام!")
 
 
+def test_a_backfilled_session_resolves_the_nth_ordinal_from_the_db(
+    client, override_db, override_auth, db_session, auth_headers, monkeypatch
+):
+    """Positions are stored 0-based; the Arabic ordinal counts from 1.
+
+    Migration 0011 re-ranks rows written before the column existed as 0..n-1
+    inside their session, so "add, number 3" must land on the row whose position
+    is 2 — and it must resolve from the database, because this process never
+    saw the search that produced them.
+    """
+    import uuid as _uuid
+
+    from services.chatbot import main as main_module
+
+    posted = _capture_add_posts(monkeypatch)
+
+    session_id = _uuid.uuid4()
+    db_session.execute(
+        text("INSERT INTO chat_sessions (id, user_id) VALUES (:id, :user_id)"),
+        {"id": str(session_id), "user_id": 1},
+    )
+    for position, url in enumerate(
+        (
+            "https://example.com/first",
+            "https://example.com/second",
+            "https://example.com/third",
+        )
+    ):
+        db_session.execute(
+            text(
+                "INSERT INTO chat_search_results "
+                "(id, session_id, store_id, product_title, price_local, "
+                "currency, url, position) "
+                "VALUES (:id, :sid, :store_id, :title, :price, :currency, :url, "
+                ":position)"
+            ),
+            {
+                "id": str(_uuid.uuid4()),
+                "sid": str(session_id),
+                "store_id": "amazon_eg",
+                "title": f"Product {position}",
+                "price": 100.0 + position,
+                "currency": "EGP",
+                "url": url,
+                "position": position,
+            },
+        )
+    db_session.commit()
+
+    # The in-process view of this session must be cold: the answer comes from
+    # the ranked rows, exactly as it does after a container restart.
+    main_module._active_results_cache.clear()
+
+    response = client.post(
+        "/chatbot/message",
+        # "\u0623\u0636\u0641 \u0631\u0642\u0645 3" — "add, number 3" in
+        # Egyptian Arabic, written with escapes so the glyphs cannot mojibake.
+        json={
+            "message": "\u0623\u0636\u0641 \u0631\u0642\u0645 3",
+            "session_id": str(session_id),
+        },
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert posted == ["https://example.com/third"]
+
+
 def test_store_status_endpoint(client, override_db, override_auth):
     """The client can ask which stores answered and which did not."""
     response = client.get("/chatbot/stores")
