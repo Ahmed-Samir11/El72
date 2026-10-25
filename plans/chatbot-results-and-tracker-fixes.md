@@ -122,12 +122,30 @@ happens while no consumer is attached).
 | I | session-id validation looked like it would be retried | verified: `_retryGet` catches only `DioException`, so `ArgumentError` fails on the first attempt; documented at the retry helper | `chatbot_repository_test.dart` shows one rejection per call |
 | - | locale keys for the new failure wording | deliberately NOT added: the Arabic half must come from a native speaker (see the i18n rule in `.agents/AGENTS.md` for this model), so the shared English constant stays until then | - |
 
+## Review response (PR #43 re-review, 13 findings, 0 CRITICAL)
+
+| # | Finding | Fix | Test |
+|---|---------|-----|------|
+| W | the fallback failure text is an untranslated constant | NOT closable by this model: the i18n rule in `.agents/AGENTS.md` forbids inventing the Arabic twin. The constant replaces an already-hardcoded duplicate instead of adding a new phrase, the success toast uses the existing translated `trackerCreated` key, and the maintainer is asked for the Arabic wording before merge | toast content asserted on both paths |
+| W | generic chat catch paths are hardcoded English | pre-existing in this file, same constraint; recorded as pending Arabic | - |
+| W | `addToFeed` trusted the card's disabled button | the method re-checks `result.isLaunchable` and answers with the already-translated `unableToOpen` | `search_result_card_test.dart` keeps the UI guard covered |
+| W | an empty session id passed the null guard | the id must also have the chatbot's UUID shape (`ChatbotRepository.isSessionId`) before it is sent | `chatbot_repository_test.dart` |
+| W | the session id echoed by the server was stored as-is | adopted only when UUID-shaped; otherwise the client's own id is kept and the value is logged away | - |
+| W | `debugPrint('$e')` on a DioException can carry request details, headers included | `_errorSummary` logs the failure type and HTTP status only | - |
+| I | listener attached to a replacement conversation without a disposed check | guarded, mirroring the removal guard | - |
+| W | scraped `imageUrl` reached the image loader unvalidated | `ProductImage` now requires an absolute http/https url with a host; it previously accepted any `http` prefix (`httpfoo/x`) and fetched it | `product_image_test.dart`: data:/file:/relative/bare-https render the placeholder, a real https url reaches the loader |
+| W | `setSearchResults` was unbounded | `ChatConversation.maxSearchResults` keeps the ranked head of the response | `chat_conversation_test.dart` |
+| I | session id validation applied only to path segments | `_requireSessionId` guards every boundary the repository sends an id to, path and body | `chatbot_repository_test.dart` on `sendMessage`/`addToFeed` |
+| I | the success toast interpolated a raw scraped title | `_toastTitle` folds whitespace and cuts at 80 characters | - |
+| I | `messages`/`searchResults` getters copy their list | accepted: the caps bound the copies, and exposing a live view would leak the mutable backing list | - |
+| I | a shrink-wrapped result list can hide overflow | accepted for this PR: the service returns a handful per store and the conversation caps the rest; list affordances are a UI polish item | - |
+
 ## Test strategy
 - API: link parsing (parametrized), title persisted and exposed (incl.
   non-dict `specs`), Amazon image/title extraction, beacon skipping; credit
   tests aligned with the 100 allowance.
 - Chatbot: existing suite.
-- Flutter: chat page renders result cards without layout errors; chat
+- Flutter: chat page renders result cards without layout errors; bounded history and result caps
   survives leaving/returning; `displayName` fallbacks; add-to-feed success and
   the credits/402 path; reset mid-request; provider replacement; the card
   refuses non-http urls.

@@ -100,28 +100,32 @@ class ChatbotRepository {
     return await _storage.read(key: 'access_token');
   }
 
-  /// A session id as it may appear in a URL path segment.
+  /// Rejects a session id that is not a UUID, and returns it unchanged.
   //
   /// The app generates a UUID, but the value is overwritten with whatever the
-  /// chatbot echoes back, and it is interpolated into `/chatbot/sessions/<id>`.
-  /// An id carrying `/`, `?`, `#` or `..` would silently move the request to a
-  /// different route instead of staying an identifier, so it is rejected before
-  /// the request is built. Other calls put the id in the JSON body, where it
-  /// cannot affect routing, and need no such check.
+  /// chatbot echoes back, so this is checked wherever one leaves the app:
+  //
+  ///  * interpolated into `/chatbot/sessions/<id>`, where an id carrying `/`,
+  ///    `?`, `#` or `..` would silently move the request to another route of
+  ///    the proxied service instead of staying an identifier;
+  ///  * in a JSON body, where it cannot affect routing but a non-UUID means the
+  ///    conversation state was poisoned upstream — better a local ArgumentError
+  ///    than a confusing 4xx from the chatbot.
   static final _uuidPattern = RegExp(
     r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
     caseSensitive: false,
   );
 
-  static String _sessionPathSegment(String sessionId) {
-    if (!_uuidPattern.hasMatch(sessionId)) {
-      throw ArgumentError.value(
-        sessionId,
-        'sessionId',
-        'must be a UUID before it is used as a path segment',
-      );
-    }
-    return sessionId;
+  /// Whether a value has the shape the chatbot uses for session ids.
+  static bool isSessionId(String sessionId) => _uuidPattern.hasMatch(sessionId);
+
+  static String _requireSessionId(String sessionId) {
+    if (_uuidPattern.hasMatch(sessionId)) return sessionId;
+    throw ArgumentError.value(
+      sessionId,
+      'sessionId',
+      'must be a UUID before it leaves the app',
+    );
   }
 
   /// Request [Options] carrying the Bearer token, if one is stored.
@@ -148,6 +152,7 @@ class ChatbotRepository {
     required String sessionId,
     required String message,
   }) async {
+    _requireSessionId(sessionId);
     final options = await _authOptions();
 
     try {
@@ -224,6 +229,7 @@ class ChatbotRepository {
     String? productUrl,
     double? targetPrice,
   }) async {
+    _requireSessionId(sessionId);
     final options = await _authOptions();
 
     try {
@@ -265,7 +271,7 @@ class ChatbotRepository {
     Options options,
   ) async {
     final response = await _dio.get(
-      '/chatbot/sessions/${_sessionPathSegment(sessionId)}',
+      '/chatbot/sessions/${_requireSessionId(sessionId)}',
       options: options,
     );
 

@@ -77,5 +77,35 @@ void main() {
         );
       }
     });
+
+    test(
+      'rejects a session id that is not a UUID on the write calls too',
+      () async {
+        // The body of a POST cannot change routing the way a path segment can,
+        // but a non-UUID id means the conversation was handed something the
+        // chatbot never issues: failing here beats a confusing 4xx from the
+        // service, and the check is one call rather than one per endpoint.
+        final repo = ChatbotRepository(
+          dio: Dio(),
+          storage: _FakeSecureStorage(),
+        );
+        for (final bad in const ['', 'not-a-uuid', 'x/../../y']) {
+          await expectLater(
+            repo.sendMessage(sessionId: bad, message: 'gaming laptop'),
+            throwsA(isA<ArgumentError>()),
+            reason: bad,
+          );
+          await expectLater(
+            repo.addToFeed(sessionId: bad, productUrl: 'https://2b.com.eg/p/1'),
+            throwsA(isA<ArgumentError>()),
+            reason: bad,
+          );
+        }
+        expect(
+          ChatbotRepository.isSessionId('550e8400-e59b-4f0f-9249-6b1f1de2e80a'),
+          true,
+        );
+      },
+    );
   });
 }

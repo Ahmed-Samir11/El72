@@ -1,4 +1,5 @@
 import 'dart:math';
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -84,7 +85,12 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
     if (!oldWidget.conversation.isDisposed) {
       oldWidget.conversation.removeListener(_onConversationChanged);
     }
-    widget.conversation.addListener(_onConversationChanged);
+    // A replacement instance is normally live, but wiring a listener to one
+    // that was disposed in the same tick would throw before the page could
+    // repaint; the next rebuild attaches it again.
+    if (!widget.conversation.isDisposed) {
+      widget.conversation.addListener(_onConversationChanged);
+    }
     // The draft belongs to the conversation, so show the new instance's draft.
     _controller.text = widget.conversation.draft;
   }
@@ -120,6 +126,32 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
       identical(conversation, _conversation) &&
       !conversation.isDisposed &&
       conversation.revision == revision;
+
+  /// A log line for a failed chat request, without the request itself.
+  //
+  /// A DioException's text carries the request URL and, for some failure kinds,
+  /// its headers — the Bearer token belongs neither in the app's logs nor in a
+  /// bug report attached to them.
+  String _errorSummary(Object error) {
+    if (error is DioException) {
+      final status = error.response?.statusCode;
+      final suffix = status == null ? '' : ', HTTP $status';
+      return 'chat request failed (${error.type.name}$suffix)';
+    }
+    return error.toString();
+  }
+
+  /// A one-line label for a scraped product title.
+  //
+  /// Titles arrive from third-party pages: they can run for paragraphs or
+  //  carry runs of whitespace and control characters, which make a snackbar
+  /// unreadable rather than informative.
+  String _toastTitle(String title) {
+    const maxChars = 80;
+    final folded = title.replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (folded.length <= maxChars) return folded;
+    return '${folded.substring(0, maxChars)}…';
+  }
 
   /// Generate a cryptographically secure random UUID v4 string.
   /// Used for message IDs and session IDs.
@@ -187,15 +219,20 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
         return;
       }
 
-      // Adopt the server's session ID — the server may create a new session
-      // if the client-generated ID didn't match an existing one.
-      conversation.sessionId = response.sessionId;
+      // Adopt the server's session id only when it has the shape of one: the
+      // value arrives from a remote reply and is reused as a path segment later,
+      // so a poisoned id is dropped here instead of failing deeper in the stack.
+      if (ChatbotRepository.isSessionId(response.sessionId)) {
+        conversation.sessionId = response.sessionId;
+      } else {
+        debugPrint('Ignoring a chatbot session id that is not a UUID');
+      }
 
       // Add bot message — use UUID to avoid collisions
       conversation.addMessage(
         ChatMessageModel(
           id: _generateUuid(),
-          sessionId: response.sessionId,
+          sessionId: conversation.sessionId ?? '',
           role: 'bot',
           content: response.message,
           createdAt: DateTime.now(),
@@ -206,7 +243,7 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
       conversation.isSending = false;
     } catch (e) {
       // Log the detailed error for debugging, show generic message to user
-      debugPrint('Chatbot error: $e');
+      debugPrint('Chatbot error: ${_errorSummary(e)}');
 
       if (!_isCurrent(conversation, revision)) return;
       conversation.isSending = false;
@@ -252,13 +289,31 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
   Future<void> addToFeed(SearchResultModel result) async {
     if (!mounted) return;
 
+    // The card disables the button when a result's url is not an openable web
+    // address, but this is the call that asks the service to create a tracker,
+    // so it re-checks: the url was scraped out of a third-party page, and the
+    // UI guard is defence in depth, not the only one.
+    if (!result.isLaunchable) {
+      debugPrint('Refusing to track a url that is not an http/https address');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            AppLocalizations.of(context).unableToOpen(result.title),
+          ),
+        ),
+      );
+      return;
+    }
+
     final conversation = _conversation;
     final revision = conversation.revision;
 
-    // Defensive null guard: session ID must be set before adding to feed
+    // A session must exist for the tracker to inherit it. The id is checked
+    // for shape as well as presence: an empty or poisoned value would otherwise
+    // travel to the service and come back as a confusing failure.
     final sessionId = conversation.sessionId;
-    if (sessionId == null) {
-      debugPrint('addToFeed called without a session ID');
+    if (sessionId == null || !ChatbotRepository.isSessionId(sessionId)) {
+      debugPrint('addToFeed called without a usable session id');
       return;
     }
 
@@ -292,14 +347,16 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
       // became a tracker has to be visible when the list carries several.
       final l10n = AppLocalizations.of(context);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('${l10n.trackerCreated}\n${result.title}')),
+        SnackBar(
+          content: Text('${l10n.trackerCreated}\n${_toastTitle(result.title)}'),
+        ),
       );
     } catch (e) {
       if (!_isCurrent(conversation, revision)) return;
       if (!mounted) return;
 
-      // Log the detailed error for debugging
-      debugPrint('Add to feed error: $e');
+      // Log a summary that carries no request details
+      debugPrint('Add to feed error: ${_errorSummary(e)}');
 
       if (e is UnauthorizedException) {
         ScaffoldMessenger.of(

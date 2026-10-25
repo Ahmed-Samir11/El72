@@ -9,12 +9,24 @@ class ProductImage extends StatelessWidget {
 
   const ProductImage({super.key, required this.imageUrl, this.size = 60});
 
+  /// Whether [url] is an absolute http/https address with a host.
+  //
+  //  Image urls are scraped out of third-party pages, so this is the same
+  //  allow-list the product card applies before handing a link to a browser:
+  //  `data:`, `file:`, a scheme a custom app registered, or a bare `httpfoo`
+  //  prefix are not fetchable images and must not be requested.
+  static bool _isWebUrl(String url) {
+    final uri = Uri.tryParse(url);
+    if (uri == null || !uri.isAbsolute || uri.host.isEmpty) return false;
+    return uri.scheme == 'http' || uri.scheme == 'https';
+  }
+
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final radius = BorderRadius.circular(8);
 
-    if (!imageUrl.startsWith('http')) {
+    if (!_isWebUrl(imageUrl)) {
       return Container(
         width: size,
         height: size,

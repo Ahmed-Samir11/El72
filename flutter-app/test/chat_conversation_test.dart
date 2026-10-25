@@ -11,6 +11,17 @@ ChatMessageModel _message(int i) => ChatMessageModel(
   createdAt: DateTime.utc(2026, 10, 24),
 );
 
+SearchResultModel _result(int i) => SearchResultModel(
+  storeId: '2b_egypt',
+  storeName: '2B Egypt',
+  title: 'Monitor $i',
+  price: 1000.0 + i,
+  currency: 'EGP',
+  url: 'https://2b.com.eg/p/$i',
+  imageUrl: '',
+  inStock: true,
+);
+
 void main() {
   test('the chat holds a bounded history and drops the oldest first', () {
     final chat = ChatConversation();
@@ -69,5 +80,21 @@ void main() {
     expect(chat.messages.first.content, 'message 0');
     expect(chat.revision, revision);
     expect(chat.isSending, isFalse);
+  });
+  test('a hostile search response is trimmed to the strongest results', () {
+    final chat = ChatConversation();
+
+    chat.setSearchResults(
+      List.generate(ChatConversation.maxSearchResults + 30, _result),
+    );
+
+    // The service answers with a handful per store; the extras are the weakest
+    // ranked, and keeping all of them alive for the whole app run is a leak.
+    expect(chat.searchResults.length, ChatConversation.maxSearchResults);
+    expect(chat.searchResults.first.title, 'Monitor 0');
+    expect(
+      chat.searchResults.last.title,
+      'Monitor ${ChatConversation.maxSearchResults - 1}',
+    );
   });
 }

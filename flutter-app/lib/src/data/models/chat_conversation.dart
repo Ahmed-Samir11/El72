@@ -15,6 +15,11 @@ class ChatConversation extends ChangeNotifier {
   /// full history regardless. Oldest messages are dropped first.
   static const int maxMessages = 200;
 
+  /// Cap on the results kept from one search. The service answers with a handful
+  /// per store; an oversized or hostile response must not be kept alive for the
+  /// whole run. The list is ranked best-first, so the extras are the weakest.
+  static const int maxSearchResults = 50;
+
   final List<ChatMessageModel> _messages = [];
   final List<SearchResultModel> _searchResults = [];
 
@@ -72,7 +77,11 @@ class ChatConversation extends ChangeNotifier {
     if (isDisposed) return;
     _searchResults
       ..clear()
-      ..addAll(results);
+      ..addAll(
+        results.length <= maxSearchResults
+            ? results
+            : results.sublist(0, maxSearchResults),
+      );
     notifyListeners();
   }
 
