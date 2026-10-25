@@ -106,6 +106,7 @@ def db_session():
                 "currency TEXT NOT NULL DEFAULT 'EGP', "
                 "url TEXT NOT NULL, "
                 "image_url TEXT, "
+                "position INTEGER NOT NULL DEFAULT 0, "
                 "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
             )
         )
@@ -433,6 +434,238 @@ def test_add_to_feed_no_results(
     assert response.status_code == 200
     data = response.json()
     assert "no search results" in data["message"].lower()
+
+
+# ---------------------------------------------------------------------------
+# Speed PR: result ids, store status, rate-limit keys
+# ---------------------------------------------------------------------------
+
+
+def _capture_add_posts(monkeypatch):
+    """Record the URL the chatbot asks the API service to track."""
+    import httpx
+
+    posted = []
+    original_post = httpx.AsyncClient.post
+
+    class MockResponse:
+        status_code = 200
+
+        def json(self):
+            return {"message": "Tracker created successfully"}
+
+        def raise_for_status(self):
+            pass
+
+    async def mock_post(self, url, **kwargs):
+        if "/tracked-items/from-url" in url:
+            posted.append(kwargs.get("json", {}).get("url"))
+            return MockResponse()
+        return original_post(self, url, **kwargs)
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
+    return posted
+
+
+def test_add_to_feed_by_result_id(
+    client, override_db, override_auth, db_session, auth_headers, monkeypatch
+):
+    """A result_id adds exactly that product, not merely the newest row."""
+    import uuid as _uuid
+
+    posted = _capture_add_posts(monkeypatch)
+
+    session_id = str(_uuid.uuid4())
+    first_id = _uuid.uuid4()
+    second_id = _uuid.uuid4()
+    db_session.execute(
+        text("INSERT INTO chat_sessions (id, user_id) VALUES (:id, :user_id)"),
+        {"id": session_id, "user_id": 1},
+    )
+    for row_id, position, url in (
+        (first_id, 0, "https://example.com/first"),
+        (second_id, 1, "https://example.com/second"),
+    ):
+        db_session.execute(
+            text(
+                "INSERT INTO chat_search_results "
+                "(id, session_id, store_id, product_title, price_local, "
+                "currency, url, position) "
+                "VALUES (:id, :sid, :store_id, :title, :price, :currency, :url, "
+                ":position)"
+            ),
+            {
+                "id": str(row_id),
+                "sid": session_id,
+                "store_id": "amazon_eg",
+                "title": f"Product {position}",
+                "price": 100.0 + position,
+                "currency": "EGP",
+                "url": url,
+                "position": position,
+            },
+        )
+    db_session.commit()
+
+    response = client.post(
+        "/chatbot/add-to-feed",
+        json={"session_id": session_id, "result_id": str(second_id)},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    # The confirmation names the product the result_id pointed at.
+    assert "Product 1" in response.json()["message"]
+    assert posted == ["https://example.com/second"]
+
+
+def test_add_command_resolves_position_against_saved_results(
+    client, override_db, override_auth, db_session, auth_headers, monkeypatch
+):
+    """An Arabic "add number 2" command adds the second saved result.
+
+    The reference is resolved from the chat_search_results rows, so it survives
+    a container restart that clears the in-process cache.
+    """
+    from services.chatbot import main as main_module
+
+    posted = _capture_add_posts(monkeypatch)
+
+    class FakeSearchService:
+        async def search_with_intent(self, message):
+            return {
+                "query": "laptop",
+                "search_query": "laptop",
+                "display_query": "laptop",
+                "min_price": None,
+                "max_price": None,
+                "language": "en",
+                "store_status": [],
+                "results": [
+                    {
+                        "store_id": "amazon_eg",
+                        "store_name": "Amazon.eg",
+                        "title": "Lenovo LOQ Laptop",
+                        "url": "https://example.com/first",
+                        "price": 64999.0,
+                        "currency": "EGP",
+                    },
+                    {
+                        "store_id": "noon_eg",
+                        "store_name": "Noon.eg",
+                        "title": "Acer Nitro V Laptop",
+                        "url": "https://example.com/second",
+                        "price": 55799.0,
+                        "currency": "EGP",
+                    },
+                ],
+            }
+
+    monkeypatch.setattr(main_module, "search_service", FakeSearchService())
+
+    search_response = client.post(
+        "/chatbot/message",
+        json={"message": "laptop"},
+        headers=auth_headers,
+    )
+    assert search_response.status_code == 200
+    assert len(search_response.json()["search_results"]) == 2
+    # The server owns session identity; the follow-up uses the id it returned.
+    session_id = search_response.json()["session_id"]
+
+    # "أضف رقم 2" = "add it, number 2" in Egyptian Arabic.
+    add_response = client.post(
+        "/chatbot/message",
+        json={"message": "أضف رقم 2", "session_id": session_id},
+        headers=auth_headers,
+    )
+
+    assert add_response.status_code == 200
+
+    assert posted == ["https://example.com/second"]
+    # The session is Arabic, so the confirmation comes back in Arabic.
+    assert add_response.json()["message"].startswith("تمام!")
+
+
+def test_store_status_endpoint(client, override_db, override_auth):
+    """The client can ask which stores answered and which did not."""
+    response = client.get("/chatbot/stores")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["stores"] == []
+
+    # Warm the health tracker, then the endpoint reports it.
+    from services.chatbot import main as main_module
+
+    main_module.search_service.store_health.record(
+        "amazon_eg", "blocked", detail="HTTP 403"
+    )
+
+    response = client.get("/chatbot/stores")
+    entry = response.json()["stores"][0]
+
+    assert entry["store_id"] == "amazon_eg"
+    assert entry["state"] == "blocked"
+    assert entry["detail"] == "HTTP 403"
+    main_module.search_service.store_health.reset()
+
+
+def test_message_over_the_length_bound_is_rejected(
+    client, override_db, override_auth, auth_headers
+):
+    """The 500-char bound is enforced by the model, before any work happens."""
+    response = client.post(
+        "/chatbot/message",
+        json={"message": "x" * 501},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 422
+
+
+def test_session_timestamps_are_reported(
+    client, override_db, override_auth, db_session
+):
+    """A session reports real created/updated times, not nulls."""
+    from services.chatbot.main import _ensure_session
+
+    session_id = str(_ensure_session(db_session, None, 1))
+
+    response = client.get(f"/chatbot/sessions/{session_id}")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["created_at"] is not None
+    assert data["updated_at"] is not None
+
+
+def test_rate_limit_key_prefers_the_authenticated_user(monkeypatch):
+    """Rate limits are per user, so one user's searches cannot throttle another."""
+    from unittest.mock import MagicMock
+
+    from services.chatbot.main import rate_limit_key
+
+    monkeypatch.setenv("SECRET_KEY", TEST_SECRET_KEY)
+    request = MagicMock(
+        headers={"Authorization": f"Bearer {_make_token('+201234567890')}"}
+    )
+
+    assert rate_limit_key(request) == "user:+201234567890"
+
+
+def test_rate_limit_key_falls_back_to_the_client_ip(monkeypatch):
+    """A missing or forged token must not disable the limit."""
+    from unittest.mock import MagicMock
+
+    from services.chatbot.main import rate_limit_key
+
+    monkeypatch.setenv("SECRET_KEY", TEST_SECRET_KEY)
+    request = MagicMock(headers={"Authorization": "Bearer not-a-jwt"})
+    request.client.host = "10.0.0.1"
+    request.client.port = 1234
+
+    assert rate_limit_key(request) == "10.0.0.1"
 
 
 # ---------------------------------------------------------------------------

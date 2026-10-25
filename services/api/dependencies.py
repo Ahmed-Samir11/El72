@@ -4,12 +4,17 @@ from typing import Optional
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from jose import JWTError, jwt
+from jose import jwt
 from passlib.context import CryptContext
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from services.api.models import User
+from services.common.auth import (
+    TokenDecodeError,
+    decode_access_token,
+    token_subject,
+)
 
 # Configuration
 SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key")
@@ -95,12 +100,12 @@ def get_current_user(
         headers={"WWW-Authenticate": "Bearer"},
     )
     try:
-        payload = jwt.decode(token.credentials, SECRET_KEY, algorithms=[ALGORITHM])
-        phone: str = payload.get("sub")
-        if phone is None:
-            raise credentials_exception
-    except JWTError:
+        payload = decode_access_token(token.credentials, SECRET_KEY)
+    except TokenDecodeError:
         raise credentials_exception from None
+    phone = token_subject(payload)
+    if phone is None:
+        raise credentials_exception
     user = db.query(User).filter(User.phone == phone, User.status == "ACTIVE").first()
     if user is None:
         raise credentials_exception

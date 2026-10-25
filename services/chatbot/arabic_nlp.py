@@ -1,7 +1,21 @@
 """Deterministic Egyptian Arabic language and intent helpers."""
 
 import re
+import unicodedata
 from typing import Any, Dict, Optional
+
+
+def strip_arabic_marks(text: str) -> str:
+    """Drop Arabic diacritics and presentation marks from [text].
+
+    Keyboards emit combining marks inside ordinary words ("alif" typed as
+    ``a`` ``f`` + U+064F), which breaks every word-based lookup below. They
+    carry no meaning for parsing, so all entry points normalize them away first.
+    """
+    return "".join(
+        char for char in text if unicodedata.category(char) not in ("Mn", "Mc", "Me")
+    )
+
 
 _ARABIC_CHAR_RE = re.compile(r"[\u0600-\u06FF\u0750-\u077F]")
 _EASTERN_DIGITS = str.maketrans("٠١٢٣٤٥٦٧٨٩٬٫", "0123456789,.")
@@ -76,12 +90,13 @@ _NUMBER_WORDS = {
     "تمانين": 80,
     "ثمانين": 80,
     "تسعين": 90,
+    "أف": 1000,
 }
 
 _PRICE_PATTERN = re.compile(
     r"(?:بسعر\s+)?(?:أقل\s+من|اقل\s+من|تحت|بحد\s+أقصى|بحد\s+اقصى|"
     r"ميزانيتي|مش\s+أكتر\s+من|مش\s+اكتر\s+من|(?<![\u0600-\u06FF])ب)\s+"
-    r"([0-9٠-٩][0-9٠-٩,٬.]*\s*(?:ألف|الف|ألفين|مليون|مليونين)?|"
+    r"([0-9٠-٩][0-9٠-٩,٬.]*\s*(?:أف|ألف|الف|ألفين|مليون|مليونين)?|"
     r"(?:ألفين|ألف|الف|خمستاشر(?:\s+ألف)?|نص مليون|عشر تلاف|عشرة آلاف|عشرة الاف))"
     r"\s*(?:جنيه|جنية|egp)?",
     re.IGNORECASE,
@@ -90,6 +105,7 @@ _PRICE_PATTERN = re.compile(
 
 def detect_language(text: str) -> str:
     """Return ``ar`` when at least 30% of alphabetic chars are Arabic."""
+    text = strip_arabic_marks(text)
     arabic_count = len(_ARABIC_CHAR_RE.findall(text))
     total_alpha = sum(1 for char in text if char.isalpha())
     return "ar" if total_alpha and arabic_count / total_alpha >= 0.3 else "en"
@@ -108,6 +124,7 @@ def _parse_number(value: str) -> Optional[float]:
         ("مليون", 1_000_000),
         ("ألفين", 2_000),
         ("ألف", 1_000),
+        ("أف", 1_000),
         ("الف", 1_000),
     ):
         if word in normalized:
@@ -117,14 +134,14 @@ def _parse_number(value: str) -> Optional[float]:
     if not normalized:
         return float(multiplier)
     try:
-        return float(normalized.replace(",", "").replace("٬", ""))
+        return float(normalized.replace(",", "").replace("٬", "")) * multiplier
     except ValueError:
         return None
 
 
 def parse_arabic_intent(message: str) -> Dict[str, Any]:
     """Parse an Egyptian Arabic product query and optional maximum price."""
-    msg = message.strip()
+    msg = strip_arabic_marks(message).strip()
     max_price: Optional[float] = None
     query = msg
     match = _PRICE_PATTERN.search(msg)
@@ -140,7 +157,7 @@ def parse_arabic_intent(message: str) -> Dict[str, Any]:
         )
         if standalone:
             max_price = _parse_number(standalone.group(1))
-            query = msg[:standalone.start()]
+            query = msg[: standalone.start()]
 
     query = re.sub(r"\s+", " ", query).strip()
     query = re.sub(r"^(?:عايز|عايزة|محتاج|محتاجة|هات|اديني|ممكن)\s+", "", query)
@@ -149,7 +166,7 @@ def parse_arabic_intent(message: str) -> Dict[str, Any]:
 
 def translate_query_for_search(query: str) -> str:
     """Translate known Arabic product terms while preserving brands and specs."""
-    translated = query
+    translated = strip_arabic_marks(query)
     for arabic, english in sorted(
         PRODUCT_TRANSLATIONS.items(), key=lambda item: len(item[0]), reverse=True
     ):
@@ -163,7 +180,7 @@ def translate_query_for_search(query: str) -> str:
 
 def parse_add_command(message: str) -> Optional[int]:
     """Return a one-based result index for an Arabic add-to-feed command."""
-    normalized = re.sub(r"\s+", " ", message.strip())
+    normalized = re.sub(r"\s+", " ", strip_arabic_marks(message).strip())
     if not re.search(r"(?:أضف|اضف|تابع|متابعة|أتابع|اتابع)", normalized):
         return None
     number = re.search(r"(?:رقم\s*)?([0-9٠-٩]+)", normalized)

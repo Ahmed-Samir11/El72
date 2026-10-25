@@ -387,11 +387,31 @@ CREATE TABLE IF NOT EXISTS chat_search_results (
     currency TEXT NOT NULL DEFAULT 'EGP',
     url TEXT NOT NULL,
     image_url TEXT,
+    -- Rank inside the list the user saw, so "add the third one" resolves to
+    -- the same product after a restart (the in-process cache is an optimization).
+    position INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Warm store searches, keyed by the normalized (store, query, price window)
+-- the chatbot builds. Mirrored from its in-process cache so a repeat search
+-- answers from the database instead of re-crawling the store, and so warm
+-- results survive a container restart. Rows are swept once past expiry.
+CREATE TABLE IF NOT EXISTS chat_query_cache (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    cache_key TEXT NOT NULL UNIQUE,
+    store_id TEXT NOT NULL,
+    results JSONB NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    -- Epoch seconds rather than a timestamptz: the chatbot compares expiry
+    -- numerically, keeping the query identical on PostgreSQL and on the in-memory
+    -- SQLite its unit tests use.
+    expires_at_epoch DOUBLE PRECISION NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_chat_messages_session_id ON chat_messages(session_id);
 CREATE INDEX IF NOT EXISTS idx_chat_search_results_session_id ON chat_search_results(session_id);
+CREATE INDEX IF NOT EXISTS idx_chat_query_cache_expiry ON chat_query_cache(expires_at_epoch);
 CREATE INDEX IF NOT EXISTS idx_chat_sessions_user_id ON chat_sessions(user_id);
 
 -- Keep updated_at columns current.

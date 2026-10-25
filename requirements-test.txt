@@ -41,3 +41,6 @@ requests>=2.31.0
 # to collect the chatbot tests.
 crawl4ai>=0.4.0
 openai>=1.0.0
+# services/common/robots.py (used by the scraper and the chatbot) parses robots.txt
+# with this package; without it the chatbot tests fall back to a stub parser.
+robotexclusionrulesparser>=1.7.1

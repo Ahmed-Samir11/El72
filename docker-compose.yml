@@ -93,6 +93,19 @@ services:
       SECRET_KEY: "${SECRET_KEY:?Set SECRET_KEY in .env}"
       LLM_BASE_URL: "http://host.docker.internal:8080/v1"
       LLM_MODEL: "E:\\LocalModels\\NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB.gguf"
+      # Search performance tunables (see services/chatbot/search_service.py).
+      # Every store is crawled at once, bounded by CRAWL_TIMEOUT, and the whole
+      # search is bounded by SEARCH_DEADLINE; results are cached for
+      # CACHE_TTL_SECONDS and a repeatedly failing store cools down for
+      # STORE_COOLDOWN_SECONDS.
+      MAX_CONCURRENT_STORES: "8"
+      CRAWL_TIMEOUT: "25"
+      SEARCH_DEADLINE: "100"
+      CACHE_TTL_SECONDS: "900"
+      STORE_FAILURE_THRESHOLD: "3"
+      STORE_COOLDOWN_SECONDS: "600"
+      # Honor robots.txt like the scraper does; "strict" refuses disallowed paths.
+      ROBOTS_TXT_MODE: "soft"
     ports:
       - "0.0.0.0:8003:8003"
     healthcheck:
