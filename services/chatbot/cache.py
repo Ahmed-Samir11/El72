@@ -42,7 +42,12 @@ CACHE_MAX_ENTRIES = int(os.getenv("CACHE_MAX_ENTRIES", "256"))
 # with page size rather than with demand.
 CACHE_MAX_PRODUCTS = int(os.getenv("CACHE_MAX_PRODUCTS", "40"))
 # Rows are swept periodically rather than on every write.
-CACHE_SWEEP_EVERY_WRITES = 20
+CACHE_SWEEP_EVERY_WRITES = max(1, int(os.getenv("CACHE_SWEEP_EVERY_WRITES", "20")))
+# Tag inside every cache key. Cached entries describe what the *current* crawler
+# and extractor saw; when that behavior changes (new selectors, robots enforcement,
+# a store's markup handling) the entries are stale, and bumping this tag drops
+# them all at once instead of waiting out the TTL.
+CACHE_PROFILE_VERSION = os.getenv("CACHE_PROFILE_VERSION", "v1")
 
 # Fields that belong to one session's rendering of a result. They are
 # regenerated per session in main.py, so a cached payload must not carry them.
@@ -116,6 +121,10 @@ def make_cache_key(
     already carries those dimensions. If a store is ever added with per-country
     variants, its id must encode the variant, not the query.
 
+    It does carry [CACHE_PROFILE_VERSION]: the entry is only valid for the
+    extraction behavior that produced it, and bumping the tag is the cheap way
+    to invalidate everything after such a change.
+
     Returns:
         The hex digest used as ``chat_query_cache.cache_key``.
     """
@@ -125,7 +134,14 @@ def make_cache_key(
         f"{min_price:g}" if min_price is not None else "-",
         f"{max_price:g}" if max_price is not None else "-",
     )
-    raw = _KEY_SEPARATOR.join([normalized_store, normalized_query, *bounds])
+    raw = _KEY_SEPARATOR.join(
+        [
+            normalized_store,
+            normalized_query,
+            *bounds,
+            f"profile={CACHE_PROFILE_VERSION}",
+        ]
+    )
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 

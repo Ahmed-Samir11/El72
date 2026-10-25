@@ -225,6 +225,47 @@ def test_the_position_backfill_only_touches_unranked_sessions():
     ), "only rows still at the default may be written"
 
 
+def test_legacy_rows_are_stamped_with_a_search_id():
+    """Ordinal resolution reads the newest search group, so old rows need an id.
+
+    A session can hold several searches and every search restarts at position 0,
+    which is why position alone cannot identify the list the user is looking at.
+    Rows written before migration 0011 have no search id; if the migration left
+    them NULL the service's grouped read would never see them, so the same
+    statement stamps an old session's rows with one deterministic id.
+    """
+    migration = (INFRA_SQL / "migrations/0011_chatbot_query_cache.sql").read_text(
+        encoding="utf-8"
+    )
+    schema = (INFRA_SQL / "schema/postgres.sql").read_text(encoding="utf-8")
+    body = _strip_comments(migration)
+
+    assert re.search(
+        r"ADD COLUMN IF NOT EXISTS search_id UUID", body, re.IGNORECASE
+    ), "0011 should add the search id column"
+    assert re.search(
+        r"search_id UUID", schema, re.IGNORECASE
+    ), "search_id is missing from schema/postgres.sql"
+
+    assert re.search(
+        r"SET search_id = ranked\.legacy_search_id", body, re.IGNORECASE
+    ), "legacy rows should receive a search id"
+    assert re.search(
+        r"md5\(session_id::text", body, re.IGNORECASE
+    ), "the legacy id must come from the session, so it is stable per session"
+
+    assert re.search(
+        r"ON chat_search_results \(session_id, search_id, position\)",
+        body,
+        re.IGNORECASE,
+    ), "the grouped read needs the (session, search, position) index"
+    assert re.search(
+        r"DROP INDEX IF EXISTS idx_chat_search_results_session_position",
+        body,
+        re.IGNORECASE,
+    ), "the superseded pair index should not linger as write overhead"
+
+
 def test_cache_expiry_is_an_integer_with_a_non_negative_check():
     """Expiry is compared numerically by the chatbot; floats buy nothing.
 
@@ -245,8 +286,8 @@ def test_cache_expiry_is_an_integer_with_a_non_negative_check():
             "chat_query_cache_expiry_non_negative" in sql
         ), f"{name} should declare the non-negative expiry constraint"
         assert (
-            "idx_chat_search_results_session_position" in sql
-        ), f"{name} should index ordinal lookups by (session_id, position)"
+            "idx_chat_search_results_session_search" in sql
+        ), f"{name} should index ordinal lookups by (session_id, search_id, position)"
     assert (
         "expires_at_epoch DOUBLE PRECISION" not in migration
     ), "the migrated column should not fall back to a float expiry"

@@ -91,7 +91,7 @@ stripped: a cached payload is shared by every later search of that store.
 ```sql
 CREATE TABLE IF NOT EXISTS chat_query_cache (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    cache_key TEXT NOT NULL UNIQUE,        -- sha256 of (store,query,min,max)
+    cache_key TEXT NOT NULL UNIQUE,        -- sha256 of (store,query,min,max,profile)
     store_id TEXT NOT NULL,
     results JSONB NOT NULL,                -- the result list
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
@@ -103,8 +103,9 @@ Writes upsert on `cache_key` (a repeat search refreshes the row instead of
 appending a copy), and expired rows are swept by the service on the first cache
 read of a process and every `CACHE_SWEEP_EVERY_WRITES=20` writes — so the table
 grows with distinct queries, not with page size or with repeat searches. The
-column is an integer with a named non-negative check (`chat_query_cache_expiry_non_negative`), declared identically in both paths.
-```
+column is an integer with a named non-negative check (`chat_query_cache_expiry_non_negative`), declared identically in both paths, and the cache key
+carries a `CACHE_PROFILE_VERSION` tag so a change in crawling or extraction
+behavior invalidates every entry at once instead of waiting out the TTL.
 
 Add to `infra/sql/schema/postgres.sql` **and** a new
 `infra/sql/migrations/0011_chatbot_query_cache.sql`, registered in
@@ -113,11 +114,13 @@ which fails if a numbered migration is never applied). Negative results (store
 returned nothing) are cached too, under `CACHE_NEGATIVE_TTL_SECONDS=120`, so
 blocked stores stop being re-crawled; a negative entry read back from the DB
 keeps that short expiry instead of gaining the full TTL. The same migration adds
-`chat_search_results.position`, the `(session_id, position)` index the ordinal
+`chat_search_results.position` **and** `search_id` (one id per search: every search restarts at position 0, so several searches in a session would otherwise interleave), the `(session_id, search_id, position)` index the ordinal
 lookup needs, and re-ranks pre-existing rows per session, so "أadd رقم 3" against
 an old session is not ambiguous. The backfill only writes inside a session in which
 nothing is ranked yet, so rerunning it after new inserts cannot shuffle a live
-session's positions.
+session's positions. It also stamps those rows with one deterministic search id
+per session, since the service resolves an ordinal through the search group and
+a NULL id would leave an old session unreachable.
 
 **4. Crawler hardening (fixes D, E, F, G).**
 
@@ -149,6 +152,9 @@ session's positions.
 * `SearchResult` gains `result_id` (the `chat_search_results.id` UUID);
   `AddToFeedRequest` accepts `result_id` and keeps `product_url` as a
   deprecated alias.
+* Every search writes a `search_id`; the ordinal and a reference-less add-to-feed
+  resolve against the session's newest group, so a second search no longer
+  blends with the first — both searches restart at position 0.
 * `add_to_feed` resolves the reply language from the session's last user
   message instead of hardcoding `"en"`.
 * `add_to_feed` first checks the named session belongs to the authenticated
@@ -316,14 +322,16 @@ card the app already wants.
 * `test_cache.py` — warm hit returns without crawling; negative cache blocks
   re-crawl of a dead store; TTL expiry; key normalization (case, whitespace,
   `40k` vs `40000`); upsert on repeat writes and the expired-row sweep; DB
-  payloads detached from the caller and free of session-only fields.
+  payloads detached from the caller and free of session-only fields; bumping
+  the cache profile version invalidates every entry.
 * `test_intents.py` — parametrized (message → intent, slots) across EN +
   Egyptian Arabic, including the follow-up ellipsis cases.
 * `test_main.py` — extended: `result_id` round-trip, 402/409 statuses,
   `created` flag, session `updated_at` bump, real session timestamps, Arabic
   reply language on add-to-feed, `store_status` shape, user-keyed rate limit,
   add-command strictness, add-to-feed rejected for a session owned by another
-  user.
+  user, an ordinal answered from the database against a backfilled session and
+  against the newest of two searches in one session.
 * `test_search_service.py` — existing 20 tests must keep passing; add
   grouping/dedupe and sort-mode tests, and the crawl-delay pair: a declared
   delay is waited out exactly, a delay past `MAX_CRAWL_DELAY` reports the store

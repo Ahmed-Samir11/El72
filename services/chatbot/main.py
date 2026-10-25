@@ -27,6 +27,7 @@ or a cross-service REST call for every authentication check.
 
 import logging
 import os
+import uuid
 from typing import Any, List, Optional
 from uuid import UUID
 
@@ -323,10 +324,13 @@ async def send_message(
     # and remember this set as the session's active one. The row id travels with
     # each result so a later "أضf رقم N" resolves to the product the user is
     # looking at, even after the in-process cache expires.
+    search_id = uuid.uuid4()
     active_results: List[dict] = []
     for position, result in enumerate(results):
-        result_id = _save_search_result(db, session_id, result, position)
-        active_results.append({**result, "result_id": str(result_id)})
+        result_id = _save_search_result(db, session_id, search_id, result, position)
+        active_results.append(
+            {**result, "result_id": str(result_id), "search_id": str(search_id)}
+        )
     _active_results_cache.set(str(session_id), active_results)
 
     # Build bot response
@@ -607,13 +611,19 @@ def _save_message(db: Session, session_id: UUID, role: str, content: str):
 
 
 def _save_search_result(
-    db: Session, session_id: UUID, result: dict, position: int = 0
+    db: Session,
+    session_id: UUID,
+    search_id: UUID,
+    result: dict,
+    position: int = 0,
 ) -> UUID:
     """Save a search result to the database (denormalized for quick reads).
 
     Args:
         db: Database session.
         session_id: Session the search belongs to.
+        search_id: Group id shared by the rows of one search, so a later read
+            can tell this search apart from an older one in the same session.
         result: One result dict from [ChatbotSearchService.search].
         position: Rank inside the list the user saw, so "أضf رقم N" can be
             resolved from the database after the in-process cache expires.
@@ -627,14 +637,15 @@ def _save_search_result(
     db.execute(
         text(
             "INSERT INTO chat_search_results "
-            "(id, session_id, store_id, product_title, "
+            "(id, session_id, search_id, store_id, product_title, "
             "price_local, currency, url, image_url, position) "
-            "VALUES (:result_id, :session_id, :store_id, "
+            "VALUES (:result_id, :session_id, :search_id, :store_id, "
             ":title, :price, :currency, :url, :image_url, :position)"
         ),
         {
             "result_id": str(result_id),
             "session_id": str(session_id),
+            "search_id": str(search_id),
             "store_id": result["store_id"],
             "title": result["title"],
             "price": result["price"],
@@ -646,6 +657,32 @@ def _save_search_result(
     )
     db.commit()
     return result_id
+
+
+# Every search the service writes carries a search id, so the rows of one search
+# form a group. An ordinal reference, or a reference-less "add to feed", acts on
+# the *newest* search of the session: both searches restart at position 0, so
+# without the group a second search would interleave with the first one.
+# Rows written before migration 0011 are stamped with one deterministic legacy
+# id per session, which keeps an old session readable as a single list.
+def _latest_search_id(db: Session, session_id: UUID) -> Optional[str]:
+    """Search id of the session's newest search, or None.
+
+    None means nothing in this session carries a search id: the database predates
+    migration 0011, or the session never completed a search. Callers then fall
+    back to the pre-0011 position-window read.
+    """
+    row = db.execute(
+        text(
+            "SELECT search_id FROM chat_search_results "
+            "WHERE session_id = :session_id AND search_id IS NOT NULL "
+            "ORDER BY created_at DESC LIMIT 1"
+        ),
+        {"session_id": str(session_id)},
+    ).fetchone()
+    if row is None or row.search_id is None:
+        return None
+    return str(row.search_id)
 
 
 def _active_results(db: Session, session_id: UUID) -> List[dict]:
@@ -662,17 +699,32 @@ def _active_results(db: Session, session_id: UUID) -> List[dict]:
     if cached is not None:
         return cached
 
-    rows = db.execute(
-        text(
-            "SELECT id, store_id, product_title, price_local, currency, url, "
-            "image_url, position "
-            "FROM chat_search_results "
-            "WHERE session_id = :session_id "
-            "ORDER BY position DESC, created_at DESC LIMIT 20"
-        ),
-        {"session_id": str(session_id)},
-    ).fetchall()
+    search_id = _latest_search_id(db, session_id)
+    if search_id is not None:
+        rows = db.execute(
+            text(
+                "SELECT id, store_id, product_title, price_local, currency, url, "
+                "image_url, position "
+                "FROM chat_search_results "
+                "WHERE session_id = :session_id AND search_id = :search_id "
+                "ORDER BY position DESC"
+            ),
+            {"session_id": str(session_id), "search_id": search_id},
+        ).fetchall()
+    else:
+        rows = db.execute(
+            text(
+                "SELECT id, store_id, product_title, price_local, currency, url, "
+                "image_url, position "
+                "FROM chat_search_results "
+                "WHERE session_id = :session_id "
+                "ORDER BY position DESC, created_at DESC LIMIT 20"
+            ),
+            {"session_id": str(session_id)},
+        ).fetchall()
 
+    # Both queries come back newest-position-first; the loop below walks them
+    # back to front so the list the caller sees matches the order the user saw.
     results = [
         {
             "result_id": str(row.id),
@@ -776,15 +828,29 @@ async def _handle_add_to_feed(
                 {"session_id": str(request.session_id), "url": result_ref},
             ).fetchone()
     else:
-        row = db.execute(
-            text(
-                "SELECT store_id, product_title, price_local, currency, url, image_url "
-                "FROM chat_search_results "
-                "WHERE session_id = :session_id "
-                "ORDER BY created_at DESC, position ASC LIMIT 1"
-            ),
-            {"session_id": str(request.session_id)},
-        ).fetchone()
+        search_id = _latest_search_id(db, request.session_id)
+        if search_id is not None:
+            # The best row of the newest search, not its last row: position 0
+            # of that group is what the user would be pointing at.
+            row = db.execute(
+                text(
+                    "SELECT store_id, product_title, price_local, currency, "
+                    "url, image_url FROM chat_search_results "
+                    "WHERE session_id = :session_id AND search_id = :search_id "
+                    "ORDER BY position ASC LIMIT 1"
+                ),
+                {"session_id": str(request.session_id), "search_id": search_id},
+            ).fetchone()
+        else:
+            row = db.execute(
+                text(
+                    "SELECT store_id, product_title, price_local, currency, "
+                    "url, image_url FROM chat_search_results "
+                    "WHERE session_id = :session_id "
+                    "ORDER BY created_at DESC, position ASC LIMIT 1"
+                ),
+                {"session_id": str(request.session_id)},
+            ).fetchone()
 
     if not row:
         message = format_message("no_search_results", language)

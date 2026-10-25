@@ -77,6 +77,25 @@ def test_make_cache_key_separates_price_windows():
     assert make_cache_key("jiji", "laptop") != make_cache_key("amazon_eg", "laptop")
 
 
+def test_a_new_extraction_profile_invalidates_every_entry(monkeypatch):
+    """An entry is only valid for the crawler that produced it.
+
+    Changing selectors, robots enforcement or a store's markup handling changes
+    what a page yields, and a key with no version part would keep serving the
+    old answer until the TTL happened to expire. Bumping CACHE_PROFILE_VERSION
+    (compose exposes it) drops every entry at once.
+    """
+    from services.chatbot import cache as cache_module
+
+    before = make_cache_key("amazon_eg", "laptop")
+    monkeypatch.setattr(cache_module, "CACHE_PROFILE_VERSION", "v2")
+    after = make_cache_key("amazon_eg", "laptop")
+
+    assert before != after
+    # The same profile keeps hitting the same entry, so this is not churn.
+    assert after == make_cache_key("amazon_eg", "laptop")
+
+
 # ---------------------------------------------------------------------------
 # Search cache, with and without the database mirror
 # ---------------------------------------------------------------------------

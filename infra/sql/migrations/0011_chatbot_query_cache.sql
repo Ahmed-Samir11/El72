@@ -63,11 +63,20 @@ ALTER TABLE chat_query_cache
 ALTER TABLE chat_search_results
     ADD COLUMN IF NOT EXISTS position INTEGER NOT NULL DEFAULT 0;
 
--- Ordinal requests ("number 3") filter a session by position; without the pair
--- index PostgreSQL scans every row the session ever produced. Declared in
--- schema/postgres.sql as well, so both paths end up with it.
-CREATE INDEX IF NOT EXISTS idx_chat_search_results_session_position
-    ON chat_search_results (session_id, position);
+ALTER TABLE chat_search_results
+    ADD COLUMN IF NOT EXISTS search_id UUID;
+
+COMMENT ON COLUMN chat_search_results.search_id IS 'Group id shared by every row of one search. A session can hold several searches, each restarting at position 0, so the newest group is what an ordinal reference or a reference-less add-to-feed resolves against.';
+
+-- Ordinal requests ("number 3") read the newest search group of a session
+-- ordered by position; without this index PostgreSQL scans every row the session
+-- ever produced. Declared in schema/postgres.sql as well, so both paths end up
+-- with it. The pair index an earlier revision of this migration created is
+-- dropped: it is a prefix of this one and would only slow writes down.
+DROP INDEX IF EXISTS idx_chat_search_results_session_position;
+
+CREATE INDEX IF NOT EXISTS idx_chat_search_results_session_search
+    ON chat_search_results (session_id, search_id, position);
 
 -- Rows written before this migration all carry the default 0, which makes an
 -- ordinal request against an old session ambiguous. Re-rank them by insertion
@@ -83,9 +92,17 @@ CREATE INDEX IF NOT EXISTS idx_chat_search_results_session_position
 -- is asserted by test_add_command_resolves_position_against_saved_results. A
 -- mixed session (some rows ranked, some still at the default) cannot occur,
 -- because every write from the service supplies an explicit position.
+--
+-- The same statement stamps the legacy rows with one deterministic search id
+-- per session (md5 of the session id, cast to uuid). A session's rows written
+-- before this migration all belong to one list, and the service only reads
+-- groups from now on, so leaving them NULL would make them unreachable.
 UPDATE chat_search_results AS target
-   SET position = ranked.rank_minus_one
+   SET search_id = ranked.legacy_search_id,
+       position = ranked.rank_minus_one
   FROM (
+    SELECT id, session_id,
+           md5(session_id::text || '#chatbot-pre-0011-legacy')::uuid AS legacy_search_id,
     SELECT id, session_id,
            (ROW_NUMBER() OVER (
                PARTITION BY session_id

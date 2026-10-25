@@ -107,6 +107,7 @@ def db_session():
                 "url TEXT NOT NULL, "
                 "image_url TEXT, "
                 "position INTEGER NOT NULL DEFAULT 0, "
+                "search_id TEXT, "
                 "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
             )
         )
@@ -768,6 +769,106 @@ def test_a_backfilled_session_resolves_the_nth_ordinal_from_the_db(
 
     assert response.status_code == 200
     assert posted == ["https://example.com/third"]
+
+
+def test_a_second_search_does_not_mix_into_the_first_one(
+    client, override_db, override_auth, db_session, auth_headers, monkeypatch
+):
+    """An ordinal counts the newest search of the session, not every row it holds.
+
+    Each search restarts at position 0, so a session holding two searches has
+    two rows per position. The search id groups them; with the in-process view
+    cleared the grouped read picks the newest group, and "num ber 2" lands on
+    the second product of the *latest* search.
+    """
+    from services.chatbot import main as main_module
+
+    posted = _capture_add_posts(monkeypatch)
+
+    searches = [
+        [
+            {
+                "store_id": "amazon_eg",
+                "store_name": "Amazon.eg",
+                "title": "First search, first result",
+                "url": "https://example.com/a1",
+                "price": 10.0,
+                "currency": "EGP",
+            },
+            {
+                "store_id": "amazon_eg",
+                "store_name": "Amazon.eg",
+                "title": "First search, second result",
+                "url": "https://example.com/a2",
+                "price": 20.0,
+                "currency": "EGP",
+            },
+        ],
+        [
+            {
+                "store_id": "noon_eg",
+                "store_name": "Noon.eg",
+                "title": "Second search, first result",
+                "url": "https://example.com/b1",
+                "price": 30.0,
+                "currency": "EGP",
+            },
+            {
+                "store_id": "noon_eg",
+                "store_name": "Noon.eg",
+                "title": "Second search, second result",
+                "url": "https://example.com/b2",
+                "price": 40.0,
+                "currency": "EGP",
+            },
+        ],
+    ]
+
+    class TwoSearchService:
+        def __init__(self):
+            self.calls = 0
+
+        async def search_with_intent(self, message):
+            result = {
+                "query": message,
+                "search_query": message,
+                "display_query": message,
+                "min_price": None,
+                "max_price": None,
+                "language": "en",
+                "store_status": [],
+                "results": searches[min(self.calls, len(searches) - 1)],
+            }
+            self.calls += 1
+            return result
+
+    monkeypatch.setattr(main_module, "search_service", TwoSearchService())
+
+    first = client.post(
+        "/chatbot/message", json={"message": "laptop"}, headers=auth_headers
+    )
+    second = client.post(
+        "/chatbot/message", json={"message": "phone"}, headers=auth_headers
+    )
+    assert len(first.json()["search_results"]) == 2
+    session_id = second.json()["session_id"]
+
+    # Drop the in-process view so the ordinal has to be answered from the
+    # database, the way it is after a container restart.
+    main_module._active_results_cache.clear()
+
+    response = client.post(
+        "/chatbot/message",
+        json={
+            # "\u0623\u0636\u0641 \u0631\u0642\u0645 2" — "add, number 2".
+            "message": "\u0623\u0636\u0641 \u0631\u0642\u0645 2",
+            "session_id": session_id,
+        },
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert posted == ["https://example.com/b2"]
 
 
 def test_store_status_endpoint(client, override_db, override_auth):

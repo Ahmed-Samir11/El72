@@ -390,6 +390,11 @@ CREATE TABLE IF NOT EXISTS chat_search_results (
     -- Rank inside the list the user saw, so "add the third one" resolves to
     -- the same product after a restart (the in-process cache is an optimization).
     position INTEGER NOT NULL DEFAULT 0,
+    -- Shared by the rows of one search. Both searches of a session restart at
+    -- position 0, so the group id is what tells the newest search apart from an
+    -- older one; rows written before migration 0011 have it NULL until that
+    -- migration stamps them with one deterministic id per session.
+    search_id UUID,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
@@ -419,8 +424,8 @@ CREATE INDEX IF NOT EXISTS idx_chat_messages_session_id ON chat_messages(session
 CREATE INDEX IF NOT EXISTS idx_chat_search_results_session_id ON chat_search_results(session_id);
 -- Ordinal requests ("أadd رقم 3") filter a session by position; without the
 -- pair, PostgreSQL scans every row the session ever produced.
-CREATE INDEX IF NOT EXISTS idx_chat_search_results_session_position
-    ON chat_search_results (session_id, position);
+CREATE INDEX IF NOT EXISTS idx_chat_search_results_session_search
+    ON chat_search_results (session_id, search_id, position);
 CREATE INDEX IF NOT EXISTS idx_chat_query_cache_expiry ON chat_query_cache(expires_at_epoch);
 CREATE INDEX IF NOT EXISTS idx_chat_sessions_user_id ON chat_sessions(user_id);
 
