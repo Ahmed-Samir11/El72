@@ -62,6 +62,8 @@ void main() {
 
   test('a disposed conversation ignores late writes', () {
     final chat = ChatConversation()..addMessage(_message(0));
+    chat.sessionId = 'session-1';
+    chat.draft = 'half typed';
     final revision = chat.revision;
 
     // Invalidating chatConversationProvider disposes the instance, while a chat
@@ -75,11 +77,19 @@ void main() {
       ..addMessage(_message(1))
       ..reset();
     chat.isSending = true;
+    // The guarded setters are the point of the encapsulation: a page whose tab
+    // is off screen can still hold the disposed instance and try to write a
+    // session id or draft back into it.
+    chat
+      ..sessionId = 'session-2'
+      ..draft = 'late write';
 
     expect(chat.messages.length, 1);
     expect(chat.messages.first.content, 'message 0');
     expect(chat.revision, revision);
     expect(chat.isSending, isFalse);
+    expect(chat.sessionId, 'session-1');
+    expect(chat.draft, 'half typed');
   });
   test('a hostile search response is trimmed to the strongest results', () {
     final chat = ChatConversation();

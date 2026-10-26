@@ -5,7 +5,6 @@
       {
         "type": "command",
         "command": "python scripts/check_agents.py",
-        "powershell": "python scripts/check_agents.py",
         "timeoutSec": 15
       }
     ]

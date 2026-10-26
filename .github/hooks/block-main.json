@@ -5,7 +5,6 @@
       {
         "type": "command",
         "command": "python scripts/check_branch.py",
-        "powershell": "python scripts/check_branch.py",
         "timeoutSec": 15
       }
     ]

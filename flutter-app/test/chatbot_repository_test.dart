@@ -107,5 +107,33 @@ void main() {
         );
       },
     );
+
+    test('refuses a product url that is not an absolute web address', () async {
+      // `product_url` is copied out of a third-party page and forwarded to the
+      // service that will fetch it: a relative url gets resolved against the
+      // API base there, and a non-web scheme is never something the tracker
+      // can price. The repository is public API, so it refuses these itself
+      // instead of relying on the card having disabled its button.
+      final repo = ChatbotRepository(dio: Dio(), storage: _FakeSecureStorage());
+      const sessionId = '550e8400-e59b-4f0f-9249-6b1f1de2e80a';
+      for (final bad in const [
+        '',
+        '/products/1',
+        'products/1',
+        'https://',
+        'https:///no-host',
+        'file:///etc/passwd',
+        'data:text/html,<script>1</script>',
+        'javascript:alert(1)',
+        'tel:12345',
+        'ftp://2b.com.eg/p/1',
+      ]) {
+        await expectLater(
+          repo.addToFeed(sessionId: sessionId, productUrl: bad),
+          throwsA(isA<ArgumentError>()),
+          reason: bad,
+        );
+      }
+    });
   });
 }

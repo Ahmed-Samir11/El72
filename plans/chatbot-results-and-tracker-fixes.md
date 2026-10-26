@@ -152,10 +152,32 @@ Reviewer comment id `6403386723`, confidence 0.78, 835.7 s.
 | I | tapping add-to-feed before the chat had a usable session id was dropped silently deep inside `addToFeed`, which reads as a dead button | the card is rendered disabled until `ChatbotRepository.isSessionId(_conversation.sessionId ?? '')` holds, so the tap is never offered | `chat_page_test.dart`: `a result is only trackable once the chat has a usable session id` |
 | W | "`services/chatbot/tests/test_arabic_price.py` is still failing" | FALSE: that path does not exist. `services/chatbot/test_search_service.py`, `test_main.py` and `test_arabic_nlp.py` all pass (35 tests) | `python -m pytest services/chatbot -q` |
 
+## Review response (PR #43 re-review, round 6: 7 findings, 0 CRITICAL, REQUEST_CHANGES)
+
+Reviewer comment id `6404813274`, confidence 0.78, 435.5 s.
+
+| # | Finding | Fix | Test |
+|---|---------|-----|------|
+| W | `addTrackerFailedText`, the "Sorry I could not process your request" reply and the generic "An error occurred" snackbar are hardcoded English | NOT closable by this model: `.agents/AGENTS.md` requires every English key and its Arabic twin to land in one commit, and the Arabic wording is the maintainer's. Unchanged from round 5, still pending | `flutter-app/test/l10n_coverage_test.dart` fails if a key ever lands without a non-empty Arabic twin |
+| W | `ChatbotRepository.addToFeed` forwarded a scraped `productUrl` with no repository-level validation, so a bypassed UI path could send a non-web scheme | new `_requireHttpUrl` static mirroring `SearchResultModel.isLaunchable` (absolute, host present, http/https only) called in `addToFeed` before any network work | `chatbot_repository_test.dart`: `refuses a product url that is not an absolute web address` over 10 hostile values (`file:`, `data:`, `javascript:`, `tel:`, `ftp:`, relative, empty, `https:///no-host`) |
+| W | "chatbot suite still has failing Arabic price-parsing tests" | FALSE for the third consecutive round: `services/chatbot/tests/test_arabic_price.py` does not exist and the real suite is green | `python -m pytest services/chatbot -q` → 35 passed |
+| W | the hook schema change may silently disable branch protection | TRUE, and now root-caused. A fresh `powershell` call is still denied with `Denied by preToolUse hook from ".github/hooks/check-agents.json" (hook errored)`: the file loads but the harness cannot run the command, and it fails closed. Both guards were rewritten in Python (`scripts/check_agents.py`, `scripts/check_branch.py`) because the bash versions cannot execute natively here, and the JSON is now the authoritative Copilot SDK shape (`version: 1`, `preToolUse`, one `command` key, `timeoutSec`) — the `powershell` alias was dropped because the runtime rejects a shell key alongside `exec`. Hook config is read once at session start, so this can only be verified in a fresh session | `services/common/test_branch_guard.py`: 10 tests driving both guards as subprocesses against throwaway git repos (deny on `main`, allow on `feat/guard`, fail-closed outside a repo / on an unborn branch / on an unparseable payload, agents guard deny + allow) |
+| I | `sessionId`, `draft` and `isDisposed` were public mutable fields on a long-lived provider object | fields are now private (`_isDisposed`, `_sessionId`, `_draft`); `isDisposed` is read-only from outside and only `dispose()` may set it, while `sessionId`/`draft` route through setters that no-op once disposed | `flutter-app/test/chat_conversation_test.dart`: `a disposed conversation ignores late writes` now seeds a session id and a draft before `dispose()`, attempts both setters afterwards and asserts the values are unchanged |
+| W | the revision/disposed race handling is central but lightly tested | partially addressed: the encapsulation above makes post-dispose writes structurally impossible rather than merely discouraged. Chat-page-level races (reset mid-reply, provider invalidation mid-reply) remain open | `chat_page_test.dart` covers reset mid-request and provider replacement; trimming and mid-flight invalidation still to add |
+| I | the retroactive free-tier credit migration has no automated tests | covered. The reviewer's path was wrong — the file is `infra/sql/migrations/postgres/0005_free_tier_100_credits.sql`. No Postgres is reachable here, so the migration's own `allowance` CTE is replayed verbatim in SQLite (3.53.2) with `public` attached and `gen_random_uuid`/`now` stubbed | `services/common/test_migration_files.py`: 3 new behavioural tests — old accounts topped up to exactly 100 once, `tier='paid'` accounts untouched, running it twice is a no-op — plus the existing null-safe-reason assertion |
+
+Two gate regressions were mine, not the reviewer's: `dart format --set-exit-if-changed` flagged the new repository test file (reformatted in place) and `flutter analyze` reported `curly_braces_in_flow_control_structures` at `search_result_card.dart:61` from the round-5 `context.mounted` guard (braced). Both gates are clean again.
+
 ## Test strategy
   non-dict `specs`), Amazon image/title extraction, beacon skipping; credit
   tests aligned with the 100 allowance.
 - Chatbot: existing suite.
+- Common: `test_migration_files.py` replays the free-tier migration's own
+  `allowance` CTE in SQLite (no Postgres here) to prove the top-up lands once,
+  skips paid accounts and is a no-op on a second run; `test_branch_guard.py`
+  runs both git hooks as subprocesses against throwaway repos to prove a
+  commit on `main` is denied, a feature branch is allowed, and anything
+  undeterminable fails closed.
 - Flutter: chat page renders result cards without layout errors; bounded history and result caps
   survives leaving/returning; `displayName` fallbacks; add-to-feed success and
   the credits/402 path; reset mid-request; provider replacement; the card
@@ -166,6 +188,11 @@ Reviewer comment id `6403386723`, confidence 0.78, 835.7 s.
   3-credit account.
 
 ## Known limitations
+- Branch protection is **not enforced in this environment**: the Copilot hook
+  config is read once at session start and the configured command errors on
+  spawn, so every `powershell` call is denied fail-closed regardless of branch.
+  The guards themselves are correct (proven by `test_branch_guard.py`); the
+  wiring can only be re-verified in a fresh session.
 - Amazon/Jumia anti-bot, Noon HTTP2 errors and EgyPrice's dead domain still
   block those stores in chatbot search.
 - A search takes ~50–65s on the current local model.

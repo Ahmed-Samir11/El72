@@ -18,7 +18,7 @@ def emit(allow: bool, reason: str = "") -> None:
     if allow:
         print("{}")
     else:
-        print(json.dumps({"permissionDecision": "deny", "reason": reason}))
+        print(json.dumps({"permissionDecision": "deny", "permissionDecisionReason": reason}))
 
 
 def main() -> int:

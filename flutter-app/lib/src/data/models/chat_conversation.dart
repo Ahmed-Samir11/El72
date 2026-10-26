@@ -23,27 +23,28 @@ class ChatConversation extends ChangeNotifier {
   final List<ChatMessageModel> _messages = [];
   final List<SearchResultModel> _searchResults = [];
 
-  /// Bumped whenever the conversation is cleared while a reply is in flight.
-  /// A caller captures it before sending and ignores the response when the value
-  /// no longer matches — a chat the user reset must not be repopulated by a
-  /// message they abandoned.
-  /// Whether this conversation has been disposed by its provider.
+  // Whether this conversation has been disposed by its provider.
   //
   // Logout, the demo account and similar flows invalidate
   // `chatConversationProvider`, which disposes the instance a page may still
   // hold while its tab is off screen. The flag is the only signal left for an
   // in-flight reply: `identical()` stays true and the revision counter dies with
   // the object, so without it a disposed chat could still be written into.
-  bool isDisposed = false;
+  // Read-only from outside: only [dispose] may set it.
+  bool _isDisposed = false;
 
+  /// Bumped whenever the conversation is cleared while a reply is in flight.
+  /// A caller captures it before sending and ignores the response when the value
+  /// no longer matches — a chat the user reset must not be repopulated by a
+  /// message they abandoned.
   int _revision = 0;
 
-  /// Server session id; null until the first message is sent.
-  String? sessionId;
-
-  /// Text typed into the input but not sent yet. Not notified: the page's
-  /// text field already shows it.
-  String draft = '';
+  // Server session id and unsent draft. Both are mutable only by the chat UI,
+  // which is the sole writer in `lib/`; the setters below exist so that a
+  // disposed conversation cannot be resurrected by a late write from a page
+  // whose tab is off screen.
+  String? _sessionId;
+  String _draft = '';
 
   bool _isSending = false;
 
@@ -51,6 +52,25 @@ class ChatConversation extends ChangeNotifier {
 
   List<SearchResultModel> get searchResults =>
       List.unmodifiable(_searchResults);
+
+  bool get isDisposed => _isDisposed;
+
+  /// Server session id; null until the first message is sent.
+  String? get sessionId => _sessionId;
+
+  set sessionId(String? value) {
+    if (_isDisposed) return;
+    _sessionId = value;
+  }
+
+  /// Text typed into the input but not sent yet. Not notified: the page's
+  /// text field already shows it.
+  String get draft => _draft;
+
+  set draft(String value) {
+    if (_isDisposed) return;
+    _draft = value;
+  }
 
   bool get isSending => _isSending;
 
@@ -102,7 +122,7 @@ class ChatConversation extends ChangeNotifier {
 
   @override
   void dispose() {
-    isDisposed = true;
+    _isDisposed = true;
     super.dispose();
   }
 }

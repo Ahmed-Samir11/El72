@@ -8,12 +8,14 @@ are committed. They run in CI via ``pytest services``.
 """
 
 import re
+import sqlite3
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 INFRA_SQL = REPO_ROOT / "infra" / "sql"
 BOOTSTRAP = REPO_ROOT / "scripts" / "db-bootstrap.sh"
 ENV_EXAMPLE = REPO_ROOT / ".env.example"
+FREE_TIER_MIGRATION = INFRA_SQL / "migrations/postgres/0005_free_tier_100_credits.sql"
 
 # Files added upstream (e.g. the advertised-price migration from the fake
 # discount detector PR) that this branch's bootstrap references before the
@@ -64,6 +66,125 @@ def _top_level_statements(sql: str) -> str:
     """
     without_bodies = re.sub(r"\$\$.+?\$\$", "", sql, flags=re.DOTALL)
     return _strip_comments(without_bodies)
+
+
+def _cte_body(sql: str, name: str) -> str:
+    """Return the SELECT inside ``WITH <name> AS ( ... )``.
+
+    Parentheses are balanced by scanning, skipping single-quoted literals, so
+    nested calls (COALESCE/SUM/FILTER) stay inside the returned body.
+    """
+    match = re.search(rf"\b{re.escape(name)}\s+AS\s*\(", sql, re.IGNORECASE)
+    assert match, f"{name} CTE not found"
+    start = match.end()
+    depth = 1
+    i = start
+    while depth:
+        ch = sql[i]
+        if ch == "'":
+            i = sql.index("'", i + 1) + 1
+            continue
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        i += 1
+    return sql[start : i - 1]
+
+
+# --- SQLite replay of 0005_free_tier_100_credits.sql -------------------------
+#
+# No Postgres is reachable in CI, but SQLite (3.53+) understands the migration's
+# core constructs: ``FILTER (WHERE ...)``, ``IS DISTINCT FROM`` and ``UPDATE t
+# AS c ... FROM other AS a``. It cannot attach a CTE to an UPDATE, and it rejects
+# RETURNING on that statement, so the replay below materialises the two CTEs
+# into temp tables. The allowance CTE is taken verbatim from the migration file,
+# so the arithmetic under test is the shipped one.
+
+
+def _pg_db(tmp_db=sqlite3.connect):
+    conn = sqlite3.connect(":memory:")
+    # ``public.foo`` references in the migration resolve against an attached
+    # schema named public.
+    conn.execute('ATTACH DATABASE \':memory:\' AS "public"')
+    # The migration calls Postgres-only functions; stub them. gen_random_uuid
+    # must return a fresh value per call, like the real thing.
+    seq = iter(range(1, 1 << 30))
+    conn.create_function(
+        "gen_random_uuid",
+        0,
+        lambda: f"{next(seq):032x}",
+    )
+    conn.create_function("now", 0, lambda: "2024-01-01T00:00:00Z")
+    conn.executescript(
+        '''
+        CREATE TABLE "public".users (id INTEGER PRIMARY KEY, tier VARCHAR(20) NOT NULL);
+        CREATE TABLE "public".user_credits (
+            user_id INTEGER PRIMARY KEY,
+            balance INTEGER NOT NULL CHECK (balance >= 0),
+            updated_at TEXT NOT NULL
+        );
+        CREATE TABLE "public".credit_transactions (
+            id TEXT PRIMARY KEY,
+            user_id INTEGER NOT NULL,
+            amount INTEGER NOT NULL,
+            reason TEXT,
+            created_at TEXT NOT NULL
+        );
+        '''
+    )
+    return conn
+
+
+def _allowance_rows(conn) -> list[tuple[int, int]]:
+    """Run the migration's allowance CTE verbatim."""
+    sql = _strip_comments(FREE_TIER_MIGRATION.read_text(encoding="utf-8"))
+    body = _cte_body(sql, "allowance")
+    conn.execute("DROP TABLE IF EXISTS allowance")
+    conn.execute(f"CREATE TEMP TABLE allowance AS {body}")
+    return conn.execute(
+        "SELECT user_id, starting_credits FROM allowance ORDER BY user_id"
+    ).fetchall()
+
+
+def _apply_free_tier_top_up(conn) -> None:
+    """Replay 0005 against ``conn``.
+
+    Mirrors the Postgres statement's three effects: compute the allowance,
+    raise balances whose allowance is below 100, then record one grant row
+    per topped-up account with reason 'free_tier_100'.
+    """
+    sql = _strip_comments(FREE_TIER_MIGRATION.read_text(encoding="utf-8"))
+    conn.execute("DROP TABLE IF EXISTS allowance")
+    conn.execute("DROP TABLE IF EXISTS upgraded")
+    conn.execute(f'CREATE TEMP TABLE allowance AS {_cte_body(sql, "allowance")}')
+    # ``upgraded`` is the migration's UPDATE ... RETURNING; SQLite needs the
+    # update and the returned rows as separate steps.
+    conn.execute(
+        """
+        CREATE TEMP TABLE upgraded AS
+        SELECT a.user_id, 100 - a.starting_credits AS granted
+        FROM allowance AS a
+        WHERE a.starting_credits < 100
+        """
+    )
+    conn.execute(
+        """
+        UPDATE "public".user_credits AS c
+           SET balance = c.balance + (100 - a.starting_credits),
+               updated_at = now()
+          FROM allowance AS a
+         WHERE a.user_id = c.user_id AND a.starting_credits < 100
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO "public".credit_transactions
+        (id, user_id, amount, reason, created_at)
+        SELECT gen_random_uuid(), user_id, granted, 'free_tier_100', now()
+        FROM upgraded
+        """
+    )
 
 
 def test_no_committed_database_backups():
@@ -140,6 +261,91 @@ def test_free_tier_top_up_sums_credit_reasons_null_safely():
         "0005 must compare reasons null-safely: `<>` hides a NULL reason from"
         " the allowance sum"
     )
+
+
+# Fixture SQL, kept as constants so the statements stay readable at 88 cols.
+INS_USERS = 'INSERT INTO "public".users (id, tier) VALUES (?, ?)'
+INS_CREDITS = (
+    'INSERT INTO "public".user_credits '
+    "(user_id, balance, updated_at) VALUES (?, ?, ?)"
+)
+INS_TX = (
+    'INSERT INTO "public".credit_transactions '
+    "(id, user_id, amount, reason, created_at) VALUES (?, ?, ?, ?, ?)"
+)
+SEL_BALANCES = 'SELECT user_id, balance FROM "public".user_credits ORDER BY user_id'
+COUNT_GRANTS = (
+    'SELECT COUNT(*) FROM "public".credit_transactions'
+    " WHERE reason = 'free_tier_100'"
+)
+
+
+def test_free_tier_top_up_raises_old_free_accounts_to_100():
+    """A row created under the old 3-credit allowance ends at 100 minus its
+    existing trackers, with the grant recorded as one credit transaction."""
+    conn = _pg_db()
+    conn.executemany(INS_USERS, [(1, "free"), (2, "free")])
+    # u1 was created under the old allowance and spent two trackers; one of
+    # those transactions carries a NULL reason, which must still count.
+    conn.executemany(INS_CREDITS, [(1, 3, "x"), (2, 1, "x")])
+    conn.executemany(
+        INS_TX,
+        [
+            ("t1", 1, -1, "tracker_created", "x"),
+            ("t2", 1, -1, None, "x"),
+            ("t3", 2, -3, "tracker_created", "x"),
+        ],
+    )
+
+    assert _allowance_rows(conn) == [(1, 5), (2, 4)]
+
+    _apply_free_tier_top_up(conn)
+
+    assert conn.execute(SEL_BALANCES).fetchall() == [(1, 98), (2, 97)]
+    grants = conn.execute(
+        'SELECT user_id, amount FROM "public".credit_transactions'
+        " WHERE reason = 'free_tier_100' ORDER BY user_id"
+    ).fetchall()
+    assert grants == [(1, 95), (2, 96)]
+
+
+def test_free_tier_top_up_leaves_paid_and_provisioned_accounts_alone():
+    """``WHERE u.tier = 'free'`` excludes paid accounts, and the ``< 100``
+    predicate excludes rows already provisioned at the new allowance."""
+    conn = _pg_db()
+    conn.executemany(INS_USERS, [(1, "paid"), (2, "free")])
+    conn.executemany(INS_CREDITS, [(1, 3, "x"), (2, 100, "x")])
+    conn.execute(INS_TX, ("t1", 1, -5, "tracker_created", "x"))
+
+    # The paid row is absent from the CTE; the provisioned row computes to 100.
+    assert _allowance_rows(conn) == [(2, 100)]
+
+    _apply_free_tier_top_up(conn)
+
+    assert conn.execute(SEL_BALANCES).fetchall() == [(1, 3), (2, 100)]
+    assert conn.execute(COUNT_GRANTS).fetchone()[0] == 0
+
+
+def test_free_tier_top_up_is_a_no_op_when_reapplied():
+    """The bootstrap re-applies every migration file, so a second run must not
+    grant twice: the recorded grant lifts the allowance to exactly 100."""
+    conn = _pg_db()
+    conn.execute(INS_USERS, (1, "free"))
+    conn.execute(INS_CREDITS, (1, 3, "x"))
+    conn.execute(INS_TX, ("t1", 1, -2, "tracker_created", "x"))
+
+    _apply_free_tier_top_up(conn)
+    first = conn.execute(
+        'SELECT balance FROM "public".user_credits WHERE user_id = 1'
+    ).fetchone()[0]
+    assert first == 98
+
+    _apply_free_tier_top_up(conn)
+
+    assert conn.execute(
+        'SELECT balance FROM "public".user_credits WHERE user_id = 1'
+    ).fetchone()[0] == first
+    assert conn.execute(COUNT_GRANTS).fetchone()[0] == 1
 
 
 def test_env_example_has_no_plaintext_passwords():

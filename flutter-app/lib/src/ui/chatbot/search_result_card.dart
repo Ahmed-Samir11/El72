@@ -57,8 +57,9 @@ class SearchResultCard extends StatelessWidget {
           }
           final uri = Uri.parse(result.url);
           try {
-            if (!await launchUrl(uri) && context.mounted)
+            if (!await launchUrl(uri) && context.mounted) {
               unableToOpen(messenger);
+            }
           } catch (error) {
             debugPrint('Could not open product page: $error');
             // The await above can outlive the card; a snackbar aimed at a

@@ -128,6 +128,30 @@ class ChatbotRepository {
     );
   }
 
+  /// Reject a scraped product url that is not an absolute web address.
+  ///
+  /// The value is copied straight out of a third-party page, and it is
+  /// forwarded to the tracker service, which is the component that will go and
+  /// fetch it. A relative url would be resolved against the API base by the
+  /// service, and a non-web scheme (`file:`, `data:`, some app's custom
+  /// scheme) is not something that can ever be priced. [SearchResultCard]
+  /// already disables its button on the same rule, but `addToFeed` is public
+  /// API, so the repository refuses it rather than trusting its caller.
+  static String _requireHttpUrl(String productUrl) {
+    final uri = Uri.tryParse(productUrl);
+    if (uri == null ||
+        !uri.isAbsolute ||
+        uri.host.isEmpty ||
+        (uri.scheme != 'http' && uri.scheme != 'https')) {
+      throw ArgumentError.value(
+        productUrl,
+        'productUrl',
+        'must be an absolute http/https url',
+      );
+    }
+    return productUrl;
+  }
+
   /// Request [Options] carrying the Bearer token, if one is stored.
   ///
   /// Requests go through `_dio.get`/`_dio.post` with these options so the
@@ -230,6 +254,7 @@ class ChatbotRepository {
     double? targetPrice,
   }) async {
     _requireSessionId(sessionId);
+    if (productUrl != null) _requireHttpUrl(productUrl);
     final options = await _authOptions();
 
     try {
