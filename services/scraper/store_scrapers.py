@@ -752,7 +752,10 @@ class AlfrensiaScraper(BaseScraper):
         except Exception:
             pass
         try:
-            btn = await page.query_selector("button[name='add'], .product-form__submit, button.add-to-cart")
+            btn = await page.query_selector(
+                "button[name='add'], .product-form__submit,"
+                ' button.add-to-cart'
+            )
             if btn:
                 disabled = await btn.get_attribute("disabled")
                 if disabled is not None:
@@ -790,7 +793,11 @@ class AlfrensiaScraper(BaseScraper):
                     t = text.lower()
                     h = (href or "").lower()
                     token_hits = sum(1 for tok in target_tokens if tok in t or tok in h)
-                    length_bonus = sum(len(tok) for tok in target_tokens if tok in t or tok in h) / 50.0
+                    length_bonus = sum(
+                        len(tok)
+                        for tok in target_tokens
+                        if tok in t or tok in h
+                    ) / 50.0
                     phrase = " ".join(target_tokens)
                     phrase_bonus = 1 if phrase and phrase in t else 0
                     return token_hits + length_bonus + phrase_bonus
@@ -817,7 +824,9 @@ class AlfrensiaScraper(BaseScraper):
 
 
 class SigmaComputerScraper(BaseScraper):
-    """Scraper for Sigma Computer (sigma-computer.com) — Egyptian PC components store."""
+    """Scraper for Sigma Computer (sigma-computer.com).
+
+    An Egyptian PC components store."""
 
     store_id = "sigma"
 
@@ -861,7 +870,10 @@ class SigmaComputerScraper(BaseScraper):
         except Exception:
             pass
         try:
-            btn = await page.query_selector("button[name='add'], .product-form__submit, button.add-to-cart")
+            btn = await page.query_selector(
+                "button[name='add'], .product-form__submit,"
+                ' button.add-to-cart'
+            )
             if btn:
                 disabled = await btn.get_attribute("disabled")
                 if disabled is not None:
@@ -899,7 +911,11 @@ class SigmaComputerScraper(BaseScraper):
                     t = text.lower()
                     h = (href or "").lower()
                     token_hits = sum(1 for tok in target_tokens if tok in t or tok in h)
-                    length_bonus = sum(len(tok) for tok in target_tokens if tok in t or tok in h) / 50.0
+                    length_bonus = sum(
+                        len(tok)
+                        for tok in target_tokens
+                        if tok in t or tok in h
+                    ) / 50.0
                     phrase = " ".join(target_tokens)
                     phrase_bonus = 1 if phrase and phrase in t else 0
                     return token_hits + length_bonus + phrase_bonus

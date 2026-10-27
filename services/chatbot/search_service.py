@@ -14,7 +14,6 @@ from typing import Any, Dict, List, Optional
 from urllib.parse import quote_plus
 
 from crawl4ai import AsyncWebCrawler
-
 from openai import AsyncOpenAI
 from pydantic import BaseModel, field_validator
 
@@ -244,7 +243,8 @@ def _parse_english_intent(message: str) -> Dict[str, Any]:
     # monitors" -> "2k monitors"). Mirrors the Arabic filler stripping in
     # parse_arabic_intent.
     query = re.sub(
-        r"^(?:show me all|show me|find me|find|i want to|i want|looking for|search for|search)\b\s*",
+        r"^(?:show me all|show me|find me|find|i want to|i want|"
+        r"looking for|search for|search)\b\s*",
         "",
         query,
         flags=re.IGNORECASE,
@@ -316,20 +316,26 @@ def parse_intent(message: str) -> Dict[str, Any]:
 # LLM-Based Intent Extraction
 # =============================================================================
 
-INTENT_EXTRACTION_PROMPT = """You are a product search assistant for an Egyptian e-commerce platform.
+INTENT_EXTRACTION_PROMPT = """
+You are a product search assistant for an Egyptian e-commerce platform.
 
 Given the user's message (which may be in Egyptian Arabic, English, or a mix), extract:
-1. "query": The product search query in ENGLISH (translate if needed). Be specific (e.g. "27 inch 2K QHD monitor", not just "monitor").
+1. "query": The product search query in ENGLISH (translate if needed).
+   Be specific (e.g. "27 inch 2K QHD monitor", not just "monitor").
 2. "max_price": The maximum price in EGP as a number, or null if no price constraint.
 3. "language": "ar" if the message is primarily Arabic, "en" if primarily English.
 
 Respond with ONLY a JSON object: {"query": "...", "max_price": 12000, "language": "ar"}
 
 Examples:
-- "عايز شاشات 2k بسعر أقل من 12 ألف" → {"query": "2K monitor", "max_price": 12000, "language": "ar"}
-- "gaming laptop under 50000" → {"query": "gaming laptop", "max_price": 50000, "language": "en"}
-- "Samsung 27 inch 2K QHD" → {"query": "Samsung 27 inch 2K QHD monitor", "max_price": null, "language": "en"}
-- "لابتوب جيمينج ب 30 ألف" → {"query": "gaming laptop", "max_price": 30000, "language": "ar"}
+- "عايز شاشات 2k بسعر أقل من 12 ألف"  →
+  {"query": "2K monitor", "max_price": 12000, "language": "ar"}
+- "gaming laptop under 50000"  →
+  {"query": "gaming laptop", "max_price": 50000, "language": "en"}
+- "Samsung 27 inch 2K QHD"  →
+  {"query": "Samsung 27 inch 2K QHD monitor", "max_price": null, "language": "en"}
+- "لابتوب جيمينج ب 30 ألف"  →
+  {"query": "gaming laptop", "max_price": 30000, "language": "ar"}
 """
 
 
