@@ -326,6 +326,32 @@ def test_free_tier_top_up_leaves_paid_and_provisioned_accounts_alone():
     assert conn.execute(COUNT_GRANTS).fetchone()[0] == 0
 
 
+def test_free_tier_top_up_leaves_a_spent_down_new_account_alone():
+    """The one case that could silently double-fund: a free account created under
+    the *new* allowance that has already used part of it. Its allowance is the
+    balance plus the deductions it already made - 100 - so the ``< 100`` predicate
+    skips it. A top-up here would hand the same allowance out twice."""
+    conn = _pg_db()
+    conn.executemany(INS_USERS, [(1, "free"), (2, "free")])
+    # Both sit at 60 after 40 tracker deductions. u2 also carries the +100
+    # signup grant journaled under this migration's own reason, which the
+    # allowance sums out of the way.
+    conn.executemany(INS_CREDITS, [(1, 60, "x"), (2, 60, "x")])
+    conn.executemany(
+        INS_TX,
+        [("t%d" % i, 1, -1, "tracker_created", "x") for i in range(40)]
+        + [("u%d" % i, 2, -1, "tracker_created", "x") for i in range(40)]
+        + [("g1", 2, 100, "free_tier_100", "x")],
+    )
+
+    assert _allowance_rows(conn) == [(1, 100), (2, 100)]
+
+    _apply_free_tier_top_up(conn)
+
+    assert conn.execute(SEL_BALANCES).fetchall() == [(1, 60), (2, 60)]
+    assert conn.execute(COUNT_GRANTS).fetchone()[0] == 1  # only u2's signup row
+
+
 def test_free_tier_top_up_is_a_no_op_when_reapplied():
     """The bootstrap re-applies every migration file, so a second run must not
     grant twice: the recorded grant lifts the allowance to exactly 100."""

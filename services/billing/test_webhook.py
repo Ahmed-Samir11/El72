@@ -24,6 +24,7 @@ from sqlalchemy.pool import StaticPool
 import services.billing.main as billing_main
 from services.api.admin_models import Admin  # noqa: F401  (registers admins table)
 from services.api.card_payment_models import CardPayment
+from services.api.credits import TIER_STARTING_CREDITS
 from services.api.manual_payment_models import PaymentAuditLog
 from services.api.models import Base, CreditTransaction, User, UserCredit
 from services.api.wallet_payment_models import (
@@ -122,9 +123,11 @@ class TestWebhookProcessing:
             assert log.tier == "standard"
             assert float(log.amount) == 30.0
 
-            # Free-tier user is lazily provisioned with 3, then +10 granted.
+            # Free tier is lazily provisioned at its starting balance, then the
+            # webhook grants 10. Read the app constant so a changed allowance cannot
+            # silently break this expectation again.
             credit = db.query(UserCredit).filter_by(user_id=client._test_user_id).one()
-            assert credit.balance == 13
+            assert credit.balance == TIER_STARTING_CREDITS["free"] + 10
 
             tx_row = (
                 db.query(CreditTransaction)
@@ -165,7 +168,7 @@ class TestWebhookProcessing:
             # Exactly one payment log row and one grant.
             assert db.query(PaymentLog).count() == 1
             credit = db.query(UserCredit).filter_by(user_id=client._test_user_id).one()
-            assert credit.balance == 13
+            assert credit.balance == TIER_STARTING_CREDITS["free"] + 10
             assert (
                 db.query(CreditTransaction)
                 .filter_by(user_id=client._test_user_id)
@@ -329,7 +332,7 @@ class TestWebhookProcessing:
             ok = _webhook(client, self._tx(client, status="succeeded"))
             assert ok.json() == {"status": "processed"}
             credit = db.query(UserCredit).filter_by(user_id=client._test_user_id).one()
-            assert credit.balance == 13
+            assert credit.balance == TIER_STARTING_CREDITS["free"] + 10
             assert (
                 db.query(PaymentAuditLog).filter_by(action="webhook_received").count()
                 == 2
