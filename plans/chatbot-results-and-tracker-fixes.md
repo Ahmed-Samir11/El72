@@ -189,9 +189,44 @@ Net round 7: 5 code fixes (logout invalidation, disposed guards, shared `toastTi
 
 The chat-page races round 6 left open are now also closed: reset while a tracker request is in flight, and a reply that lands after the provider was invalidated — `_isCurrent` decides staleness by object identity as well as revision, because a replacement conversation restarts its counter at the same value.
 
+## Review response (PR #43 re-review, round 8: 12 findings, 1 CRITICAL, REQUEST_CHANGES)
+
+| # | Finding | Verdict | Where |
+| --- | --- | --- | --- |
+| 1 | CRITICAL — client URL guard is not a boundary for server-side fetching | FIXED | `services/common/url_policy.py`, `create_tracked_item_from_url` answers 422 before any row is written or credit spent |
+| 2 | WARNING — toast truncation off by one, can split a surrogate pair | FIXED | `toast_title.dart`: the cap reserves the ellipsis slot (`cut = max - 1`) and backs off a unit when the kept unit is a leading surrogate (`codeUnits`, since this SDK exposes no `charCodeAt`) |
+| 3 | WARNING — hardcoded English strings in `chat_page.dart` break the i18n rule | PARTIAL | the credits-exhaustion toast now uses the existing bilingual `reachedLimitBody`; the two generic error strings stay pinned in the `l10n_hardcoded_strings_test.dart` allow-list. New keys need maintainer-authored Arabic, which this model must not produce |
+| 4 | WARNING — service failure message shown unbounded in a snackbar | FIXED | `toastMessage(...)` bounds the add-to-feed explanation to one line like scraped titles |
+| 5 | WARNING — raw exception messages surfaced | PARTIAL | `InsufficientCreditsException` no longer reaches the UI; `UnauthorizedException` still does, documented in place: no translated "session expired" key exists in either locale, so adding one is an i18n task, not a code task |
+| 6 | WARNING — `sendMessage` does not guard concurrent sends | FIXED | `_sendMessage` returns when `conversation.isSending`, **and** the input field's `onSubmitted` is now gated on the same term as the send button. Pinned by `chat_page_test.dart`: a probe that re-opened either gate made the test fail, so the assertion is proven to bite rather than merely to pass |
+| 7 | WARNING — conversation caps turn count, not content size | FIXED at the boundary | `clip(...)` plus `maxChatContentLength` / `maxResultTitleLength` / `maxResultStoreNameLength` in the model parsers; a link longer than `maxResultUrlLength` is dropped rather than truncated, because half an address would still be handed to the browser |
+| 8 | WARNING — free-tier migration must not top up accounts that already used the new allowance | FALSE, pinned anyway | the allowance is `balance - SUM(amount) FILTER (reason IS DISTINCT FROM 'free_tier_100')`, and `deduct` writes negative amounts, so a 60-of-100 spent-down new account computes to 100 and is skipped. `test_free_tier_top_up_leaves_a_spent_down_new_account_alone` now pins exactly that case, including a signup grant journaled under the migration's own reason |
+| 9 | WARNING — known failing Arabic price tests | FALSE (stale) | `pytest services/chatbot` → 35 passed; full suite green |
+| 10 | INFO — `initState` does not guard a disposed conversation | FIXED | `addListener` is skipped when `_conversation.isDisposed`; the test hands the page an already-retired conversation and asserts the chat tab still paints |
+| 11 | INFO — chat state invalidated on login/register but not logout | FALSE, documented | dashboard logout does invalidate `chatConversationProvider` (`dashboard_logout_test.dart` reads the retired instance and the clean replacement); `providers.dart` now states that all three identity changes reset the chat |
+| 12 | INFO — hook schema change should be verified against the runner | ALREADY COVERED | `services/common/test_hook_config.py` pins `preToolUse`, the executable shell key, integer `timeoutSec`, a compiling matcher, the existing script paths, and Claude/Copilot parity |
+
+Two defects this round found on its own, neither of which the reviewer raised:
+
+- The billing webhook tests hardcoded the free tier's old starting balance (`credit.balance == 13`), so the
+  round-5 change of the free allowance from 3 to 100 broke them silently. They now derive the expectation
+  from `TIER_STARTING_CREDITS["free"]`. The suite had been run before that change and not after, which is
+  how it slipped.
+- `ruff check services` was red on this branch (23 errors: long lines in `i18n.py`, `search_service.py`,
+  `store_scrapers.py`, `billing/main.py`, plus unsorted import blocks) while `main` was clean, so CI lint
+  would have failed. All are cleaned; the `INTENT_EXTRACTION_PROMPT` text was reflowed only at existing
+  whitespace and verified whitespace-equivalent to its previous version, so no prompt wording moved.
+
 ## Test strategy
   non-dict `specs`), Amazon image/title extraction, beacon skipping; credit
   tests aligned with the 100 allowance.
+- `services/common/test_url_policy.py` - the server-side fetch policy: loopback, bracketed and bare IPv6, link-local and cloud metadata endpoints, decimal/hex/octal hosts, `nip.io`-style embedded dotted quads, control characters, non-http schemes, and the public links that must stay acceptable.
+- `services/api/test_tracked_items_api.py` - the same policy at the endpoint: a refused url leaves no `TrackedItem` row, so the check lands before any credit is spent.
+- `flutter-app/test/toast_title_test.dart` - the shared toast bound: cap includes the ellipsis, whitespace is folded before measuring, a UTF-16 pair is never split, and a page-sized service explanation collapses to one line.
+- `chatbot_models_test.dart` (`remote text stays bounded`) - reply, message, title and store-name caps, and an over-long url dropped rather than truncated so the result stops looking launchable.
+- `test_migration_files.py` - a free account that already spent part of the *new* allowance is not topped up again.
+- `services/billing/test_webhook.py` - credit expectations derive from `TIER_STARTING_CREDITS`, so changing the allowance cannot silently break them.
+- `chat_page_test.dart` - the send path stays closed while a reply is in flight (`onSubmitted` and the button's `onPressed` are both null), and a page that is handed an already-disposed conversation still paints.
 - Chatbot: existing suite.
 - Common: `test_migration_files.py` replays the free-tier migration's own
   `allowance` CTE in SQLite (no Postgres here) to prove the top-up lands once,
@@ -217,6 +252,9 @@ The chat-page races round 6 left open are now also closed: reset while a tracker
   3-credit account.
 
 ## Known limitations
+- The url fetch policy is a blocklist of private targets, not an allowlist of stores: which domains are trackable changes every time a scraper lands, and a pinned list would silently break legitimate trackers. It refuses machine-local, private-network, link-local and cloud-metadata hosts, metadata and agent sockets, control characters and hostnames with embedded dotted quads (`127.0.0.1.nip.io`); it cannot prove an accepted host is a real product page, only that the server is not being pointed at its own network.
+- Truncation in the toast helpers and the model caps counts UTF-16 code units, so a cut can still fall between a base character and a combining mark or inside a ZWJ/emoji-modifier sequence. Pairs are kept whole; decoration can be lost. A grapheme-accurate boundary needs an intl dependency.
+- i18n residue in the chat page: two generic failure strings and the expired-session message are still app-authored English, pinned in the hardcoded-string allow-list. The scan is a ratchet over 121 existing hits in 52 files, not an audit: closing the rest needs maintainer-authored Arabic landing with each English key.
 - Branch protection is **not enforced in every agent harness**: the Copilot hook
   config is read once at session start and, in the session where it was first
   reported, the configured command errored on spawn, so every `powershell`
