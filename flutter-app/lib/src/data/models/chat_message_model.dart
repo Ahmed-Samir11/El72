@@ -1,4 +1,22 @@
+import '../../core/format/toast_title.dart';
 import '../../core/url_guard.dart';
+
+/// Storage bounds for text the chatbot service hands over.
+
+/// The service caps its own LLM output by token budget and the chat keeps a
+/// fixed number of turns, so a reply is normally a couple of thousand
+/// characters. These limits sit far above anything the service can legitimately
+/// produce, so nothing real is clipped: they exist to make the turn cap honest,
+/// because 'the last 30 turns' is not a memory bound while a single turn can
+/// be arbitrarily large.
+const int maxChatContentLength = 20000;
+const int maxResultTitleLength = 500;
+const int maxResultStoreNameLength = 200;
+
+/// A link longer than this is payload, not a product page. It is dropped rather
+/// than clipped: a half-url would still be handed to the browser and land the
+/// user somewhere they were never shown.
+const int maxResultUrlLength = 4096;
 
 /// Parse an ISO 8601 date string robustly.
 ///
@@ -82,7 +100,9 @@ class ChatMessageModel {
       id: id,
       sessionId: sessionId,
       role: role,
-      content: content,
+      // Bounded where it enters the app, so the turn cap cannot be spent on one
+      // oversized reply.
+      content: clip(content, maxChatContentLength),
       createdAt: createdAt,
       language: json['language'] as String? ?? 'en',
     );
@@ -202,14 +222,23 @@ class SearchResultModel {
       throw FormatException('SearchResultModel: missing required field "url"');
     }
 
+    // A url longer than any real product link is payload; drop the field instead
+    // of clipping it so the result stops looking launchable rather than offering
+    // a truncated address.
+    final safeUrl = url.length > maxResultUrlLength ? '' : url;
+    final rawImageUrl = imageUrl ?? '';
+    final safeImageUrl = rawImageUrl.length > maxResultUrlLength
+        ? ''
+        : rawImageUrl;
+
     return SearchResultModel(
       storeId: storeId,
-      storeName: storeName,
-      title: title,
+      storeName: clip(storeName, maxResultStoreNameLength),
+      title: clip(title, maxResultTitleLength),
       price: price,
       currency: currency,
-      url: url,
-      imageUrl: imageUrl ?? '',
+      url: safeUrl,
+      imageUrl: safeImageUrl,
       inStock: inStock ?? true,
     );
   }
@@ -255,7 +284,9 @@ class ChatResponseModel {
     }
 
     return ChatResponseModel(
-      message: message,
+      // The reply text is the same remote text the conversation keeps, so it is
+      // bounded at the same place instead of only when a screen renders it.
+      message: clip(message, maxChatContentLength),
       sessionId: sessionId,
       searchResults: (resultsList ?? const [])
           .map((r) => SearchResultModel.fromJson(r))

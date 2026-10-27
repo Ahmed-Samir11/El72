@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:elhaq_tracker/src/core/format/toast_title.dart';
 import 'package:elhaq_tracker/src/data/models/chat_message_model.dart';
 
 void main() {
@@ -371,6 +372,97 @@ void main() {
         'tracker_created': true,
       });
       expect(flagged.trackerCreated, true);
+    });
+  });
+
+  group('remote text stays bounded', () {
+    // The service caps its own replies by token budget; these limits exist so the
+    // chat history cap is honest, and so a service that ignores its budget cannot
+    // pin a page of text into every turn the session keeps.
+    test('an oversized chat message body is clipped at the boundary', () {
+      final model = ChatMessageModel.fromJson({
+        'id': 'm1',
+        'session_id': 's1',
+        'role': 'bot',
+        'content': 'x' * (maxChatContentLength + 5000),
+        'created_at': '2026-01-15T10:30:00Z',
+      });
+      expect(model.content.length, maxChatContentLength);
+    });
+
+    test('an oversized reply is clipped before the chat keeps it', () {
+      final model = ChatResponseModel.fromJson({
+        'message': 'y' * (maxChatContentLength + 5000),
+        'session_id': 's1',
+        'search_results': [],
+      });
+      expect(model.message.length, maxChatContentLength);
+    });
+
+    test('a legitimate reply is left untouched', () {
+      const answer = 'Sigma have 4 monitors under 12000 EGP';
+      final model = ChatResponseModel.fromJson({
+        'message': answer,
+        'session_id': 's1',
+        'search_results': [],
+      });
+      expect(model.message, answer);
+    });
+
+    test('an oversized product title and store name are clipped', () {
+      final model = SearchResultModel.fromJson({
+        'store_id': 'sigma',
+        'store_name': 'n' * 5000,
+        'title': 't' * 5000,
+        'price': 100,
+        'url': 'https://sigma-computer.com/product/1',
+      });
+      expect(model.title.length, maxResultTitleLength);
+      expect(model.storeName.length, maxResultStoreNameLength);
+    });
+
+    test('a long product page link stays launchable', () {
+      // Long but real: referral parameters make genuine Amazon links far longer
+      // than a hand written one, and cutting them would break the tap.
+      final referral = 'p' * 900;
+      final url = 'https://www.amazon.com/dp/0848217543?ref=$referral';
+      final model = SearchResultModel.fromJson({
+        'store_id': 'amazon',
+        'store_name': 'Amazon',
+        'title': 'Kindle',
+        'price': 100,
+        'url': url,
+      });
+      expect(model.url, url);
+      expect(model.isLaunchable, true);
+    });
+
+    test('a link longer than any product page is dropped, not truncated', () {
+      // Clipping would still hand the user a half address: dropping the field
+      // takes the result out of the launchable set instead.
+      final model = SearchResultModel.fromJson({
+        'store_id': 'evil',
+        'store_name': 'Evil',
+        'title': 'Trap',
+        'price': 100,
+        'url': 'https://evil.test/${'a' * (maxResultUrlLength + 10)}',
+        'image_url': 'https://evil.test/${'b' * (maxResultUrlLength + 10)}',
+      });
+      expect(model.url, '');
+      expect(model.isLaunchable, false);
+      expect(model.imageUrl, '');
+    });
+
+    test('clipping never splits a surrogate pair', () {
+      // A cut between the two halves would leave a lone surrogate that renders
+      // as a replacement glyph.
+      final pair = '\u{1f600}';
+      final filler = 'a' * (maxResultTitleLength - 1);
+      final value = '$filler$pair';
+      final clipped = clip(value, maxResultTitleLength);
+      expect(clipped.length, maxResultTitleLength - 1);
+      expect(clipped.endsWith(pair), false);
+      expect(clipped, 'a' * (maxResultTitleLength - 1));
     });
   });
 }

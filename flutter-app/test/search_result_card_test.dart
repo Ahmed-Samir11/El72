@@ -96,7 +96,7 @@ void main() {
     // Titles come from a scraped page and can be arbitrarily long, so the
     // card truncates them the same way the chat page does.
     // 80 characters in total, ellipsis included.
-    final filler = 'x' * 72;
+    final filler = 'x' * 71;
     await tester.pumpWidget(
       _cardApp(
         SearchResultModel(
