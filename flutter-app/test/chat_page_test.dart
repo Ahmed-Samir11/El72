@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:elhaq_tracker/l10n/app_localizations.dart';
+import 'package:elhaq_tracker/src/core/format/toast_title.dart';
 import 'package:elhaq_tracker/src/core/styles/app_theme.dart';
 import 'package:elhaq_tracker/src/data/models/chat_message_model.dart';
 import 'package:elhaq_tracker/src/data/providers.dart';
@@ -291,15 +292,104 @@ void main() {
     await _addToFeed(tester);
     await tester.pumpAndSettle();
 
+    // The toast shows the copy the app owns and both locales already translate,
+    // not the English sentence baked into the exception. The exception text stays
+    // in the log line the page writes for the failure.
     expect(
       find.text(
-        'You have run out of credits. Purchase a plan to create trackers.',
+        'You\'ve used all your available price trackers. '
+        'Upgrade your plan to keep tracking prices and get more trackers.',
       ),
       findsOneWidget,
     );
     // The typing indicator is gone: the add finished, it did not hang.
     expect(find.byType(BotTypingIndicator), findsNothing);
   });
+
+  testWidgets('no live send path is left open while a reply is in flight', (
+    tester,
+  ) async {
+    // The send button is disabled once a request starts, and so must the input
+    // submit path: a keyboard Enter that lands during that window would spend
+    // another credit on the same session and interleave two answers into one chat.
+    final repository = _FakeChatbotRepository(
+      results: List.generate(2, _result),
+      holdReply: true,
+    );
+    final container = _containerWith(repository);
+    await tester.pumpWidget(_app(container, const ChatPage()));
+
+    await tester.enterText(find.byType(TextField), '2k monitor under 12k');
+    await tester.tap(find.byIcon(Icons.send));
+    await tester.pump();
+
+    // Both ways out of the field are closed for the duration of the request.
+    final field = tester.widget<TextField>(find.byType(TextField));
+    expect(field.onSubmitted, isNull);
+    final button = tester.widget<IconButton>(
+      find.widgetWithIcon(IconButton, Icons.send),
+    );
+    expect(button.onPressed, isNull);
+
+    // And the request that is in flight is still exactly one.
+    await tester.tap(find.byIcon(Icons.send));
+    await tester.pumpAndSettle();
+    expect(repository.sendMessageCalls, 1);
+    expect(find.byType(BotTypingIndicator), findsOneWidget);
+  });
+
+  testWidgets('a page-sized failure explanation becomes one bounded toast', (
+    tester,
+  ) async {
+    // The service's explanation of an add that created nothing is remote text,
+    // and a hostile upstream can answer with a page of it: the toast must stay
+    // one line whatever arrives.
+    final repository = _FakeChatbotRepository(
+      results: List.generate(1, _result),
+      trackerCreated: false,
+      addExplanation: "couldn't reach the store\n" * 200,
+    );
+    final container = _containerWith(repository);
+    await tester.pumpWidget(_app(container, const ChatPage()));
+
+    await _send(tester, '2k monitor under 12k');
+    await _addToFeed(tester);
+    await tester.pumpAndSettle();
+
+    expect(repository.addToFeedCalls, 1);
+    final toast =
+        (tester.widget<SnackBar>(find.byType(SnackBar)).content as Text).data ??
+        '';
+    expect(toast.length, lessThanOrEqualTo(maxToastTitleLength));
+    expect(toast.contains('\n'), false);
+    expect(toast.endsWith('…'), true);
+    expect(find.textContaining('Tracker created for'), findsNothing);
+  });
+
+  testWidgets(
+    'a conversation the provider already retired still paints a chat tab',
+    (tester) async {
+      // Logout disposes the conversation the tab was showing. A page built in
+      // that same tick is handed the dead instance, and ChangeNotifier refuses
+      // listeners after dispose, which used to take the tab down before it
+      // painted.
+      final container = _containerWith(
+        _FakeChatbotRepository(results: List.generate(1, _result)),
+      );
+      final dead = container.read(chatConversationProvider);
+      // The state logout leaves behind: the provider still hands out the
+      // instance, but the conversation itself has been retired.
+      dead.dispose();
+      await tester.pumpWidget(_app(container, const ChatPage()));
+
+      expect(find.byType(TextField), findsOneWidget);
+      expect(find.text('Chat'), findsWidgets);
+
+      // And the tab ignores it: tapping send neither crashes nor sends.
+      await tester.tap(find.byIcon(Icons.send));
+      await tester.pumpAndSettle();
+    },
+  );
 
   testWidgets('resetting while a reply is in flight drops the reply', (
     tester,
@@ -561,7 +651,7 @@ void main() {
 
     // 'Monitor ' plus 300 x's folds onto one line, is cut at 80 characters
     // and gets the ellipsis, so the toast stays bounded and single-line.
-    final filler = 'x' * 72;
+    final filler = 'x' * 71;
     expect(find.text('Unable to open Monitor $filler…'), findsOneWidget);
   });
 }

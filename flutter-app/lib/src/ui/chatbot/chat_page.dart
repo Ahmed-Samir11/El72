@@ -69,7 +69,14 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
     super.initState();
     _controller = TextEditingController(text: _conversation.draft);
     _controller.addListener(_saveDraft);
-    _conversation.addListener(_onConversationChanged);
+    // A conversation can reach this page already disposed (the provider rebuilds
+    // it on logout, and a disposed instance can be handed to a fresh page in the
+    // same tick). `ChangeNotifier.addListener` throws on a disposed object, which
+    // would take the tab down before it paints; [didUpdateWidget] already guards
+    // the same case on the other side.
+    if (!_conversation.isDisposed) {
+      _conversation.addListener(_onConversationChanged);
+    }
   }
 
   @override
@@ -186,6 +193,11 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
     // nobody is looking at. Read the id, generate one only if the conversation
     // is still live, and write it back through the guarded setter.
     if (conversation.isDisposed) return;
+    // Only one send in flight per conversation. The send button is disabled
+    // while [isSending], but the input field's `onSubmitted` is not: pressing
+    // Enter twice in the same frame, or holding it, would spend a second
+    // credit on the same session and interleave two answers into one chat.
+    if (conversation.isSending) return;
     var sessionId = conversation.sessionId;
     if (sessionId == null) {
       sessionId = _generateSessionId();
@@ -341,7 +353,10 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
       // results") is shown instead of a success toast. A blank explanation would
       // be a toast that says nothing, so the generic failure line is used.
       if (!response.trackerCreated) {
-        final reason = response.message.trim();
+        // Remote text, like a scraped title: the service explains the failure,
+        // but its explanation is not a length limit. [toastMessage] folds it to
+        // one bounded line so a page-sized answer cannot become the toast.
+        final reason = toastMessage(response.message);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(reason.isEmpty ? addTrackerFailedText : reason),
@@ -365,6 +380,11 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
       // Log a summary that carries no request details
       debugPrint('Add to feed error: ${_errorSummary(e)}');
 
+      // Deliberately still the exception's own sentence: the app has no
+      // "session expired" key in either locale, and inventing the English one
+      // without its Arabic twin is what the i18n rule forbids. The text is
+      // app-authored (not server-supplied), so nothing internal leaks; what is
+      // missing is a translated key, which has to arrive with its Arabic value.
       if (e is UnauthorizedException) {
         ScaffoldMessenger.of(
           context,
@@ -375,9 +395,15 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
       // Surface insufficient-credits errors specifically so the user
       // knows to purchase credits or check their balance.
       if (e is InsufficientCreditsException) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(e.message)));
+        // The exception carries app-authored English copy, which cannot go on
+        // screen under this project's i18n rule; [reachedLimitBody] says the
+        // same thing in both locales and is already translated. The exception's
+        // own message stays in the log line above.
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(AppLocalizations.of(context).reachedLimitBody),
+          ),
+        );
       } else {
         ScaffoldMessenger.of(
           context,
@@ -506,7 +532,11 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
                         vertical: 12,
                       ),
                     ),
-                    onSubmitted: (_) => _sendMessage(),
+                    // The send button is disabled while a reply is in flight; the input
+                    // field submit path has to be gated on the same term, or a keyboard
+                    // Enter during that window spends another credit on the same session
+                    // and interleaves two answers into one chat.
+                    onSubmitted: isSending ? null : (_) => _sendMessage(),
                   ),
                 ),
                 const SizedBox(width: 8),
