@@ -168,6 +168,27 @@ Reviewer comment id `6404813274`, confidence 0.78, 435.5 s.
 
 Two gate regressions were mine, not the reviewer's: `dart format --set-exit-if-changed` flagged the new repository test file (reformatted in place) and `flutter analyze` reported `curly_braces_in_flow_control_structures` at `search_result_card.dart:61` from the round-5 `context.mounted` guard (braced). Both gates are clean again.
 
+## Review response (PR #43 re-review, round 7: 10 findings, 0 CRITICAL, REQUEST_CHANGES)
+
+Reviewer comment id `6406106085`, feedback id `d7611f9c-c6eb-4c1e-9214-9541fe325b2e`, confidence 0.78, 341.9 s, reviewed `04c0349`.
+
+| # | Finding | Fix | Test |
+|---|---|---|---|
+| O | `.github/hooks/block-main.json:4` — the hook schema change may silently disable branch enforcement | TRUE, and closed the only way available: the *wiring* is now under test instead of eyeballed. An entry the harness cannot spawn or parse is a guard that protects nothing, and that is invisible from inside the repo | `services/common/test_hook_config.py`: 7 tests asserting `version: 1`, a `preToolUse` group, `type: "command"`, exactly one shell key (never alongside `exec`), an integer `timeoutSec`, a compilable `matcher`, no non-Copilot `${…}` tokens, a script that exists on disk, one interpreter per file, and that both guard scripts answer with a single parsable JSON decision (exit 0 = `{}`, exit 2 = deny) |
+| O | `.github/hooks/check-agents.json:4` — same risk for the agents guard | same file, plus a cross-loader assertion: every guard must be wired for Claude (`.claude/settings.json`) *and* Copilot (`.github/hooks/*.json`), with `check_branch.py` required on both sides | same test file (`test_claude_side_settings_are_kept_in_sync`) |
+| O | `chat_page.dart:31` — hardcoded English user-facing strings violate the i18n rule | PARTLY FALSE — `git grep` at the PR base `a736ee7b` proves the "Sorry, I could not process your request…" reply and the "An error occurred…" snackbar predate this PR (they now sit at `:287`/`:292`); only `addTrackerFailedText` is mine. Still not closable by this model: `.agents/AGENTS.md` requires the English key and its Arabic twin in one commit, and the Arabic wording is the maintainer's | `l10n_coverage_test.dart` (parity) and the new scan test, which pins each string by name so the list can only shrink |
+| O | `providers.dart:48` — the chat conversation can survive an account transition | the Profile tab's logout handler now calls `ref.invalidate(chatConversationProvider)` alongside the other invalidations (the demo-mode toggle already did) | `test/dashboard_logout_test.dart`: 2 tests — logout after the chat tab was used leaves a fresh empty conversation, the retired instance reports `isDisposed` and ignores writes; logout from a session that never opened the chat still replaces the instance |
+| W | `chat_page.dart:190` — `sendMessage` can fire against a disposed conversation (`conversation.sessionId ??= …` mutates a disposed object) | explicit `if (conversation.isDisposed) return;` guard, the id is read into a local and only written back if the conversation is still live, and `addToFeed` gained the same guard | `chat_page_test.dart`: `a tap that lands on a disposed conversation issues no request` — the provider is left alone so the stale UI is still on screen, then the send icon and Add-to-Feed are tapped and both call counters stay where they were |
+| W | `chatbot_repository.dart:130` — the strict absolute-url guard may reject valid **relative** product urls | REJECTED as designed: refusing relative urls is the point of round 6 #2 (they would resolve against the API base, not the vendor site). Checking it exposed a real bug though — Dart's `Uri.isAbsolute` is `hasScheme && !hasFragment`, so the guard silently rejected legitimate `#fragment` urls; it now tests `!uri.hasAuthority` | `test/url_guard_test.dart`: 3 tests including `https://2b.com.eg/p/1#price`, plus acceptance of `HTTP://` (Dart lowercases schemes) and userinfo |
+| I | `chat_conversation.dart:100` — `reset()` does not cancel in-flight requests | documented rather than fixed: a reset abandons the reply (revision check drops it when it lands) but cannot cancel the HTTP call without a per-request token threaded through the repository | existing revision tests |
+| I | `chat_page.dart:295` — the non-launchable toast embeds the raw scraped title | truncation moved into `lib/src/core/format/toast_title.dart` (`toastTitle`, `maxToastTitleLength = 80`) and applied at **both** refusal sites: the chat page's private `_toastTitle` is gone, and the card's own `unableToOpen` closure (reached by `!isLaunchable` *and* the launch failure/catch paths) wraps the title | `test/toast_title_test.dart`: 5 tests, plus the card case (`Unable to open Monitor ……` cut at 80 with the ellipsis, single line) and the chat-page toast case |
+| O | `chatbot_repository.dart:130` — URL validation is duplicated | one guard: `lib/src/core/url_guard.dart::isHttpUrl` now backs both `SearchResultModel.isLaunchable` and `ChatbotRepository._requireHttpUrl` | `test/url_guard_test.dart` + the existing model/repository tests still passing against the shared helper |
+| O | `.agents/AGENTS.md:97` — the localization rule is not enforced by tests | TRUE, and now enforced with a **ratchet** rather than a whole-app audit: a literal handed to `Text(` or a `hintText:`/`label:`/`message:`-style parameter, comment lines blanked, interpolations folded away before deciding a literal carries prose. A naive scan was not viable — the scratch scan found 121 hits across 52 files. Offenders are reported as `path|literal`, and an entry that no longer exists fails too | `test/l10n_hardcoded_strings_test.dart`: 7 tests (3 self-checks of the scanner itself, incl. a probe that a planted hardcoded string is caught; the pinned allow-list of 13 known offenders; demo fixtures and `DioException(message:)` exempted per file; Arabic-in-code check with `lib/main.dart` pinned as the web document title) |
+
+Net round 7: 5 code fixes (logout invalidation, disposed guards, shared `toastTitle`, shared `isHttpUrl`, the `hasAuthority` fragment bug the rejection review surfaced), 2 findings closed with configuration tests instead of code, 1 documented, 1 partly false, 1 real but repo-wide (localization scan, scoped to a ratchet).
+
+The chat-page races round 6 left open are now also closed: reset while a tracker request is in flight, and a reply that lands after the provider was invalidated — `_isCurrent` decides staleness by object identity as well as revision, because a replacement conversation restarts its counter at the same value.
+
 ## Test strategy
   non-dict `specs`), Amazon image/title extraction, beacon skipping; credit
   tests aligned with the 100 allowance.
@@ -177,22 +198,34 @@ Two gate regressions were mine, not the reviewer's: `dart format --set-exit-if-c
   skips paid accounts and is a no-op on a second run; `test_branch_guard.py`
   runs both git hooks as subprocesses against throwaway repos to prove a
   commit on `main` is denied, a feature branch is allowed, and anything
-  undeterminable fails closed.
+  undeterminable fails closed; `test_hook_config.py` validates the hook *wiring*
+  itself — schema keys, `preToolUse`, script paths and the Claude/Copilot parity
+  — so a typo cannot turn branch protection into a silent no-op.
 - Flutter: chat page renders result cards without layout errors; bounded history and result caps
   survives leaving/returning; `displayName` fallbacks; add-to-feed success and
   the credits/402 path; reset mid-request; provider replacement; the card
   refuses non-http urls; add-to-feed stays disabled until the conversation holds
-  a UUID-shaped session id.
+  a UUID-shaped session id; the shared url guard accepts `#fragment` urls; the
+  shared toast title truncates a hostile scraped title at both refusal sites;
+  logging out from the Profile tab replaces the chat conversation;
+  a tap landing on a disposed conversation issues no request; reset while a
+  tracker request is in flight drops the announcement; a reply arriving after
+  the provider was invalidated is kept out of the replacement chat; and
+  `l10n_hardcoded_strings_test.dart` ratchets hardcoded user-facing strings.
 - Manual: end-to-end searches (English and Egyptian Arabic) against the local
   LLM; migration applied twice (second run a no-op) and on a simulated
   3-credit account.
 
 ## Known limitations
-- Branch protection is **not enforced in this environment**: the Copilot hook
-  config is read once at session start and the configured command errors on
-  spawn, so every `powershell` call is denied fail-closed regardless of branch.
-  The guards themselves are correct (proven by `test_branch_guard.py`); the
-  wiring can only be re-verified in a fresh session.
+- Branch protection is **not enforced in every agent harness**: the Copilot hook
+  config is read once at session start and, in the session where it was first
+  reported, the configured command errored on spawn, so every `powershell`
+  call was denied fail-closed regardless of branch. `.claude/settings.json`
+  (Claude Code) and `.github/hooks/*.json` (Copilot) are the two loaders that do
+  read these files; a harness that reads neither — pi, for instance — gets no
+  guard at all. The guards themselves are correct (proven by
+  `test_branch_guard.py`), and the wiring is now covered by
+  `test_hook_config.py`, but neither test can prove a given harness loads them.
 - Amazon/Jumia anti-bot, Noon HTTP2 errors and EgyPrice's dead domain still
   block those stores in chatbot search.
 - A search takes ~50–65s on the current local model.
