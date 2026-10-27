@@ -89,4 +89,50 @@ void main() {
       }
     },
   );
+
+  testWidgets('a refusal toast never carries a whole scraped title', (
+    tester,
+  ) async {
+    // Titles come from a scraped page and can be arbitrarily long, so the
+    // card truncates them the same way the chat page does.
+    // 80 characters in total, ellipsis included.
+    final filler = 'x' * 72;
+    await tester.pumpWidget(
+      _cardApp(
+        SearchResultModel(
+          storeId: '2b_egypt',
+          storeName: '2B Egypt',
+          title: 'Monitor ${'x' * 200}',
+          price: 100.0,
+          currency: 'EGP',
+          url: 'javascript:alert(1)',
+          imageUrl: '',
+          inStock: true,
+        ),
+      ),
+    );
+
+    await tester.tap(find.byType(InkWell).first);
+    await tester.pump();
+
+    expect(
+      find.text('Unable to open Monitor $filler…'),
+      findsOneWidget,
+      reason: 'the toast must be cut at the shared 80-character limit',
+    );
+    // The card body still shows the whole title on purpose — it is clipped by
+    // the Text widget's maxLines, which bounds the layout, not the string that
+    // a snackbar would carry into the rest of the app. So the unbounded-title
+    // check has to look inside the toast, not at the page.
+    expect(
+      find.descendant(
+        of: find.byType(SnackBar),
+        matching: find.textContaining('x' * 200),
+      ),
+      findsNothing,
+      reason:
+          'only the toast is bounded; the card body is clipped by the '
+          'Text widget itself',
+    );
+  });
 }

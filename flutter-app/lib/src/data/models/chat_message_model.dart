@@ -1,3 +1,5 @@
+import '../../core/url_guard.dart';
+
 /// Parse an ISO 8601 date string robustly.
 ///
 /// Python's datetime.isoformat() may produce strings with microsecond
@@ -149,13 +151,10 @@ class SearchResultModel {
   /// or carry a scheme that is not a web page (`file:`, `data:`, some app's
   /// custom scheme). Only absolute http/https may leave the app; the card's
   /// tap-to-open and its "Add to Feed" button are both gated on this so a hostile
-  /// page cannot make the app launch another program.
-  bool get isLaunchable {
-    final uri = Uri.tryParse(url);
-    if (uri == null || !uri.isAbsolute) return false;
-    if (uri.host.isEmpty) return false;
-    return uri.scheme == 'http' || uri.scheme == 'https';
-  }
+  /// page cannot make the app launch another program. The rule itself lives in
+  /// [isHttpUrl], which the chatbot repository shares: one copy, so the UI
+  /// promise and the server-side guard cannot drift apart.
+  bool get isLaunchable => isHttpUrl(url);
 
   const SearchResultModel({
     required this.storeId,

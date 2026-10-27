@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import '../../core/url_guard.dart';
 import '../config.dart';
 import '../models/chat_message_model.dart';
 
@@ -136,13 +137,11 @@ class ChatbotRepository {
   /// service, and a non-web scheme (`file:`, `data:`, some app's custom
   /// scheme) is not something that can ever be priced. [SearchResultCard]
   /// already disables its button on the same rule, but `addToFeed` is public
-  /// API, so the repository refuses it rather than trusting its caller.
+  /// API, so the repository refuses it rather than trusting its caller. Both
+  /// sides call the shared [isHttpUrl] helper so the UI promise and this
+  /// server-side guard cannot drift apart.
   static String _requireHttpUrl(String productUrl) {
-    final uri = Uri.tryParse(productUrl);
-    if (uri == null ||
-        !uri.isAbsolute ||
-        uri.host.isEmpty ||
-        (uri.scheme != 'http' && uri.scheme != 'https')) {
+    if (!isHttpUrl(productUrl)) {
       throw ArgumentError.value(
         productUrl,
         'productUrl',

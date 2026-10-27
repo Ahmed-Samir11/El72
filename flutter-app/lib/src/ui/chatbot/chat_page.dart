@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../l10n/app_localizations.dart';
+import '../../core/format/toast_title.dart';
 import '../../data/models/chat_conversation.dart';
 import '../../data/models/chat_message_model.dart';
 import '../../data/repositories/chatbot_repository.dart';
@@ -141,18 +142,6 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
     return error.toString();
   }
 
-  /// A one-line label for a scraped product title.
-  //
-  /// Titles arrive from third-party pages: they can run for paragraphs or
-  //  carry runs of whitespace and control characters, which make a snackbar
-  /// unreadable rather than informative.
-  String _toastTitle(String title) {
-    const maxChars = 80;
-    final folded = title.replaceAll(RegExp(r'\s+'), ' ').trim();
-    if (folded.length <= maxChars) return folded;
-    return '${folded.substring(0, maxChars)}…';
-  }
-
   /// Generate a cryptographically secure random UUID v4 string.
   /// Used for message IDs and session IDs.
   String _generateUuid() {
@@ -190,8 +179,18 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
     final conversation = _conversation;
     final revision = conversation.revision;
 
-    // Generate or reuse session ID
-    final sessionId = conversation.sessionId ??= _generateSessionId();
+    // A disposed conversation (logout, demo-mode toggle) must not receive a
+    // request at all. `sessionId`'s setter silently drops writes once the
+    // instance is disposed, so a `conversation.sessionId ??= generate()` here
+    // would still hand a fresh id to the service and burn credits on a chat
+    // nobody is looking at. Read the id, generate one only if the conversation
+    // is still live, and write it back through the guarded setter.
+    if (conversation.isDisposed) return;
+    var sessionId = conversation.sessionId;
+    if (sessionId == null) {
+      sessionId = _generateSessionId();
+      conversation.sessionId = sessionId;
+    }
 
     // Add user message optimistically — use UUID to avoid collisions
     conversation.addMessage(
@@ -298,7 +297,11 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            AppLocalizations.of(context).unableToOpen(result.title),
+            // Titles come from scraped pages and can be arbitrarily long or
+            // carry newlines; the success toast below already goes through
+            // [toastTitle] for the same reason, so the refusal must not be
+            // the one path that dumps a raw page title into a snackbar.
+            AppLocalizations.of(context).unableToOpen(toastTitle(result.title)),
           ),
         ),
       );
@@ -307,6 +310,10 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
 
     final conversation = _conversation;
     final revision = conversation.revision;
+
+    // A disposed conversation must not receive a tracker request either: its
+    // session id is dead and the user is looking at another account's chat.
+    if (conversation.isDisposed) return;
 
     // A session must exist for the tracker to inherit it. The id is checked
     // for shape as well as presence: an empty or poisoned value would otherwise
@@ -348,7 +355,7 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
       final l10n = AppLocalizations.of(context);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('${l10n.trackerCreated}\n${_toastTitle(result.title)}'),
+          content: Text('${l10n.trackerCreated}\n${toastTitle(result.title)}'),
         ),
       );
     } catch (e) {

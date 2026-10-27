@@ -29,11 +29,13 @@ class _FakeChatbotRepository extends ChatbotRepository {
     List<SearchResultModel>? results,
     bool trackerCreated = false,
     bool holdReply = false,
+    bool holdAdd = false,
     Exception? addFailure,
     String? addExplanation,
   }) : _results = results ?? const [],
        _trackerCreated = trackerCreated,
        _holdReply = holdReply,
+       _holdAdd = holdAdd,
        _addFailure = addFailure,
        _addExplanation = addExplanation,
        super();
@@ -41,19 +43,26 @@ class _FakeChatbotRepository extends ChatbotRepository {
   final List<SearchResultModel> _results;
   final bool _trackerCreated;
   final bool _holdReply;
+  final bool _holdAdd;
   final Exception? _addFailure;
   final String? _addExplanation;
 
   final Completer<ChatResponseModel> _release = Completer<ChatResponseModel>();
+  final Completer<ChatResponseModel> _releaseAdd =
+      Completer<ChatResponseModel>();
 
   int _addToFeedCalls = 0;
   int get addToFeedCalls => _addToFeedCalls;
+
+  int _sendMessageCalls = 0;
+  int get sendMessageCalls => _sendMessageCalls;
 
   @override
   Future<ChatResponseModel> sendMessage({
     required String sessionId,
     required String message,
   }) async {
+    _sendMessageCalls++;
     final response = ChatResponseModel(
       message: 'I found ${_results.length} products',
       sessionId: sessionId,
@@ -78,6 +87,20 @@ class _FakeChatbotRepository extends ChatbotRepository {
     }
   }
 
+  /// Lets a held tracker answer land. Used by the reset-mid-add test.
+  void releaseAdd() {
+    if (!_releaseAdd.isCompleted) {
+      _releaseAdd.complete(
+        ChatResponseModel(
+          message: 'Tracker created! Samsung Odyssey G5 27" 2K Monitor 0',
+          sessionId: 'late',
+          searchResults: [_result(1)],
+          trackerCreated: true,
+        ),
+      );
+    }
+  }
+
   @override
   Future<ChatResponseModel> addToFeed({
     required String sessionId,
@@ -86,6 +109,9 @@ class _FakeChatbotRepository extends ChatbotRepository {
   }) async {
     _addToFeedCalls++;
     if (_addFailure != null) throw _addFailure;
+    if (_holdAdd) {
+      await _releaseAdd.future;
+    }
     return ChatResponseModel(
       message:
           _addExplanation ??
@@ -307,6 +333,85 @@ void main() {
     expect(find.text('No messages yet. Start a conversation.'), findsOneWidget);
   });
 
+  testWidgets('resetting while a tracker request is in flight drops it', (
+    tester,
+  ) async {
+    final repository = _FakeChatbotRepository(
+      results: [_result(1)],
+      trackerCreated: true,
+      holdAdd: true,
+    );
+    final container = _containerWith(repository);
+    await tester.pumpWidget(_app(container, const ChatPage()));
+
+    await _send(tester, 'gaming monitor');
+    await _addToFeed(tester);
+
+    // The user clears the chat while the tracker request is still running.
+    await tester.tap(find.byIcon(Icons.refresh));
+    await tester.pumpAndSettle();
+
+    expect(find.text('No messages yet. Start a conversation.'), findsOneWidget);
+    expect(find.byType(BotTypingIndicator), findsNothing);
+    expect(find.byType(SnackBar), findsNothing);
+
+    repository.releaseAdd();
+    await tester.pumpAndSettle();
+
+    // The abandoned answer must not announce a tracker into a chat the user
+    // cleared: a toast naming a tracker whose result card is gone reads as a
+    // phantom success.
+    expect(find.byType(SnackBar), findsNothing);
+    expect(find.text('Tracker created!'), findsNothing);
+    expect(find.text('No messages yet. Start a conversation.'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a reply that lands after logout is kept out of the new chat', (
+    tester,
+  ) async {
+    final repository = _FakeChatbotRepository(
+      results: List.generate(2, _result),
+      holdReply: true,
+    );
+    final container = _containerWith(repository);
+    await tester.pumpWidget(_app(container, const ChatPage()));
+
+    await tester.enterText(find.byType(TextField), '2k monitor under 12k');
+    await tester.tap(find.byIcon(Icons.send));
+    await tester.pump();
+
+    // Logout invalidates the provider mid-flight: the old chat is disposed and
+    // the page rebinds to a brand-new one whose revision counter restarts at 0
+    // — the same value the request was started under, which is why staleness
+    // has to be decided by object identity as well as by revision.
+    final retired = container.read(chatConversationProvider);
+    container.invalidate(chatConversationProvider);
+    await tester.pumpAndSettle();
+
+    expect(retired.isDisposed, isTrue);
+    final live = container.read(chatConversationProvider);
+    expect(identical(live, retired), isFalse);
+    expect(live.revision, retired.revision);
+
+    repository.releaseReply();
+    await tester.pumpAndSettle();
+
+    // The retired instance still holds the turn the user typed before logging
+    // out — invalidating drops the chat from the provider, it does not blank the
+    // object a page may still be holding. What must not happen is the late
+    // answer landing in either chat.
+    expect(retired.messages.length, 1);
+    expect(retired.messages.single.content, '2k monitor under 12k');
+    expect(live.messages, isEmpty);
+    expect(live.searchResults, isEmpty);
+    expect(find.text('A reply that arrived late'), findsNothing);
+    expect(find.text('2k monitor under 12k'), findsNothing);
+    expect(find.byType(SearchResultCard), findsNothing);
+    expect(find.text('No messages yet. Start a conversation.'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('an invalidated conversation is replaced, not kept', (
     tester,
   ) async {
@@ -383,4 +488,80 @@ void main() {
       );
     },
   );
+
+  testWidgets('a tap that lands on a disposed conversation issues no request', (
+    tester,
+  ) async {
+    final repository = _FakeChatbotRepository(results: [_result(1)]);
+    final container = _containerWith(repository);
+    await tester.pumpWidget(_app(container, const ChatPage()));
+
+    await _send(tester, 'gaming monitor');
+    await _addToFeed(tester);
+    expect(repository.sendMessageCalls, 1);
+    expect(repository.addToFeedCalls, 1);
+
+    // Signing out disposes the conversation the page is wired to. A queued
+    // tap must not spend an API call against it: its session id is dead, and
+    // the guarded sessionId setter would silently drop a new id while the
+    // request still went out carrying a freshly generated one. The provider
+    // is left alone on purpose, so the page keeps showing the retired chat
+    // and its buttons still route to the disposed instance.
+    container.read(chatConversationProvider).dispose();
+    expect(container.read(chatConversationProvider).isDisposed, isTrue);
+
+    await tester.tap(find.byIcon(Icons.send));
+    await tester.pump();
+    await _addToFeed(tester);
+    await tester.pumpAndSettle();
+
+    expect(
+      repository.sendMessageCalls,
+      1,
+      reason: 'a disposed conversation must not receive chat requests',
+    );
+    expect(
+      repository.addToFeedCalls,
+      1,
+      reason: 'a disposed conversation must not receive tracker requests',
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a refusal toast truncates a hostile scraped title', (
+    tester,
+  ) async {
+    final nasty = 'Monitor\n\n${'x' * 300}';
+    await tester.pumpWidget(
+      _app(
+        _containerWith(_FakeChatbotRepository(results: [])),
+        Scaffold(
+          body: Center(
+            child: SearchResultCard(
+              result: SearchResultModel(
+                storeId: '2b_egypt',
+                storeName: '2B Egypt',
+                title: nasty,
+                price: 100.0,
+                currency: 'EGP',
+                url: 'javascript:alert(1)',
+                imageUrl: '',
+                inStock: true,
+              ),
+              onAddToFeed: () {},
+              isEnabled: true,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byType(InkWell).first);
+    await tester.pump();
+
+    // 'Monitor ' plus 300 x's folds onto one line, is cut at 80 characters
+    // and gets the ellipsis, so the toast stays bounded and single-line.
+    final filler = 'x' * 72;
+    expect(find.text('Unable to open Monitor $filler…'), findsOneWidget);
+  });
 }

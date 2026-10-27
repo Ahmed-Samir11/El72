@@ -106,6 +106,12 @@ class ChatConversation extends ChangeNotifier {
   }
 
   /// Start a new chat: drop messages, results, draft and session.
+  ///
+  /// Note: a reset abandons the reply that is already on the wire — it is
+  /// recognised as stale and dropped when it lands — but it does not cancel the
+  /// HTTP request itself. The service still finishes answering and still bills
+  /// that call. Cancelling would need a per-request `AbortSignal`/`Dio` token
+  /// threaded through the repository, which is out of scope here.
   void reset() {
     if (isDisposed) return;
     _messages.clear();
@@ -122,6 +128,12 @@ class ChatConversation extends ChangeNotifier {
 
   @override
   void dispose() {
+    // The provider disposes this on invalidation, and callers may dispose it
+    // directly (tests, an account teardown). Flutter's ChangeNotifier asserts
+    // against a second dispose, and because Riverpod wraps the call in
+    // runGuarded the assertion would be swallowed into an uncaught zone error
+    // instead of failing loudly. Being idempotent removes that trap.
+    if (_isDisposed) return;
     _isDisposed = true;
     super.dispose();
   }

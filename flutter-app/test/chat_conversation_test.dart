@@ -91,6 +91,7 @@ void main() {
     expect(chat.sessionId, 'session-1');
     expect(chat.draft, 'half typed');
   });
+
   test('a hostile search response is trimmed to the strongest results', () {
     final chat = ChatConversation();
 

@@ -3,6 +3,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../../l10n/app_localizations.dart';
 import '../../core/format/price_format.dart';
+import '../../core/format/toast_title.dart';
 import '../../core/styles/app_colors.dart';
 import '../../data/models/chat_message_model.dart';
 import '../widgets/product_image.dart';
@@ -31,8 +32,11 @@ class SearchResultCard extends StatelessWidget {
     final locale = Localizations.localeOf(context);
 
     void unableToOpen(ScaffoldMessengerState messenger) {
+      // The title is scraped, so it can be a paragraph with newlines. The
+      // chat page's own toasts already bound it; the card must not be the
+      // path that leaves a hostile title unbounded.
       messenger.showSnackBar(
-        SnackBar(content: Text(l10n.unableToOpen(result.title))),
+        SnackBar(content: Text(l10n.unableToOpen(toastTitle(result.title)))),
       );
     }
 
