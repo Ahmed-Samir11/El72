@@ -245,4 +245,6 @@ Before merging:
 - `.github/prompts/review-pr.prompt.md` — Review agent prompt
 - `scripts/check_branch.py` — Branch enforcement script (Python; runs on Windows and POSIX)
 - `scripts/check_agents.py` — Blocks edits to `.agents/` rules from outside a maintainer session
+- `.claude/settings.json` — the same branch guard, wired for Claude Code sessions
+- `services/common/test_hook_config.py` — proves both hook wirings parse, fire before the tool call and point at a script that exists
 - `scripts/review-pr.sh` — HGM review agent script
