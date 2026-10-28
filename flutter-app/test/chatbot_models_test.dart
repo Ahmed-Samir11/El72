@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:elhaq_tracker/src/core/format/toast_title.dart';
 import 'package:elhaq_tracker/src/data/models/chat_conversation.dart';
 import 'package:elhaq_tracker/src/data/models/chat_message_model.dart';
+import 'package:elhaq_tracker/src/data/repositories/chatbot_repository.dart';
 
 /// A result entry the service would actually answer with.
 //
@@ -495,6 +496,42 @@ void main() {
       });
       expect(real.storeId, 'amazon_eg');
       expect(real.currency, 'EGP');
+    });
+
+    test('an oversized identifier is clipped at the boundary', () {
+      // Session ids are UUIDs, and the repository interpolates one into the
+      // chatbot's URL path - so a service that hands back a megabyte where a
+      // UUID belongs must not have that string kept in the conversation for the
+      // rest of the session. The shape check `isSessionId` is what stops such
+      // an id being adopted at all; this keeps the stored value small as well.
+      final poison = 'p' * 5000;
+      final reply = ChatResponseModel.fromJson({
+        'message': 'ok',
+        'session_id': poison,
+        'search_results': [],
+      });
+      expect(reply.sessionId.length, maxIdentifierLength);
+      expect(ChatbotRepository.isSessionId(reply.sessionId), false);
+
+      final message = ChatMessageModel.fromJson({
+        'id': poison,
+        'session_id': poison,
+        'role': 'bot',
+        'content': 'ok',
+        'created_at': '2026-01-15T10:30:00Z',
+      });
+      expect(message.id.length, maxIdentifierLength);
+      expect(message.sessionId.length, maxIdentifierLength);
+
+      // A real UUID passes through untouched.
+      const uuid = '550e8400-e59b-4f0f-9249-6b1f1de2e80a';
+      final real = ChatResponseModel.fromJson({
+        'message': 'ok',
+        'session_id': uuid,
+        'search_results': [],
+      });
+      expect(real.sessionId, uuid);
+      expect(ChatbotRepository.isSessionId(real.sessionId), true);
     });
 
     test('clipping never splits a surrogate pair', () {

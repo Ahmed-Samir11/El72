@@ -15,6 +15,16 @@ const int maxChatContentLength = 20000;
 const int maxResultTitleLength = 500;
 const int maxResultStoreNameLength = 200;
 
+/// Upper bound on an identifier handed over by the service.
+//
+///  Session and message ids are UUIDs (36 characters), and a session id is
+///  interpolated into the chatbot's URL path by the repository, so an oversized
+///  one is payload rather than an identifier. Bounding it where the reply is
+///  parsed keeps the value small in memory as well; the shape check
+///  `ChatbotRepository.isSessionId` still decides whether a session id is
+///  adopted at all, and it runs before the id is ever used in a request.
+const int maxIdentifierLength = 64;
+
 /// A link longer than this is payload, not a product page. It is dropped rather
 /// than clipped: a half-url would still be handed to the browser and land the
 /// user somewhere they were never shown.
@@ -169,8 +179,8 @@ class ChatMessageModel {
     }
 
     return ChatMessageModel(
-      id: id,
-      sessionId: sessionId,
+      id: clip(id, maxIdentifierLength),
+      sessionId: clip(sessionId, maxIdentifierLength),
       role: role,
       // Bounded where it enters the app, so the turn cap cannot be spent on one
       // oversized reply.
@@ -215,7 +225,7 @@ class ChatSessionModel {
     }
 
     return ChatSessionModel(
-      id: id,
+      id: clip(id, maxIdentifierLength),
       userId: userId,
       createdAt: createdAt,
       updatedAt: updatedAt,
@@ -370,7 +380,7 @@ class ChatResponseModel {
       // The reply text is the same remote text the conversation keeps, so it is
       // bounded at the same place instead of only when a screen renders it.
       message: clip(message, maxChatContentLength),
-      sessionId: sessionId,
+      sessionId: clip(sessionId, maxIdentifierLength),
       searchResults: _parseSearchResults(resultsList),
       language: json['language'] as String? ?? 'en',
       trackerCreated: json['tracker_created'] == true,
