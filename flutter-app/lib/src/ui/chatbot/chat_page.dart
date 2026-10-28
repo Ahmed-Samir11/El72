@@ -112,9 +112,17 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
     super.dispose();
   }
 
+  /// Remember what the user is typing, bounded to the size the app retains.
+  //
+  /// A pasted wall of text (a page dump, a megabyte of JSON) otherwise stays
+  /// reachable for as long the signed-in session lives: the draft is re-shown
+  /// when the tab is reopened, and it is the one copy of user text that never
+  /// passes through the model parser, which is where remote text gets clipped.
+  /// Honest limit: this bounds what the app keeps, not what the user can paste
+  /// into a send — the repository still receives the full text.
   void _saveDraft() {
     if (_conversation.isDisposed) return;
-    _conversation.draft = _controller.text;
+    _conversation.draft = clip(_controller.text, maxChatContentLength);
   }
 
   void _onConversationChanged() {
@@ -204,13 +212,18 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
       conversation.sessionId = sessionId;
     }
 
-    // Add user message optimistically — use UUID to avoid collisions
+    // Add user message optimistically — use UUID to avoid collisions.
+    // The stored copy is clipped at the same bound the parser uses for the
+    // service's own text, so the history cap stays honest: "keep the last 200
+    // turns" is not a memory bound while one turn can be arbitrarily large. The
+    // request still carries the full text — this bounds what the app retains,
+    // not what the user is allowed to submit.
     conversation.addMessage(
       ChatMessageModel(
         id: _generateUuid(),
         sessionId: sessionId,
         role: 'user',
-        content: text,
+        content: clip(text, maxChatContentLength),
         createdAt: DateTime.now(),
       ),
     );

@@ -58,12 +58,18 @@ class _FakeChatbotRepository extends ChatbotRepository {
   int _sendMessageCalls = 0;
   int get sendMessageCalls => _sendMessageCalls;
 
+  // What the page handed the service, so a test can tell "bounded inside the
+  // app" apart from "truncated before it left".
+  int _lastSentLength = 0;
+  int get lastSentLength => _lastSentLength;
+
   @override
   Future<ChatResponseModel> sendMessage({
     required String sessionId,
     required String message,
   }) async {
     _sendMessageCalls++;
+    _lastSentLength = message.length;
     final response = ChatResponseModel(
       message: 'I found ${_results.length} products',
       sessionId: sessionId,
@@ -653,5 +659,41 @@ void main() {
     // and gets the ellipsis, so the toast stays bounded and single-line.
     final filler = 'x' * 71;
     expect(find.text('Unable to open Monitor $filler…'), findsOneWidget);
+  });
+
+  testWidgets('a pasted wall of text is bounded where the app keeps it', (
+    tester,
+  ) async {
+    final repository = _FakeChatbotRepository();
+    final container = _containerWith(repository);
+    await tester.pumpWidget(_app(container, const ChatPage()));
+
+    // Typed text is not remote text, so it never passes through the model
+    // parser that clips what the service hands over. Untyped it would sit in
+    // the draft and in the chat history for as long as the signed-in session
+    // lives, which is what makes the "keep the last 200 turns" cap dishonest.
+    final pasted = 'x' * (maxChatContentLength + 5000);
+
+    // Typing without sending: the draft is the copy re-shown when the tab is
+    // reopened, so it is stored bounded.
+    await tester.enterText(find.byType(TextField), pasted);
+    await tester.pump();
+    expect(
+      container.read(chatConversationProvider).draft.length,
+      maxChatContentLength,
+      reason: 'the retained draft must not be the whole paste',
+    );
+
+    // Sending it: the history keeps a bounded copy of the user's turn...
+    await tester.tap(find.byIcon(Icons.send));
+    await tester.pumpAndSettle();
+    final messages = container.read(chatConversationProvider).messages;
+    expect(messages.first.role, 'user');
+    expect(messages.first.content.length, maxChatContentLength);
+    expect(tester.takeException(), isNull);
+
+    // ...while the service still receives what the user actually typed. The
+    // bound is on what the app retains, not on what the user may submit.
+    expect(repository.lastSentLength, pasted.length);
   });
 }
