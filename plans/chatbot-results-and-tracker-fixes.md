@@ -217,16 +217,47 @@ Two defects this round found on its own, neither of which the reviewer raised:
   would have failed. All are cleaned; the `INTENT_EXTRACTION_PROMPT` text was reflowed only at existing
   whitespace and verified whitespace-equivalent to its previous version, so no prompt wording moved.
 
+## Review response (PR #43 re-review, round 9: 12 findings, 0 CRITICAL, REQUEST_CHANGES)
+
+Reviewer comment id `6450523509`, confidence 0.78. A previous attempt at this round
+**failed technically, not as a review**: the served model ran out of output budget while
+reasoning (`finish_reason=length` at `max_tokens=32768`, retried at `49152`), the JSON
+never parsed, and the pilot posted a **fallback** comment (`6450286249`, confidence
+`0.0`, 0 findings). That comment is not a verdict on this code and should be read as a
+reviewer-model failure.
+
+| # | Finding | Verdict | Where |
+| --- | --- | --- | --- |
+| 1 | WARNING — the client-side guard in `url_guard.dart` is not the boundary for server-side fetching | TRUE, and already the design; now stated where it was missing | `url_guard.dart`'s own doc comment says the rule decides only what the app may hand to a browser or forward, names `services/common/url_policy.py::fetch_block_reason` as the boundary and `POST /tracked-items/from-url` as the place it is enforced before any row write or credit spend |
+| 2 | WARNING — `imageUrl` is length-clipped but not scheme-checked | FIXED | `SearchResultModel.fromJson` clears the field unless [isHttpUrl] holds, so a scraped `data:`/`file:`/custom-scheme value never reaches the image loader and the card shows its placeholder. `ProductImage` still refuses non-web urls — bounding the field is what keeps that rule from depending on every call site |
+| 3 | WARNING — `clip` indexed `codeUnits[cut - 1]` for `max <= 0` | FIXED | `clip` returns `''` for `max <= 0`; `_oneLine` returns `''`/`'…'` for `max <= 1`. Pinned directly, since the public helpers only ever pass the 80 constant |
+| 4 | WARNING — the whitespace fold scanned the whole remote payload before bounding | FIXED | the fold runs on a window of `max * 8` units, so the cap bounds the work as well as the display. The window is observable: content that starts past it is never seen, which is the price recorded under limitations |
+| 5 | WARNING — hardcoded English remains in `chat_page.dart` | STILL OPEN — needs the maintainer | the add-tracker-failure copy, the two generic chat error strings and the expired-session message. Unchanged: `.agents/AGENTS.md` requires each English key to land with its Arabic twin, and this model (`PI_MODEL=qwen3.8-flash-next-coder-iq1_m`) must not author Arabic. Every offender is pinned in `l10n_hardcoded_strings_test.dart`, so the list can only shrink |
+| 6 | WARNING — typed/pasted text is stored unbounded | FIXED at both app-side stores | `_saveDraft` clips the draft to `maxChatContentLength` and the optimistic user bubble stores `clip(text, maxChatContentLength)`. Honest limit recorded in the doc comment: this bounds what the app *retains*, not what the user may submit — the repository still receives the full text |
+| 7 | WARNING — one malformed result destroys the whole reply | FIXED | new `_parseSearchResults`: non-object entries are skipped, an entry whose parse throws (`FormatException` or a bad field type) is skipped with a `debugPrint`, and the surviving entries are returned. No existing test asserted the throwing behaviour |
+| 8 | WARNING — the result count was trimmed only after every entry was parsed | FIXED | `maxParsedSearchResults` is checked **before** parsing, so a hostile array cannot build fifty thousand models; a parity test pins it to `ChatConversation.maxSearchResults` so the two limits cannot drift |
+| 9 | WARNING — `chatConversationProvider` lifetime is managed by hand | PARTIAL, documented | the provider is invalidated by the login, register and dashboard-logout flows (round 8 documented and tested that in `providers.dart` and `dashboard_logout_test.dart`). Deriving the provider from auth state automatically would be a provider refactor beyond this PR's scope, so the manual invalidation and its three call sites are stated in place instead |
+| 10 | INFO — `displayName` strips only up to the first colon, so an empty/whitespace slug yields a label-less card | FIXED | an empty derived label falls back to the whole `canonicalProductId`. No English word is invented: that would be a new i18n key with an Arabic twin to author |
+| 11 | INFO — `reset()` abandons rather than cancels an in-flight reply | ALREADY DOCUMENTED | `ChatConversation.reset`'s doc comment says exactly this and why (a per-request Dio token would have to be threaded through the repository); cited here rather than repeated |
+| 12 | INFO — `messages`/`searchResults` could return a cached unmodifiable view | DECLINED | a cached view needs invalidation on every mutation, and a stale view is a worse bug than one allocation per access on a list capped at 200 messages |
+
+One repo defect this round found on its own: the `## Test strategy` list in this plan file had
+lost its lead-in bullet line (`- API: link parsing (parametrized), title persisted and exposed (incl.`)
+in the round-5 plan edit, which left an orphaned continuation line under the heading. Restored.
+
 ## Test strategy
+- API: link parsing (parametrized), title persisted and exposed (incl.
   non-dict `specs`), Amazon image/title extraction, beacon skipping; credit
   tests aligned with the 100 allowance.
 - `services/common/test_url_policy.py` - the server-side fetch policy: loopback, bracketed and bare IPv6, link-local and cloud metadata endpoints, decimal/hex/octal hosts, `nip.io`-style embedded dotted quads, control characters, non-http schemes, and the public links that must stay acceptable.
 - `services/api/test_tracked_items_api.py` - the same policy at the endpoint: a refused url leaves no `TrackedItem` row, so the check lands before any credit is spent.
-- `flutter-app/test/toast_title_test.dart` - the shared toast bound: cap includes the ellipsis, whitespace is folded before measuring, a UTF-16 pair is never split, and a page-sized service explanation collapses to one line.
-- `chatbot_models_test.dart` (`remote text stays bounded`) - reply, message, title and store-name caps, and an over-long url dropped rather than truncated so the result stops looking launchable.
+- `flutter-app/test/toast_title_test.dart` - the shared toast bound: cap includes the ellipsis, whitespace is folded before measuring, a UTF-16 pair is never split, a page-sized service explanation collapses to one line, `clip` answers an absurdly small bound (`0`, `-3`, `1`) with nothing instead of indexing below the start of the string, and the fold only ever reads its bounded window - a megabyte title becomes one 80-character line, and content that starts past the window is never folded at all, which is what proves the window is applied rather than merely measured.
+- `chatbot_models_test.dart` (`remote text stays bounded`) - reply, message, title and store-name caps, an over-long url dropped rather than truncated so the result stops looking launchable, and an `image_url` kept only when it is an absolute http/https address (`data:`, `file:`, `ftp:`, `javascript:`, a bare path, an over-long link are all cleared so the card falls back to its placeholder).
+- `chatbot_models_test.dart` (`one broken result cannot destroy a reply`) - a missing field, a field of the wrong type and an entry that is not an object each drop one entry and keep its neighbours; an array of nothing but junk answers empty instead of throwing; a flooded array stops at `maxParsedSearchResults`, and that cap is pinned equal to `ChatConversation.maxSearchResults` so the two limits cannot drift.
+- `tracked_item_model_test.dart` - `displayName` never returns an empty label: `"amazon_eg:"` and a slug that is only separators fall back to the whole `canonical_product_id`, and an entirely empty id invents nothing.
 - `test_migration_files.py` - a free account that already spent part of the *new* allowance is not topped up again.
 - `services/billing/test_webhook.py` - credit expectations derive from `TIER_STARTING_CREDITS`, so changing the allowance cannot silently break them.
-- `chat_page_test.dart` - the send path stays closed while a reply is in flight (`onSubmitted` and the button's `onPressed` are both null), and a page that is handed an already-disposed conversation still paints.
+- `chat_page_test.dart` - the send path stays closed while a reply is in flight (`onSubmitted` and the button's `onPressed` are both null), a page that is handed an already-disposed conversation still paints, and a pasted megabyte of text is stored bounded in both places the app keeps user text (the draft and the optimistic user bubble) while the repository still receives what the user typed.
 - Chatbot: existing suite.
 - Common: `test_migration_files.py` replays the free-tier migration's own
   `allowance` CTE in SQLite (no Postgres here) to prove the top-up lands once,
@@ -254,7 +285,10 @@ Two defects this round found on its own, neither of which the reviewer raised:
 ## Known limitations
 - The url fetch policy is a blocklist of private targets, not an allowlist of stores: which domains are trackable changes every time a scraper lands, and a pinned list would silently break legitimate trackers. It refuses machine-local, private-network, link-local and cloud-metadata hosts, metadata and agent sockets, control characters and hostnames with embedded dotted quads (`127.0.0.1.nip.io`); it cannot prove an accepted host is a real product page, only that the server is not being pointed at its own network.
 - Truncation in the toast helpers and the model caps counts UTF-16 code units, so a cut can still fall between a base character and a combining mark or inside a ZWJ/emoji-modifier sequence. Pairs are kept whole; decoration can be lost. A grapheme-accurate boundary needs an intl dependency.
-- i18n residue in the chat page: two generic failure strings and the expired-session message are still app-authored English, pinned in the hardcoded-string allow-list. The scan is a ratchet over 121 existing hits in 52 files, not an audit: closing the rest needs maintainer-authored Arabic landing with each English key.
+- i18n residue in the chat page: `addTrackerFailedText`, the two generic failure strings and the expired-session message are still app-authored English, pinned in the hardcoded-string allow-list. The scan is a ratchet over 121 existing hits in 52 files, not an audit: closing the rest needs maintainer-authored Arabic landing with each English key in the same commit.
+- The toast fold scans only `max * 8` code units (640 for the 80-character toast) before folding, so a title whose real content starts behind that window - a payload front-loaded with whitespace - yields nothing rather than the text behind the window. The scan bound is deliberate: without it a megabyte title spends a megabyte of work and a full copy of the text to decide on 80 characters. Ordinary padding (a few hundred newlines) stays well inside the window and still collapses.
+- The user-text bound is a retention bound, not an input bound: the draft and the optimistic user bubble are clipped to `maxChatContentLength`, but the send path still transmits whatever the user typed, so a paste of a megabyte is still posted to the chatbot service. Rejecting oversized input is a service-side policy (the LLM's own token budget), not something the client should decide alone.
+- Parsing results per entry trades a loud failure for a partial answer: if the service starts answering with broken entries, the app silently shows fewer cards, and the only signal is the `debugPrint` naming the malformed entry. The count cap is applied before parsing, so the extra entries are never built rather than built and dropped.
 - Branch protection is **not enforced in every agent harness**: the Copilot hook
   config is read once at session start and, in the session where it was first
   reported, the configured command errored on spawn, so every `powershell`
