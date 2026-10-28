@@ -498,6 +498,45 @@ void main() {
       expect(real.currency, 'EGP');
     });
 
+    test(
+      'a url that is not an openable web address is cleared at the boundary',
+      () {
+        // `isLaunchable` gates the tap today, but a model that keeps `file:` or
+        // `data:` in its `url` field is a footgun for the next consumer that reads
+        // the field directly, so the value is dropped where it is parsed - the
+        // same rule `image_url` already follows.
+        for (final bad in const [
+          'file:///etc/passwd',
+          'data:text/html,<script>alert(1)</script>',
+          'javascript:alert(1)',
+          'app-store://deeplink',
+          '/product/123',
+          'https:///no-host',
+        ]) {
+          final model = SearchResultModel.fromJson({
+            'store_id': 'evil',
+            'store_name': 'Evil',
+            'title': 'Trap',
+            'price': 100,
+            'url': bad,
+          });
+          expect(model.url, '', reason: bad);
+          expect(model.isLaunchable, false, reason: bad);
+        }
+
+        // A real product link, fragment and all, is kept whole.
+        final kept = SearchResultModel.fromJson({
+          'store_id': '2b_egypt',
+          'store_name': '2B Egypt',
+          'title': 'Monitor',
+          'price': 100,
+          'url': 'https://2b.com.eg/en/product-1.html#price',
+        });
+        expect(kept.url, 'https://2b.com.eg/en/product-1.html#price');
+        expect(kept.isLaunchable, true);
+      },
+    );
+
     test('an oversized identifier is clipped at the boundary', () {
       // Session ids are UUIDs, and the repository interpolates one into the
       // chatbot's URL path - so a service that hands back a megabyte where a

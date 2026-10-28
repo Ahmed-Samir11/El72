@@ -131,6 +131,20 @@ void main() {
       expect(item.displayName, 'Kindle Paperwhite Signature Edition');
     });
 
+    test('a control character in a scraped title does not reach the card', () {
+      // Third-party titles are attacker-influenced: a stray escape from the
+      // page's own pipeline survives a whitespace fold and renders as a
+      // replacement glyph, so it is removed rather than folded.
+      final item = TrackedItem.fromJson({
+        'id': 11,
+        'canonical_product_id': 'amazon_eg:kindle',
+        'title': 'Kindle\u0002\u007fPaperwhite\u2027',
+      });
+      expect(item.displayName, 'KindlePaperwhite\u2027');
+      expect(item.displayName.contains('\u0002'), false);
+      expect(item.displayName.contains('\u007f'), false);
+    });
+
     test('an empty id has no label to invent', () {
       // Nothing to derive from and no key to invent: the card shows an empty
       // title rather than a made-up English one.

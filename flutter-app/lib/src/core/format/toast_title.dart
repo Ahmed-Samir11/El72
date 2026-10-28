@@ -80,14 +80,22 @@ int _contentStart(String value, int chunkSize) {
 /// Runs of whitespace, folded to a single space before any cap is measured.
 final _whitespaceRuns = RegExp(r'\s+');
 
+/// Control characters that are not whitespace, which no product name contains.
+//
+/// Removed rather than folded: a scraped page can carry a stray escape from its
+/// own pipeline, and unlike a newline it survives a whitespace fold and reaches
+/// the screen as a replacement glyph.
+final _controlChars = RegExp('[\\x00-\\x08\\x0b\\x0c\\x0e-\\x1f\\x7f]');
+
 /// A remote string made safe to sit inside a line the app is laying out.
 //
-/// Whitespace runs collapse to one space and both ends are trimmed, so a title
-/// that its source markup wrapped across lines cannot break whatever shows it.
-/// No length bound here: the screens that need one call [toastTitle] or
-/// [toastMessage], which fold first and then cut at the cap.
+/// Whitespace runs collapse to one space, control characters that are not
+/// whitespace are removed, and both ends are trimmed, so a title that its
+/// source markup wrapped across lines cannot break whatever shows it. No length
+/// bound here: the screens that need one call [toastTitle] or [toastMessage],
+/// which fold first and then cut at the cap.
 String foldWhitespace(String value) =>
-    value.replaceAll(_whitespaceRuns, ' ').trim();
+    value.replaceAll(_controlChars, '').replaceAll(_whitespaceRuns, ' ').trim();
 
 /// Whitespace-folded, cut to `max` characters with the tail replaced by "…".
 String _oneLine(String value, int max) {

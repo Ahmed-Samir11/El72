@@ -304,10 +304,14 @@ class SearchResultModel {
       throw FormatException('SearchResultModel: missing required field "url"');
     }
 
-    // A url longer than any real product link is payload; drop the field instead
-    // of clipping it so the result stops looking launchable rather than offering
-    // a truncated address.
-    final safeUrl = url.length > maxResultUrlLength ? '' : url;
+    // A url is dropped when it is not an absolute http/https address, and when
+    // it is longer than any real product page. `isLaunchable` gates the tap today
+    // either way, but a model that keeps `file:` or `data:` in its `url` field is
+    // a footgun for the next consumer that reads the field directly, and a
+    // half-truncated address would still be handed to the browser.
+    final safeUrl = url.length > maxResultUrlLength || !isHttpUrl(url)
+        ? ''
+        : url;
     final rawImageUrl = imageUrl ?? '';
     // The image url is scraped out of the same page, so `data:`, `file:` or a
     // custom-scheme value can arrive here too. Clearing the field leaves the
