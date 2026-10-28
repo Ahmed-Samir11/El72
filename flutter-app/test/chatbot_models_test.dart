@@ -1,7 +1,23 @@
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:elhaq_tracker/src/core/format/toast_title.dart';
+import 'package:elhaq_tracker/src/data/models/chat_conversation.dart';
 import 'package:elhaq_tracker/src/data/models/chat_message_model.dart';
+
+/// A result entry the service would actually answer with.
+//
+/// Used by the results-array tests below, where the point is that some entries
+/// are broken and the ones around them are perfectly normal.
+Map<String, dynamic> _resultEntry(String title) => {
+  'store_id': '2b_egypt',
+  'store_name': '2B Egypt',
+  'title': title,
+  'price': 8399.0,
+  'currency': 'EGP',
+  'url': 'https://2b.com.eg/en/product.html',
+  'image_url': '',
+  'in_stock': true,
+};
 
 void main() {
   group('parseDateRobust', () {
@@ -463,6 +479,144 @@ void main() {
       expect(clipped.length, maxResultTitleLength - 1);
       expect(clipped.endsWith(pair), false);
       expect(clipped, 'a' * (maxResultTitleLength - 1));
+    });
+
+    test('an image url is kept only when it is a web address', () {
+      SearchResultModel withImage(String? image) => SearchResultModel.fromJson({
+        'store_id': 'amazon_eg',
+        'store_name': 'Amazon Egypt',
+        'title': 'Kindle',
+        'price': 100.0,
+        'url': 'https://amazon.eg/dp/0848217543',
+        'image_url': image,
+      });
+
+      // A real cdn link survives untouched.
+      expect(
+        withImage('https://images-eu.ssl-images-amazon.com/a.jpg').imageUrl,
+        'https://images-eu.ssl-images-amazon.com/a.jpg',
+      );
+
+      // A scraped `data:`/`file:`/custom-scheme value is cleared, so the card
+      // falls back to its placeholder instead of handing the string to the
+      // image loader. `ProductImage` also refuses these; bounding the field is
+      // what stops that rule from depending on every call site remembering it.
+      for (final bad in const [
+        null,
+        '',
+        '/relative/path/a.jpg',
+        'a.jpg',
+        'ftp://cdn.test/a.jpg',
+        'file:///etc/passwd',
+        'data:image/svg+xml;base64,AAAA',
+        'javascript:alert(1)',
+      ]) {
+        expect(withImage(bad).imageUrl, '', reason: '$bad');
+      }
+    });
+
+    test('a hostile image url cannot outlive the length bound either', () {
+      final model = SearchResultModel.fromJson({
+        'store_id': 'evil',
+        'store_name': 'Evil',
+        'title': 'Trap',
+        'price': 100,
+        'url': 'https://evil.test/p',
+        'image_url': 'https://evil.test/${'b' * (maxResultUrlLength + 10)}.jpg',
+      });
+      expect(model.imageUrl, '');
+    });
+  });
+
+  group('one broken result cannot destroy a reply', () {
+    // SearchResultModel.fromJson is strict on purpose — a service that drops a
+    // required field is a bug worth surfacing — but that strictness used to
+    // apply to the whole array: one unusable entry destroyed an answer that
+    // had perfectly good products in it and the user got an error snackbar.
+    test('a malformed entry is skipped and its siblings survive', () {
+      final response = ChatResponseModel.fromJson({
+        'message': 'Found 2 products',
+        'session_id': '11223344-5566-4777-8888-9999aabbccdd',
+        'search_results': [
+          _resultEntry('Sigma 27 inch monitor'),
+          {'store_id': 'broken'}, // no title, no price, no url
+          'not-a-result', // not an object at all
+          null,
+          _resultEntry('Samsung Odyssey G5'),
+        ],
+      });
+
+      expect(response.searchResults.length, 2);
+      expect(response.searchResults.first.title, 'Sigma 27 inch monitor');
+      expect(response.searchResults.last.title, 'Samsung Odyssey G5');
+    });
+
+    test('an array of nothing but junk answers empty, not an error', () {
+      final response = ChatResponseModel.fromJson({
+        'message': 'nothing usable',
+        'session_id': 's1',
+        'search_results': [1, 'two', null, true, const []],
+      });
+      expect(response.searchResults, isEmpty);
+    });
+
+    test('a field of the wrong type is one skipped entry', () {
+      final response = ChatResponseModel.fromJson({
+        'message': 'x',
+        'session_id': 's1',
+        'search_results': [
+          {..._resultEntry('thrown away'), 'price': 'forty dollars'},
+          _resultEntry('kept'),
+        ],
+      });
+      expect(response.searchResults.length, 1);
+      expect(response.searchResults.single.title, 'kept');
+    });
+
+    test('a results array longer than the cap stops at the cap', () {
+      final response = ChatResponseModel.fromJson({
+        'message': 'a flood',
+        'session_id': 's1',
+        'search_results': List.generate(
+          maxParsedSearchResults * 4,
+          (i) => _resultEntry('Monitor $i'),
+        ),
+      });
+
+      // The list is ranked best-first, so what is dropped is the weakest part
+      // of the answer, and the strongest part is intact.
+      expect(response.searchResults.length, maxParsedSearchResults);
+      expect(response.searchResults.first.title, 'Monitor 0');
+      expect(
+        response.searchResults.last.title,
+        'Monitor ${maxParsedSearchResults - 1}',
+      );
+    });
+
+    test('the parse cap cannot drift from the cap the chat stores', () {
+      // Two limits that disagree are worse than one: the conversation trims the
+      // list it keeps, this one is what bounds how many models a single reply
+      // is allowed to build in the first place, and it has to be checked before
+      // any entry is parsed to be a cost bound rather than a display bound.
+      expect(maxParsedSearchResults, ChatConversation.maxSearchResults);
+    });
+
+    test('a valid reply still parses every result', () {
+      final response = ChatResponseModel.fromJson({
+        'message': 'Found 3 products',
+        'session_id': 's1',
+        'search_results': [
+          _resultEntry('Monitor A'),
+          _resultEntry('Monitor B'),
+          _resultEntry('Monitor C'),
+        ],
+      });
+      expect(response.searchResults.length, 3);
+      expect(
+        response.searchResults[1].url,
+        'https://2b.com.eg/en/product.html',
+      );
+      expect(response.searchResults[1].price, 8399.0);
     });
   });
 }

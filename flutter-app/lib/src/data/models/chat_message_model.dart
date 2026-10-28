@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 import '../../core/format/toast_title.dart';
 import '../../core/url_guard.dart';
 
@@ -17,6 +19,41 @@ const int maxResultStoreNameLength = 200;
 /// than clipped: a half-url would still be handed to the browser and land the
 /// user somewhere they were never shown.
 const int maxResultUrlLength = 4096;
+
+/// How many results one reply may bring into the app.
+//
+/// Mirrors `ChatConversation.maxSearchResults`, but has to be applied here as
+/// well: trimming in the conversation happens after every entry has already
+/// been turned into a model and its strings copied, so a service that answers
+/// with fifty thousand results gets to spend that work before anything is
+/// thrown away. Checking before parsing makes the cap a cost bound.
+const int maxParsedSearchResults = 50;
+
+/// Turn the `search_results` array into models one entry at a time, skipping
+/// the entries that are not usable.
+//
+/// `SearchResultModel.fromJson` is strict — a missing field or a field of the
+/// wrong type throws — and that used to be all-or-nothing for the whole reply:
+/// one junk entry in an answer that had perfectly good products in it destroyed
+/// the answer, and the user got an error snackbar. Each entry is now decided
+/// on its own, and parsing stops at [maxParsedSearchResults] rather than
+/// building objects that are going to be trimmed away.
+List<SearchResultModel> _parseSearchResults(List<dynamic>? entries) {
+  final results = <SearchResultModel>[];
+  for (final entry in entries ?? const []) {
+    if (results.length >= maxParsedSearchResults) break;
+    if (entry is! Map<String, dynamic>) {
+      debugPrint('Ignoring a chatbot search result that is not an object');
+      continue;
+    }
+    try {
+      results.add(SearchResultModel.fromJson(entry));
+    } catch (error) {
+      debugPrint('Ignoring a malformed chatbot search result: $error');
+    }
+  }
+  return results;
+}
 
 /// Parse an ISO 8601 date string robustly.
 ///
@@ -227,7 +264,14 @@ class SearchResultModel {
     // a truncated address.
     final safeUrl = url.length > maxResultUrlLength ? '' : url;
     final rawImageUrl = imageUrl ?? '';
-    final safeImageUrl = rawImageUrl.length > maxResultUrlLength
+    // The image url is scraped out of the same page, so `data:`, `file:` or a
+    // custom-scheme value can arrive here too. Clearing the field leaves the
+    // card on its placeholder icon instead of handing the value to the image
+    // loader: `ProductImage` already refuses non-web urls, and bounding the
+    // field where the text enters the app is what keeps that rule from having
+    // to be remembered at every call site.
+    final safeImageUrl =
+        rawImageUrl.length > maxResultUrlLength || !isHttpUrl(rawImageUrl)
         ? ''
         : rawImageUrl;
 
@@ -288,9 +332,7 @@ class ChatResponseModel {
       // bounded at the same place instead of only when a screen renders it.
       message: clip(message, maxChatContentLength),
       sessionId: sessionId,
-      searchResults: (resultsList ?? const [])
-          .map((r) => SearchResultModel.fromJson(r))
-          .toList(),
+      searchResults: _parseSearchResults(resultsList),
       language: json['language'] as String? ?? 'en',
       trackerCreated: json['tracker_created'] == true,
     );
