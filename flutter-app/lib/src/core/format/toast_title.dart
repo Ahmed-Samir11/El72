@@ -32,6 +32,10 @@ String toastMessage(String message) => _oneLine(message, maxToastTitleLength);
 /// No ellipsis: this is a size bound, not a display promise, and the limits
 /// are far above anything the service can legitimately produce.
 String clip(String value, int max) {
+  if (max <= 0) {
+    // Nothing fits; the surrogate check below would index below zero.
+    return '';
+  }
   if (value.length <= max) {
     return value;
   }
@@ -48,7 +52,18 @@ const maxToastTitleLength = 80;
 
 /// Whitespace-folded, cut to `max` characters with the tail replaced by "…".
 String _oneLine(String value, int max) {
-  final singleLine = value.replaceAll(RegExp(r'\s+'), ' ').trim();
+  // A line this short has no room for content plus an ellipsis, and indexing
+  // before the start of the string is what a naive cut would do.
+  if (max <= 1) {
+    return max <= 0 ? '' : '\u2026';
+  }
+
+  // Fold only a bounded window: folding a multi-megabyte title to decide how
+  // much of it to show spends the work (and a full copy of the text) that the
+  // cap exists to avoid. The window is 8x the cap, so a line whose content is
+  // front-loaded with whitespace is still measured after folding.
+  final window = value.length > max * 8 ? clip(value, max * 8) : value;
+  final singleLine = window.replaceAll(RegExp(r'\s+'), ' ').trim();
   if (singleLine.length <= max) return singleLine;
 
   // The cap is the whole line the user sees, so the cut leaves a slot for the

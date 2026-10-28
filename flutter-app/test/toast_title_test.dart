@@ -79,6 +79,49 @@ void main() {
     expect(toastTitle('   \n\t  '), '');
   });
 
+  // `clip` is public and takes its bound from the caller, so a caller asking
+  // for "no room" must not get an index error out of the surrogate check.
+  test('clipping to a tiny limit returns nothing rather than throwing', () {
+    expect(clip('abcdef', 0), '');
+    // A negative bound is the same request from a caller that has no room at
+    // all; the old code indexed `codeUnits[-1]` here and threw.
+    expect(clip('abcdef', -3), '');
+    expect(clip('abcdef', 1), 'a');
+    expect(clip('', 5), '');
+  });
+
+  test('clipping to one character never splits a pair', () {
+    // The single kept unit is the leading half of the pair, so the pair is
+    // dropped whole instead of leaving a lone surrogate behind.
+    final pair = '\u{1f600}';
+    expect(clip(pair, 1), '');
+    expect(clip('$pair-tail', 2), pair);
+  });
+
+  // The fold that turns a title into one line used to run over the entire
+  // payload before anything was thrown away, so a megabyte title spent a
+  // megabyte of work (and a full copy of the text) to decide on 80 characters.
+  test('the fold only ever reads a bounded window of a hostile title', () {
+    final out = toastTitle('x' * 1000000);
+    expect(out.length, maxToastTitleLength);
+    expect(out.contains('\n'), false);
+
+    // Observable proof the window is applied rather than merely measured: content
+    // that starts past the window (8x the cap = 640 units) never reaches the
+    // fold, so a payload front-loaded with whitespace yields nothing. Without
+    // the window the whole 100k units would be folded and "Real title" would
+    // survive.
+    final buried = '${'\n' * 100000}Real title';
+    expect(toastTitle(buried), '');
+  });
+
+  test('the window is generous enough for ordinary whitespace padding', () {
+    // 400 units of newlines is well inside the window, so the fold still
+    // collapses them and the title is shown whole.
+    final padded = '${'\n\t' * 200}Samsung Odyssey G5';
+    expect(toastTitle(padded), 'Samsung Odyssey G5');
+  });
+
   // The service's own explanation of a failed add-to-tracker is remote text too,
   // and it reaches the same snackbar; it is bounded here so the chat page does
   // not grow a second, drifting copy of the rule.
