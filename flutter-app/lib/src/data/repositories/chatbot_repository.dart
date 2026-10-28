@@ -177,6 +177,25 @@ class ChatbotRepository {
     );
   }
 
+  /// Refuse a message longer than the app's own turn bound.
+  //
+  /// The chat page cuts what it sends to [maxChatContentLength] before building
+  /// the request, but `sendMessage` is public API, so the bound is enforced here
+  /// as well rather than trusting the caller: an oversized payload would be
+  /// billed by the service and could never be read by the model behind it. A
+  /// rejection rather than a silent cut — a caller that hands over more than one
+  //  turn is holding text the app should not have kept.
+  static String _requireMessage(String message) {
+    if (message.length > maxChatContentLength) {
+      throw ArgumentError.value(
+        message.length,
+        'message',
+        'must not exceed $maxChatContentLength characters',
+      );
+    }
+    return message;
+  }
+
   /// Send a message to the chatbot and get the response with search results.
   ///
   /// POST is not retried (non-idempotent). Throws [UnauthorizedException] on 401,
@@ -186,6 +205,7 @@ class ChatbotRepository {
     required String message,
   }) async {
     _requireSessionId(sessionId);
+    _requireMessage(message);
     final options = await _authOptions();
 
     try {

@@ -156,5 +156,30 @@ void main() {
       // referral parameters — is pinned where no network is needed: see
       // `chatbot_models_test.dart`, "a long product page link stays launchable".
     });
+
+    test('refuses a message larger than the app\'s own turn bound', () async {
+      // `sendMessage` is public API. The chat page clips what it sends, but a
+      // caller that hands over more than one turn is holding text the app should
+      // not have kept, and forwarding it would spend a credit on a payload the
+      // model behind the service could never read. Refused before any request is
+      // built, so nothing leaves the app.
+      final repo = ChatbotRepository(dio: Dio(), storage: _FakeSecureStorage());
+      const sessionId = '550e8400-e59b-4f0f-9249-6b1f1de2e80a';
+
+      await expectLater(
+        repo.sendMessage(
+          sessionId: sessionId,
+          message: 'x' * (maxChatContentLength + 1),
+        ),
+        throwsA(isA<ArgumentError>()),
+      );
+
+      // A turn at the bound itself is allowed through untouched.
+      expect(
+        ChatbotRepository.isSessionId(sessionId),
+        true,
+        reason: 'the session guard is unchanged by this one',
+      );
+    });
   });
 }
