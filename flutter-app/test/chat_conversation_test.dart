@@ -108,4 +108,34 @@ void main() {
       'Monitor ${ChatConversation.maxSearchResults - 1}',
     );
   });
+
+  test('the draft is bounded wherever it is written', () {
+    // The page clips before assigning, but the state is what outlives the
+    // session: any writer - a future caller, a restored draft - gets the same
+    // limit from the setter instead of having to remember it.
+    final chat = ChatConversation();
+    chat.draft = 'x' * (maxChatContentLength + 5000);
+    expect(chat.draft.length, maxChatContentLength);
+
+    // Ordinary text is untouched, and reset still clears it.
+    chat.draft = 'half typed';
+    expect(chat.draft, 'half typed');
+    chat.reset();
+    expect(chat.draft, isEmpty);
+  });
+
+  test('a session id is kept small even when written directly', () {
+    // The value is interpolated into the chatbot's URL path. `isSessionId` decides
+    // whether an id may be used at all; the setter is what stops an oversized
+    // one from being carried by the conversation in the first place.
+    final chat = ChatConversation();
+    chat.sessionId = 'p' * 5000;
+    expect(chat.sessionId!.length, maxIdentifierLength);
+
+    const uuid = '550e8400-e59b-4f0f-9249-6b1f1de2e80a';
+    chat.sessionId = uuid;
+    expect(chat.sessionId, uuid);
+    chat.sessionId = null;
+    expect(chat.sessionId, isNull);
+  });
 }

@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 
+import '../../core/format/toast_title.dart';
 import 'chat_message_model.dart';
 
 /// Mutable state of the chat tab, kept across tab switches.
@@ -59,20 +60,27 @@ class ChatConversation extends ChangeNotifier {
   bool get isDisposed => _isDisposed;
 
   /// Server session id; null until the first message is sent.
+  /// Bound to [maxIdentifierLength] on the way in: the value is later
+  /// interpolated into the chatbot's URL path, and a conversation poisoned by a
+  /// direct setter call would otherwise carry a hostile path fragment for the
+  /// whole session. `ChatbotRepository.isSessionId` is what decides whether an
+  /// id is *usable*; this is what keeps it small.
   String? get sessionId => _sessionId;
 
   set sessionId(String? value) {
     if (_isDisposed) return;
-    _sessionId = value;
+    _sessionId = value == null ? null : clip(value, maxIdentifierLength);
   }
 
   /// Text typed into the input but not sent yet. Not notified: the page's
-  /// text field already shows it.
+  /// text field already shows it. Bounded in the setter, so every writer gets
+  /// the same limit — a pasted wall of text must not stay reachable for as long
+  /// the signed-in session lives.
   String get draft => _draft;
 
   set draft(String value) {
     if (_isDisposed) return;
-    _draft = value;
+    _draft = clip(value, maxChatContentLength);
   }
 
   bool get isSending => _isSending;

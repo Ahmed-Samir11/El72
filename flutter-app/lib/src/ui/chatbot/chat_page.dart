@@ -112,13 +112,13 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
     super.dispose();
   }
 
-  // A pasted wall of text (a page dump, a megabyte of JSON) otherwise stays
-  // reachable for as long the signed-in session lives: the draft is re-shown
-  // when the tab is reopened, and it is the one copy of user text that never
-  // passes through the model parser, which is where remote text gets clipped.
+  // Remember what the user is typing. The bound lives on the state, not at this
+  // call site: [ChatConversation.draft]'s setter clips, so a pasted wall of
+  // text cannot stay reachable for as long the signed-in session lives no matter
+  // which writer produced it.
   void _saveDraft() {
     if (_conversation.isDisposed) return;
-    _conversation.draft = clip(_controller.text, maxChatContentLength);
+    _conversation.draft = _controller.text;
   }
 
   void _onConversationChanged() {
