@@ -2,12 +2,27 @@
 
 MESSAGES = {
     "en": {
-        "no_results": "I couldn't find any products matching '{query}'{price_filter}. Try a different search term.",
-        "found_results": "I found {count} product{plural} matching '{query}'{price_filter}:",
-        "added_to_feed": "I've added '{title}' to your tracking feed. I'll monitor the price and notify you when it changes.",
+        "no_results": (
+            "I couldn't find any products matching '{query}'{price_filter}. "
+            "Try a different search term."
+        ),
+        "found_results": (
+            "I found {count} product{plural} matching "
+            "'{query}'{price_filter}:"
+        ),
+        "added_to_feed": (
+            "I've added '{title}' to your tracking feed. I'll monitor the price "
+            "and notify you when it changes."
+        ),
         "no_search_results": "No search results found to add to your feed.",
-        "add_failed": "Sorry, I couldn't add this to your feed at the moment. Please try again later.",
-        "insufficient_credits": "Insufficient credits: {detail}. Upgrade your plan to continue.",
+        "add_failed": (
+            "Sorry, I couldn't add this to your feed at the moment. "
+            "Please try again later."
+        ),
+        "insufficient_credits": (
+            "Insufficient credits: {detail}. Upgrade your plan "
+            "to continue."
+        ),
         "empty_query": "Please enter a product to search for.",
         "price_filter": " under {max_price:g} EGP",
         "price_min": " over {min_price:g} EGP",

@@ -915,6 +915,7 @@ async def _handle_add_to_feed(
                 )
             ],
             language=language,
+            tracker_created=True,
         )
 
     except httpx.HTTPError as e:

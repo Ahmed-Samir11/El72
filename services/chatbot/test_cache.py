@@ -19,11 +19,14 @@ from services.chatbot.cache import (
 
 def test_ttl_lru_cache_expires_entries():
     """An entry older than its TTL is gone, not stale-served."""
-    cache = TTLLRUCache(ttl_seconds=0.05, max_entries=8)
+    cache = TTLLRUCache(ttl_seconds=0.25, max_entries=8)
     cache.set("k", [{"title": "Laptop"}])
     assert cache.get("k") is not None
 
-    time.sleep(0.06)
+    # The margin used to be 10 ms around a 50 ms TTL, which a loaded CI runner
+    # starves: the entry expired before the second read for reasons that have
+    # nothing to do with the cache. Same contract, no timing cliff.
+    time.sleep(0.6)
     assert cache.get("k") is None
 
 

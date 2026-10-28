@@ -548,9 +548,18 @@ def get_dynamic_pricing():
     return {
         "currency": "EGP",
         "packages": {
-            "free": {"credits": PACKAGE_CREDITS["free"], "price_egp": PACKAGE_PRICES["free"]},
-            "standard": {"credits": PACKAGE_CREDITS["standard"], "price_egp": PACKAGE_PRICES["standard"]},
-            "premium": {"credits": PACKAGE_CREDITS["premium"], "price_egp": PACKAGE_PRICES["premium"]},
+            "free": {
+                "credits": PACKAGE_CREDITS["free"],
+                "price_egp": PACKAGE_PRICES["free"],
+            },
+            "standard": {
+                "credits": PACKAGE_CREDITS["standard"],
+                "price_egp": PACKAGE_PRICES["standard"],
+            },
+            "premium": {
+                "credits": PACKAGE_CREDITS["premium"],
+                "price_egp": PACKAGE_PRICES["premium"],
+            },
         },
     }
 

@@ -1,8 +1,10 @@
 import 'dart:math';
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../l10n/app_localizations.dart';
+import '../../core/format/toast_title.dart';
 import '../../data/models/chat_conversation.dart';
 import '../../data/models/chat_message_model.dart';
 import '../../data/repositories/chatbot_repository.dart';
@@ -21,13 +23,24 @@ import '../chatbot/search_result_card.dart';
 /// token and resolves the user_id from the token's `sub` claim (phone number)
 /// by looking up the user in the shared operational database. The client never
 /// supplies a user_id.
+/// Fallback shown when adding a result to the feed failed and neither the
+/// service nor the exception explained why.
+//
+// NOTE(i18n): this needs a key in `app_en.arb` + `app_ar.arb`. The Arabic half
+// is left to a native speaker — see the i18n rule in `.agents/AGENTS.md`.
+const addTrackerFailedText = 'Failed to add tracker. Please try again.';
+
 class ChatPage extends ConsumerWidget {
   const ChatPage({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final repository = ref.read(chatbotRepositoryProvider);
-    final conversation = ref.read(chatConversationProvider);
+    // Watched, not read: logout invalidates chatConversationProvider, and the
+    // page must bind to the replacement instance instead of holding the disposed
+    // conversation. (Chat state changes also repaint through the state's own
+    // listener; this watch only covers provider replacement.)
+    final conversation = ref.watch(chatConversationProvider);
     return _ChatPageBody(repository: repository, conversation: conversation);
   }
 }
@@ -56,20 +69,88 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
     super.initState();
     _controller = TextEditingController(text: _conversation.draft);
     _controller.addListener(_saveDraft);
-    _conversation.addListener(_onConversationChanged);
+    // A conversation can reach this page already disposed (the provider rebuilds
+    // it on logout, and a disposed instance can be handed to a fresh page in the
+    // same tick). `ChangeNotifier.addListener` throws on a disposed object, which
+    // would take the tab down before it paints; [didUpdateWidget] already guards
+    // the same case on the other side.
+    if (!_conversation.isDisposed) {
+      _conversation.addListener(_onConversationChanged);
+    }
+  }
+
+  @override
+  void didUpdateWidget(_ChatPageBody oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // The conversation lives in a provider that logout (and the demo account)
+    // invalidates, so this widget can be rebuilt against a different instance.
+    // Re-attach to the new one; the old listener would keep a disposed chat
+    // repainting this page forever.
+    if (identical(oldWidget.conversation, widget.conversation)) return;
+    // A conversation the provider already disposed has no listeners left to
+    // take off; asking a disposed ChangeNotifier to forget one is a use-after-
+    // dispose of the very object the replacement is meant to leave behind.
+    if (!oldWidget.conversation.isDisposed) {
+      oldWidget.conversation.removeListener(_onConversationChanged);
+    }
+    // A replacement instance is normally live, but wiring a listener to one
+    // that was disposed in the same tick would throw before the page could
+    // repaint; the next rebuild attaches it again.
+    if (!widget.conversation.isDisposed) {
+      widget.conversation.addListener(_onConversationChanged);
+    }
+    // The draft belongs to the conversation, so show the new instance's draft.
+    _controller.text = widget.conversation.draft;
   }
 
   @override
   void dispose() {
-    _conversation.removeListener(_onConversationChanged);
+    if (!_conversation.isDisposed) {
+      _conversation.removeListener(_onConversationChanged);
+    }
     _controller.dispose();
     super.dispose();
   }
 
-  void _saveDraft() => _conversation.draft = _controller.text;
+  // Remember what the user is typing. The bound lives on the state, not at this
+  // call site: [ChatConversation.draft]'s setter clips, so a pasted wall of
+  // text cannot stay reachable for as long the signed-in session lives no matter
+  // which writer produced it.
+  void _saveDraft() {
+    if (_conversation.isDisposed) return;
+    _conversation.draft = _controller.text;
+  }
 
   void _onConversationChanged() {
     if (mounted) setState(() {});
+  }
+
+  /// Whether a reply that lands now still belongs to the conversation its
+  /// request was sent against.
+  //
+  /// Three ways it can stop belonging: [ChatConversation.reset] (the refresh
+  /// button, or a logout) bumps [ChatConversation.revision]; an invalidated
+  /// provider replaces the instance outright; and a page whose tab is off screen
+  /// keeps holding an instance the provider has already disposed. Either way the
+  /// answer must be dropped, not written back into a chat the user cleared or
+  /// that no longer exists.
+  bool _isCurrent(ChatConversation conversation, int revision) =>
+      identical(conversation, _conversation) &&
+      !conversation.isDisposed &&
+      conversation.revision == revision;
+
+  /// A log line for a failed chat request, without the request itself.
+  //
+  /// A DioException's text carries the request URL and, for some failure kinds,
+  /// its headers — the Bearer token belongs neither in the app's logs nor in a
+  /// bug report attached to them.
+  String _errorSummary(Object error) {
+    if (error is DioException) {
+      final status = error.response?.statusCode;
+      final suffix = status == null ? '' : ', HTTP $status';
+      return 'chat request failed (${error.type.name}$suffix)';
+    }
+    return error.toString();
   }
 
   /// Generate a cryptographically secure random UUID v4 string.
@@ -100,18 +181,47 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
   Future<void> _sendMessage() async {
     if (!mounted) return;
 
-    final text = _controller.text.trim();
-    if (text.isEmpty) return;
+    final typed = _controller.text.trim();
+    if (typed.isEmpty) return;
+
+    // What the app transmits is what the app keeps: one bound on a turn of the
+    // chat, applied before the request is built. The input field itself places
+    // no limit on typing or pasting, and the service's own budget is far below
+    // this limit, so a payload larger than this is not a search the user could
+    // get an answer to — it would spend a credit and be truncated by the model.
+    // Rejecting it out loud would need a new localized string (and with it the
+    // Arabic twin this model must not author), so the text is cut at the same
+    // bound the draft and the history use.
+    final text = clip(typed, maxChatContentLength);
 
     // Captured up front: the conversation outlives this page, so a reply that
     // arrives after the user switched tabs is still recorded there; only the
     // snackbars need a mounted page.
     final conversation = _conversation;
+    final revision = conversation.revision;
 
-    // Generate or reuse session ID
-    final sessionId = conversation.sessionId ??= _generateSessionId();
+    // A disposed conversation (logout, demo-mode toggle) must not receive a
+    // request at all. `sessionId`'s setter silently drops writes once the
+    // instance is disposed, so a `conversation.sessionId ??= generate()` here
+    // would still hand a fresh id to the service and burn credits on a chat
+    // nobody is looking at. Read the id, generate one only if the conversation
+    // is still live, and write it back through the guarded setter.
+    if (conversation.isDisposed) return;
+    // Only one send in flight per conversation. The send button is disabled
+    // while [isSending], but the input field's `onSubmitted` is not: pressing
+    // Enter twice in the same frame, or holding it, would spend a second
+    // credit on the same session and interleave two answers into one chat.
+    if (conversation.isSending) return;
+    var sessionId = conversation.sessionId;
+    if (sessionId == null) {
+      sessionId = _generateSessionId();
+      conversation.sessionId = sessionId;
+    }
 
-    // Add user message optimistically — use UUID to avoid collisions
+    // Add user message optimistically — use UUID to avoid collisions. `text`
+    // is already cut at the turn bound above, so the history and the request
+    // carry the same characters: "keep the last 200 turns" is only a memory
+    // bound while a single turn is bounded too.
     conversation.addMessage(
       ChatMessageModel(
         id: _generateUuid(),
@@ -131,15 +241,26 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
         message: text,
       );
 
-      // Adopt the server's session ID — the server may create a new session
-      // if the client-generated ID didn't match an existing one.
-      conversation.sessionId = response.sessionId;
+      if (!_isCurrent(conversation, revision)) {
+        // The user reset the chat (or logged out) while this was in flight.
+        debugPrint('Dropping a chat reply that arrived after its conversation');
+        return;
+      }
+
+      // Adopt the server's session id only when it has the shape of one: the
+      // value arrives from a remote reply and is reused as a path segment later,
+      // so a poisoned id is dropped here instead of failing deeper in the stack.
+      if (ChatbotRepository.isSessionId(response.sessionId)) {
+        conversation.sessionId = response.sessionId;
+      } else {
+        debugPrint('Ignoring a chatbot session id that is not a UUID');
+      }
 
       // Add bot message — use UUID to avoid collisions
       conversation.addMessage(
         ChatMessageModel(
           id: _generateUuid(),
-          sessionId: response.sessionId,
+          sessionId: conversation.sessionId ?? '',
           role: 'bot',
           content: response.message,
           createdAt: DateTime.now(),
@@ -150,11 +271,25 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
       conversation.isSending = false;
     } catch (e) {
       // Log the detailed error for debugging, show generic message to user
-      debugPrint('Chatbot error: $e');
+      debugPrint('Chatbot error: ${_errorSummary(e)}');
+
+      if (!_isCurrent(conversation, revision)) return;
       conversation.isSending = false;
 
       if (e is UnauthorizedException) {
-        // Token expired or invalid — prompt re-authentication.
+        // Token expired or invalid — prompt re-authentication, in the chat as
+        // well as in a toast: a tab that is off screen now is reopened to a
+        // conversation whose reply otherwise vanished without a trace. Only the
+        // toast needs a mounted page.
+        conversation.addMessage(
+          ChatMessageModel(
+            id: _generateUuid(),
+            sessionId: conversation.sessionId ?? '',
+            role: 'bot',
+            content: e.message,
+            createdAt: DateTime.now(),
+          ),
+        );
         if (!mounted) return;
         ScaffoldMessenger.of(
           context,
@@ -182,12 +317,39 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
   Future<void> addToFeed(SearchResultModel result) async {
     if (!mounted) return;
 
-    final conversation = _conversation;
+    // The card disables the button when a result's url is not an openable web
+    // address, but this is the call that asks the service to create a tracker,
+    // so it re-checks: the url was scraped out of a third-party page, and the
+    // UI guard is defence in depth, not the only one.
+    if (!result.isLaunchable) {
+      debugPrint('Refusing to track a url that is not an http/https address');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            // Titles come from scraped pages and can be arbitrarily long or
+            // carry newlines; the success toast below already goes through
+            // [toastTitle] for the same reason, so the refusal must not be
+            // the one path that dumps a raw page title into a snackbar.
+            AppLocalizations.of(context).unableToOpen(toastTitle(result.title)),
+          ),
+        ),
+      );
+      return;
+    }
 
-    // Defensive null guard: session ID must be set before adding to feed
+    final conversation = _conversation;
+    final revision = conversation.revision;
+
+    // A disposed conversation must not receive a tracker request either: its
+    // session id is dead and the user is looking at another account's chat.
+    if (conversation.isDisposed) return;
+
+    // A session must exist for the tracker to inherit it. The id is checked
+    // for shape as well as presence: an empty or poisoned value would otherwise
+    // travel to the service and come back as a confusing failure.
     final sessionId = conversation.sessionId;
-    if (sessionId == null) {
-      debugPrint('addToFeed called without a session ID');
+    if (sessionId == null || !ChatbotRepository.isSessionId(sessionId)) {
+      debugPrint('addToFeed called without a usable session id');
       return;
     }
 
@@ -199,31 +361,47 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
         productUrl: result.url,
       );
 
+      if (!_isCurrent(conversation, revision)) return;
+
       if (!mounted) return;
 
-      // The chatbot answers 200 even when the tracker could not be created;
-      // it only echoes the product back on success. Otherwise show its
-      // explanation (e.g. "couldn't add", "no credits").
-      if (response.searchResults.isEmpty) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(response.message)));
+      // The chatbot answers 200 whether or not a tracker was created; tracker_created
+      // is the answer, so the service's explanation ("couldn't add", "no
+      // results") is shown instead of a success toast. A blank explanation would
+      // be a toast that says nothing, so the generic failure line is used.
+      if (!response.trackerCreated) {
+        // Remote text, like a scraped title: the service explains the failure,
+        // but its explanation is not a length limit. [toastMessage] folds it to
+        // one bounded line so a page-sized answer cannot become the toast.
+        final reason = toastMessage(response.message);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(reason.isEmpty ? addTrackerFailedText : reason),
+          ),
+        );
         return;
       }
 
+      // Localized success text plus the product the user tapped: which result
+      // became a tracker has to be visible when the list carries several.
+      final l10n = AppLocalizations.of(context);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            'Tracker created for "${result.title}". You will be notified on price changes.',
-          ),
+          content: Text('${l10n.trackerCreated}\n${toastTitle(result.title)}'),
         ),
       );
     } catch (e) {
+      if (!_isCurrent(conversation, revision)) return;
       if (!mounted) return;
 
-      // Log the detailed error for debugging
-      debugPrint('Add to feed error: $e');
+      // Log a summary that carries no request details
+      debugPrint('Add to feed error: ${_errorSummary(e)}');
 
+      // Deliberately still the exception's own sentence: the app has no
+      // "session expired" key in either locale, and inventing the English one
+      // without its Arabic twin is what the i18n rule forbids. The text is
+      // app-authored (not server-supplied), so nothing internal leaks; what is
+      // missing is a translated key, which has to arrive with its Arabic value.
       if (e is UnauthorizedException) {
         ScaffoldMessenger.of(
           context,
@@ -234,16 +412,24 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
       // Surface insufficient-credits errors specifically so the user
       // knows to purchase credits or check their balance.
       if (e is InsufficientCreditsException) {
+        // The exception carries app-authored English copy, which cannot go on
+        // screen under this project's i18n rule; [reachedLimitBody] says the
+        // same thing in both locales and is already translated. The exception's
+        // own message stays in the log line above.
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(AppLocalizations.of(context).reachedLimitBody),
+          ),
+        );
+      } else {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text(e.toString())));
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to add tracker. Please try again.')),
-        );
+        ).showSnackBar(SnackBar(content: Text(addTrackerFailedText)));
       }
     } finally {
-      conversation.isSending = false;
+      if (_isCurrent(conversation, revision)) {
+        conversation.isSending = false;
+      }
     }
   }
 
@@ -253,6 +439,13 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
     final messages = _conversation.messages;
     final searchResults = _conversation.searchResults;
     final isSending = _conversation.isSending;
+    // The tracker a result creates inherits the current session, so the button
+    // is only offered once a usable session id exists. Without this the tap
+    // would be silently dropped deeper in [addToFeed], which looks like a dead
+    // button rather than a disabled one.
+    final canAddToFeed =
+        !isSending &&
+        ChatbotRepository.isSessionId(_conversation.sessionId ?? '');
 
     return Scaffold(
       appBar: AppBar(
@@ -327,7 +520,7 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
                           return SearchResultCard(
                             result: result,
                             onAddToFeed: () => addToFeed(result),
-                            isEnabled: !isSending,
+                            isEnabled: canAddToFeed,
                           );
                         },
                       ),
@@ -356,7 +549,11 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
                         vertical: 12,
                       ),
                     ),
-                    onSubmitted: (_) => _sendMessage(),
+                    // The send button is disabled while a reply is in flight; the input
+                    // field submit path has to be gated on the same term, or a keyboard
+                    // Enter during that window spends another credit on the same session
+                    // and interleaves two answers into one chat.
+                    onSubmitted: isSending ? null : (_) => _sendMessage(),
                   ),
                 ),
                 const SizedBox(width: 8),

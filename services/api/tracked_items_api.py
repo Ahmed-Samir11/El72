@@ -33,6 +33,7 @@ from services.api.tracked_items_models import (
     TrackedItem,
     TrackedItemStore,
 )
+from services.common.url_policy import fetch_block_reason
 
 logger = logging.getLogger(__name__)
 
@@ -921,7 +922,22 @@ async def create_tracked_item_from_url(
 
     Derives a canonical product id and store mapping from the URL so the
     frontend can create trackers with just a link (and optional target price).
+
+    The URL is checked before anything is written: this endpoint later visits
+    it server-side, so an unchecked value turns the API into a proxy for
+    whatever host the caller names. The rule lives in [fetch_block_reason];
+    the Flutter app's own guard is UI convenience, not this boundary.
     """
+    block = fetch_block_reason(payload.url)
+    if block:
+        # Name the class of problem, never the url itself: the input is
+        # attacker-controlled and lands in the log an operator reads.
+        logger.warning(f"Refusing an unfetchable tracker url ({block})")
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Only public http/https product pages can be tracked",
+        )
+
     store_id, sku = _store_and_sku_from_url(payload.url)
     canonical_id = f"{store_id}:{sku}"
 

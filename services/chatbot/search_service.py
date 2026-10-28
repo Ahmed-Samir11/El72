@@ -322,7 +322,8 @@ def _parse_english_intent(message: str) -> Dict[str, Any]:
     # monitors" -> "2k monitors"). Mirrors the Arabic filler stripping in
     # parse_arabic_intent.
     query = re.sub(
-        r"^(?:show me all|show me|find me|find|i want to|i want|looking for|search for|search)\b\s*",
+        r"^(?:show me all|show me|find me|find|i want to|i want|"
+        r"looking for|search for|search)\b\s*",
         "",
         query,
         flags=re.IGNORECASE,
@@ -410,7 +411,8 @@ def parse_intent(message: str) -> Dict[str, Any]:
 # LLM-Based Intent Extraction
 # =============================================================================
 
-INTENT_EXTRACTION_PROMPT = """You are a product search assistant for an Egyptian e-commerce platform.
+INTENT_EXTRACTION_PROMPT = """
+You are a product search assistant for an Egyptian e-commerce platform.
 
 Given the user's message (which may be in Egyptian Arabic, English, or a mix), extract:
 1. "query": The product search query in ENGLISH (translate if needed), as a
@@ -424,14 +426,20 @@ Given the user's message (which may be in Egyptian Arabic, English, or a mix), e
    "over"/"more than"/"أكتر من" sets only min_price.
 4. "language": "ar" if the message is primarily Arabic, "en" if primarily English.
 
-Respond with ONLY a JSON object: {"query": "...", "min_price": null, "max_price": 12000, "language": "ar"}
+Respond with ONLY a JSON object: {"query": "...", "min_price": null, "max_price":
+  12000, "language": "ar"}
 
 Examples:
-- "عايز شاشات 2k بسعر أقل من 12 ألف" → {"query": "2K monitor", "min_price": null, "max_price": 12000, "language": "ar"}
-- "gaming laptop under 50000" → {"query": "gaming laptop", "min_price": null, "max_price": 50000, "language": "en"}
-- "laptops in the range 40k egp to 70k egp" → {"query": "laptop", "min_price": 40000, "max_price": 70000, "language": "en"}
-- "Samsung 27 inch 2K QHD" → {"query": "Samsung 27 inch 2K QHD monitor", "min_price": null, "max_price": null, "language": "en"}
-- "لابتوب جيمينج من 30 لـ 45 ألف" → {"query": "gaming laptop", "min_price": 30000, "max_price": 45000, "language": "ar"}
+- "عايز شاشات 2k بسعر أقل من 12 ألف" →
+  {"query": "2K monitor", "min_price": null, "max_price": 12000, "language": "ar"}
+- "gaming laptop under 50000" →
+  {"query": "gaming laptop", "min_price": null, "max_price": 50000, "language": "en"}
+- "laptops in the range 40k egp to 70k egp" →
+  {"query": "laptop", "min_price": 40000, "max_price": 70000, "language": "en"}
+- "Samsung 27 inch 2K QHD" → {"query": "Samsung 27 inch 2K QHD monitor", "min_price":
+  null, "max_price": null, "language": "en"}
+- "لابتوب جيمينج من 30 لـ 45 ألف" →
+  {"query": "gaming laptop", "min_price": 30000, "max_price": 45000, "language": "ar"}
 """
 
 

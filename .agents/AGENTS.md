@@ -94,7 +94,25 @@ services/
 - **Routing**: GoRouter (`go_router`)
 - **HTTP client**: Dio
 - **Font**: IBM Plex Sans (bundled in assets)
+- **Localization**: every user-facing string lives in `AppLocalizations`
+  (`flutter-app/lib/l10n/app_en.arb` + `app_ar.arb`); no hardcoded English in
+  widgets. See Skill 10 in `.agents/skills/el72-dev/SKILL.md`.
 - **Architecture**: `lib/src/` organized into `core/`, `data/`, `routing/`, `services/`, `ui/`
+
+### Arabic UI strings — model-dependent (hard rule)
+
+The Arabic locale is authored by a native speaker, and
+`flutter-app/test/l10n_coverage_test.dart` fails if an English key lacks a
+non-empty Arabic twin. Check the active model with `echo $PI_MODEL`: when it
+is `qwen3.8-flash-next-coder-iq1_m`, **do not author, translate or retype
+Arabic** — that model corrupts Arabic script and invents wrong wording.
+
+- Reuse a key that is already translated in both locales.
+- If a new string is genuinely required, ask the user for the Arabic value;
+  commit the English and Arabic keys together, never English alone.
+- Never transcribe existing Arabic from recall. Read it back as escapes
+  (`json.load` the `.arb` file, `.encode('unicode_escape')`) and copy those,
+  so tests and docs quote it exactly.
 
 ### Commit Messages
 
@@ -215,3 +233,5 @@ api (port 8000) → analyzer (port 8001) → scraper-monitor → scraper → not
 - ❌ Create new database tables without updating the appropriate canonical schema under `infra/sql/schema/`
 - ❌ Use synchronous I/O in async services
 - ❌ Run `pip install` without user confirmation
+- ❌ Write or retype Arabic UI strings while `PI_MODEL=qwen3.8-flash-next-coder-iq1_m` — reuse an already-translated key or ask the user for the Arabic
+- ❌ Ship a hardcoded English string in a Flutter widget when a locale key exists for it

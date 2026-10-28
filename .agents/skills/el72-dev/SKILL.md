@@ -375,3 +375,39 @@ engine = create_engine("sqlite:///./test.db")
 ### Key Config
 - [pytest.ini](file:///e:/repos/El72/pytest.ini) — pytest configuration
 - [pyproject.toml](file:///e:/repos/El72/pyproject.toml) — Black/Ruff/isort settings
+
+---
+
+## Skill 10: Localize a UI String (i18n)
+
+**When to use**: any new user-facing string in `flutter-app`, or when a widget
+is found to carry a hardcoded English string.
+
+### Hard rule — Arabic depends on the active model
+
+`lib/l10n/app_ar.arb` is written by a native speaker, and
+`test/l10n_coverage_test.dart` fails when an English key has no non-empty
+Arabic twin, when the Arabic is a copy of the English, or when it contains no
+Arabic script. Check the model first: `echo $PI_MODEL`. While it is
+`qwen3.8-flash-next-coder-iq1_m`, **do not author, translate or retype Arabic**
+— that model corrupts Arabic script and invents wrong wording.
+
+- Prefer an existing key already translated in both locales.
+- If a new string is genuinely needed, ask the user for the Arabic value and
+  land both locales in the same commit; never commit English alone.
+- Never transcribe existing Arabic from recall. Read it back as escapes and
+  copy those, e.g.
+
+```bash
+python -c "import json,io; d=json.load(io.open('flutter-app/lib/l10n/app_ar.arb', encoding='utf-8')); print(d['addToFeed'].encode('unicode_escape'))"
+```
+
+### Steps
+1. Add the key to `flutter-app/lib/l10n/app_en.arb`, with a `"@key"` block
+   carrying a `description`, plus `placeholders` when it interpolates values.
+2. Add the same key to `flutter-app/lib/l10n/app_ar.arb` with identical
+   placeholder names (the coverage test compares them).
+3. Use it in the widget: `AppLocalizations.of(context).keyName(value)`.
+4. `cd flutter-app && flutter test test/l10n_coverage_test.dart` — must stay
+   green, along with `flutter analyze`.
+

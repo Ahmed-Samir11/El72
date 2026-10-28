@@ -67,8 +67,13 @@ Tracker created for "LG 27 Inch 2K QHD IPS Monitor". You will be notified on pri
 
 ## Backend URLs (for debugging)
 
-- API: `http://192.168.100.6:8001`
-- Chatbot: `http://192.168.100.6:8003`
+Substitute your own development host for `<dev-host>`; the port numbers are the
+service exposures from `docker-compose.yml`, which is the authoritative list.
+A fixed LAN address does not belong in the repository: it changes per network,
+and it advertises which host on this network serves the API.
+
+- API: `http://<dev-host>:8001`
+- Chatbot: `http://<dev-host>:8003`
 - Health: `curl http://localhost:8003/health`
 
 ## Credits

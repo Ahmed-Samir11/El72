@@ -881,3 +881,47 @@ def test_title_from_amazon_product_title_span():
 def test_title_falls_back_to_title_tag_without_site_suffix():
     html = "<title>\n  Logitech G102 Mouse : Amazon.eg </title>"
     assert _extract_title_from_markup(html) == "Logitech G102 Mouse"
+
+
+def test_the_title_fallback_refuses_a_challenge_wall_headline():
+    # The fallback only runs where JSON-LD and og:title are absent, which is
+    # exactly where a bot wall sits in <title>. Storing it as the product name
+    # would put "Just a moment..." in the user's feed.
+    assert _extract_title_from_markup("<title>Just a moment...</title>") is None
+    assert _extract_title_from_markup("<title>Access Denied</title>") is None
+    assert _extract_title_from_markup("<title>Sorry, page not found</title>") is None
+    assert (
+        _extract_title_from_markup(
+            "<title>Enable Javascript and cookies to continue</title>"
+        )
+        is None
+    )
+
+
+def test_the_title_fallback_refuses_the_bare_site_name():
+    for site in ("Amazon.eg", "Noon.com", "2B.com.eg"):
+        html = f"<title>{site}</title>"
+        assert _extract_title_from_markup(html) is None, site
+
+
+def test_the_title_fallback_refuses_a_placeholder_or_an_overlong_blob():
+    assert _extract_title_from_markup("<title>Loading\u2026</title>") is None
+    assert _extract_title_from_markup("<title>&copy;</title>") is None
+    assert _extract_title_from_markup(f"<title>{'Samsung ' * 60}</title>") is None
+
+
+def test_the_title_fallback_still_takes_a_real_product_name():
+    html = '<title>\n  Samsung 32" Smart TV 55 inch - Amazon.eg \n</title>'
+    assert _extract_title_from_markup(html) == 'Samsung 32" Smart TV 55 inch'
+
+
+def test_a_junk_og_title_does_not_become_the_product_name():
+    html = (
+        '<html><head>'
+        '<meta property="og:title" content="Just a moment">'
+        '<meta property="og:image" content="https://x.com/i.png">'
+        "</head><body><div class='price'>1,234.00 EGP</div></body></html>"
+    )
+    _price, _currency, title, image = _extract_from_html(html, "https://x.com/p")
+    assert title is None
+    assert image == "https://x.com/i.png"

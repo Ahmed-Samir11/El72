@@ -1,5 +1,7 @@
-/// Backend fetch-status values for a tracker's store mapping(s), mirroring
-/// the Python constants in `services/api/price_fetcher.py` (FETCH_*).
+import '../../core/format/toast_title.dart';
+
+/// Backend fetch-status values for a tracker's store mapping(s), mirroring the
+/// Python constants in `services/api/price_fetcher.py` (FETCH_*).
 /// `TrackedItem.fetchStatus` is `null` when never fetched / in flight;
 /// compare against these constants instead of raw string literals so the
 /// allowed states live in one place.
@@ -20,6 +22,16 @@ abstract final class FetchStatus {
   static bool isRetryable(String? status) =>
       status == blocked || status == fetchFailed;
 }
+
+/// Upper bound on a scraped product name held by a tracker.
+//
+///  `title` is written by the scraper out of a third-party page, and the card
+///  renders it. The same reasoning as the chat models: a bound applied where
+///  the text enters the app means no later screen has to remember it, and a
+///  hostile or runaway page cannot keep a megabyte of text alive for the whole
+///  dashboard session. Far above any real product name, so nothing legitimate
+///  is cut.
+const int maxTrackedItemTitleLength = 500;
 
 /// Model for a tracked item as returned by `GET /tracked-items`.
 ///
@@ -81,9 +93,19 @@ class TrackedItem {
   /// label derived from the canonical id without its `store:` prefix (the
   /// store is not part of the product name, and is `unknown` for stores the
   /// backend does not recognise).
+  //
+  /// A name is what the card shows, so an id that leaves nothing behind once
+  /// the prefix is cut (`"amazon_eg:"`, or a slug that is only separators like
+  /// `"amazon_eg:---"`) falls back to the whole id instead of an empty string:
+  /// a card with no name at all is worse than one showing its raw identifier,
+  /// and inventing a word like "Unknown" would be a new i18n key that needs
+  /// its Arabic twin authored.
   String get displayName {
-    final scraped = title?.trim();
-    if (scraped != null && scraped.isNotEmpty) return scraped;
+    // The scraped title is folded before it is used as a label: a store page
+    // can carry a title that its markup wrapped across lines, and the card lays
+    // this out on one line.
+    final scraped = foldWhitespace(title ?? '');
+    if (scraped.isNotEmpty) return scraped;
     final colon = canonicalProductId.indexOf(':');
     final slug = colon >= 0
         ? canonicalProductId.substring(colon + 1)
@@ -93,7 +115,9 @@ class TrackedItem {
         .split(' ')
         .where((w) => w.isNotEmpty)
         .map((w) => w[0].toUpperCase() + w.substring(1));
-    return words.join(' ').trim();
+    final label = words.join(' ').trim();
+    if (label.isEmpty) return canonicalProductId;
+    return label;
   }
 
   factory TrackedItem.fromJson(Map<String, dynamic> json) {
@@ -101,7 +125,9 @@ class TrackedItem {
     return TrackedItem(
       id: (json['id'] as num?)?.toInt() ?? 0,
       canonicalProductId: json['canonical_product_id'] as String? ?? '',
-      title: json['title'] is String ? json['title'] as String : null,
+      title: json['title'] is String
+          ? clip(json['title'] as String, maxTrackedItemTitleLength)
+          : null,
       targetPrice: (json['target_price'] as num?)?.toDouble(),
       isActive: json['is_active'] as bool? ?? true,
       storeCount: (json['store_count'] as num?)?.toInt() ?? 0,

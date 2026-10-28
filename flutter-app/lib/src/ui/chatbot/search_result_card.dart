@@ -3,6 +3,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../../l10n/app_localizations.dart';
 import '../../core/format/price_format.dart';
+import '../../core/format/toast_title.dart';
 import '../../core/styles/app_colors.dart';
 import '../../data/models/chat_message_model.dart';
 import '../widgets/product_image.dart';
@@ -30,18 +31,45 @@ class SearchResultCard extends StatelessWidget {
     final colorScheme = Theme.of(context).colorScheme;
     final locale = Localizations.localeOf(context);
 
+    void unableToOpen(ScaffoldMessengerState messenger) {
+      // The title is scraped, so it can be a paragraph with newlines. The
+      // chat page's own toasts already bound it; the card must not be the
+      // path that leaves a hostile title unbounded.
+      messenger.showSnackBar(
+        SnackBar(content: Text(l10n.unableToOpen(toastTitle(result.title)))),
+      );
+    }
+
     return Card(
       margin: const EdgeInsets.symmetric(vertical: 6),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
         onTap: () async {
-          final uri = Uri.tryParse(result.url);
-          if (uri == null || !await launchUrl(uri)) {
-            if (!context.mounted) return;
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text(l10n.unableToOpen(result.title))),
-            );
+          // Taken before any await: if the user navigates away while the browser
+          // is starting, this context is no longer in the tree and looking the
+          // messenger up again would throw; the instance taken now is still the
+          // live one.
+          final messenger = ScaffoldMessenger.of(context);
+          // The url was scraped out of a third-party page, so it may be empty,
+          // malformed or not a web address at all (`file:`, `data:`, some app's
+          // custom scheme). Only absolute http/https may leave the app; anything
+          // else is reported instead of being handed to another program.
+          if (!result.isLaunchable) {
+            unableToOpen(messenger);
+            return;
+          }
+          final uri = Uri.parse(result.url);
+          try {
+            if (!await launchUrl(uri) && context.mounted) {
+              unableToOpen(messenger);
+            }
+          } catch (error) {
+            debugPrint('Could not open product page: $error');
+            // The await above can outlive the card; a snackbar aimed at a
+            // disposed subtree is not worth the risk, so the message is only
+            // shown while this context is still in the tree.
+            if (context.mounted) unableToOpen(messenger);
           }
         },
         child: Padding(
@@ -83,7 +111,11 @@ class SearchResultCard extends StatelessWidget {
               ),
               const SizedBox(width: 8),
               FilledButton(
-                onPressed: isEnabled ? onAddToFeed : null,
+                // The tracker is created from this url, so an unopenable url
+                // cannot be tracked either — the button is disabled with it.
+                onPressed: (isEnabled && result.isLaunchable)
+                    ? onAddToFeed
+                    : null,
                 child: Text(l10n.addToFeed),
               ),
             ],

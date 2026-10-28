@@ -327,6 +327,66 @@ def test_create_tracked_item_from_url(client, monkeypatch):
     assert data["price_status"] == "fetching"
     assert "id" in data
 
+# The API visits whatever url it is given, so a client that names an internal
+# host would get the server to fetch it. These are the shapes used to reach
+# those hosts; each must end in a refusal before anything is written.
+SSRF_URLS = [
+    "http://127.0.0.1:8000/tracked-items",
+    "http://localhost/latest",
+    "http://169.254.169.254/latest/meta-data/iam/security-credentials/",
+    "http://169.254.170.189/latest/user-data",
+    "http://metadata.google.internal/computeMetadata/v1/",
+    "http://metadata.tencentyun.com/latest/meta-data/",
+    "http://10.0.0.5/internal",
+    "http://172.16.0.1/internal",
+    "http://192.168.1.1:5000/internal",
+    "http://2130746113/",
+    "http://127.0.0.1.nip.io/",
+    "https://",
+    "http://example.com/a b",
+]
+
+# Shapes the url model itself already rejects: not an http/https address at all.
+# Kept alongside the policy cases so both layers of the check stay visible.
+NON_HTTP_URLS = [
+    "file:///etc/passwd",
+    "data:text/html,hi",
+    "ftp://files.example.com/pub",
+    "/dp/123",
+    "javascript:alert(1)",
+    "",
+]
+
+
+@pytest.mark.parametrize("url", SSRF_URLS, ids=SSRF_URLS)
+def test_from_url_refuses_a_target_the_server_may_not_visit(client, url):
+    api, session, user = client
+
+    resp = api.post("/tracked-items/from-url", json={"url": url})
+
+    assert resp.status_code == 422, resp.text
+    assert (
+        resp.json()["detail"] == "Only public http/https product pages can be tracked"
+    )
+    # Nothing was written: the row insert (and the credit the tracker would
+    # have charged) sit behind this check, so a refusal leaves no trace.
+    rows = session.query(TrackedItem).filter(TrackedItem.user_id == user.id)
+    assert rows.count() == 0
+
+
+@pytest.mark.parametrize("url", NON_HTTP_URLS, ids=NON_HTTP_URLS)
+def test_from_url_still_rejects_a_url_that_is_not_a_web_address(client, url):
+    api, session, user = client
+
+    resp = api.post("/tracked-items/from-url", json={"url": url})
+
+    # The model validator refuses before the handler runs, and its detail is
+    # FastAPI's validation-error list, so only the status and the absence of a
+    # row are pinned here.
+    assert resp.status_code == 422, resp.text
+    rows = session.query(TrackedItem).filter(TrackedItem.user_id == user.id)
+    assert rows.count() == 0
+
 
 def test_persist_fetched_price_retry_logic(db_session, monkeypatch):
     session, user = db_session

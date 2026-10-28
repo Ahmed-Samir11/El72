@@ -342,6 +342,70 @@ def test_add_to_feed_with_url(
     assert response.status_code == 200
     data = response.json()
     assert "added" in data["message"].lower() or "tracker" in data["message"].lower()
+    # The app announces success from this flag alone.
+    assert data["tracker_created"] is True
+
+
+def test_add_to_feed_denies_a_tracker_when_the_api_refused(
+    client, override_db, override_auth, db_session, auth_headers
+):
+    """A 200 from the chatbot is not proof a tracker exists.
+
+    The API call can fail for any reason while the chatbot still answers politely
+    with the failure text, and the app decides what toast to show from
+    ``tracker_created``. If that flag were derived from the echoed search
+    result, a refused creation would be reported as a success and the user's
+    only remaining credit would look spent.
+    """
+    import uuid as _uuid
+
+    import httpx
+
+    session_id = str(_uuid.uuid4())
+    db_session.execute(
+        text("INSERT INTO chat_sessions (id, user_id) VALUES (:id, :user_id)"),
+        {"id": session_id, "user_id": 1},
+    )
+    db_session.commit()
+
+    class MockResponse:
+        status_code = 500
+
+        def json(self):
+            return {"detail": "store fetch exploded"}
+
+        def raise_for_status(self):
+            raise httpx.HTTPStatusError(
+                "500 Server Error",
+                request=httpx.Request("POST", "http://api.test/tracked-items/from-url"),
+                response=httpx.Response(status_code=500),
+            )
+
+    original_post = httpx.AsyncClient.post
+
+    async def mock_post(self, url, **kwargs):
+        if "/tracked-items/from-url" in url:
+            return MockResponse()
+        return original_post(self, url, **kwargs)
+
+    httpx.AsyncClient.post = mock_post
+    try:
+        response = client.post(
+            "/chatbot/add-to-feed",
+            json={
+                "session_id": session_id,
+                "product_url": "https://example.com/product",
+            },
+            headers=auth_headers,
+        )
+    finally:
+        httpx.AsyncClient.post = original_post
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["tracker_created"] is False
+    assert data["search_results"] == []
+    assert "tracker_created" in data, "the flag must always be present"
 
 
 def test_add_to_feed_insufficient_credits(
@@ -435,6 +499,7 @@ def test_add_to_feed_no_results(
     assert response.status_code == 200
     data = response.json()
     assert "no search results" in data["message"].lower()
+    assert data["tracker_created"] is False
 
 
 # ---------------------------------------------------------------------------

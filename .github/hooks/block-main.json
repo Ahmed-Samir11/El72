@@ -1,12 +1,13 @@
 {
+  "version": 1,
   "hooks": {
-    "PreToolUse": [
+    "preToolUse": [
       {
-        "matcher": "Bash",
         "type": "command",
-        "command": "${CLAUDE_PROJECT_DIR:-.}/scripts/check-branch.sh",
-        "timeout": 10
+        "command": "python scripts/check_branch.py",
+        "timeoutSec": 15
       }
     ]
   }
 }
+

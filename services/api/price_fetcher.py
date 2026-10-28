@@ -665,6 +665,10 @@ def _extract_from_html(
     # Title fallbacks (JSON-LD takes precedence).
     if title is None:
         title = _extract_meta(html, "og:title")
+        if not _is_plausible_title(title or ""):
+            # An og:title can be the site name or a wall headline too; treat it
+            # as absent and fall through to the markup rules.
+            title = None
     if title is None:
         title = _extract_title_from_markup(html)
 
@@ -700,9 +704,50 @@ def _extract_title_from_markup(html: str) -> Optional[str]:
         text = html_lib.unescape(re.sub(r"<[^>]+>", "", m.group(1)))
         text = re.sub(r"\s+", " ", text).strip()
         text = re.sub(r"\s*[:|\-–]\s*Amazon\.[a-z.]+\s*$", "", text, flags=re.I)
-        if text:
+        if _is_plausible_title(text):
             return text
     return None
+
+
+# The markup fallback only runs on pages with no JSON-LD and no og:title, which
+# is exactly where a challenge wall, a "loading" placeholder or the bare site
+# name sits in <title>. A product name is a few words; these are not.
+_TITLE_MAX_CHARS = 300
+
+# Phrases from challenge walls, placeholders and error pages. Kept to the
+# English wording those stores emit; page-level blocking is already caught by
+# _looks_like_bot_wall, so this list only rejects titles that got through it.
+_TITLE_JUNK_PHRASES = (
+    "just a moment",
+    "enable javascript",
+    "you must enable",
+    "access denied",
+    "forbidden",
+    "page not found",
+    "not found",
+    "captcha",
+    "are you trying to browse",
+    "loading",
+    "sign in",
+)
+
+
+def _is_plausible_title(text: str) -> bool:
+    """Whether ``<title>`` text is a product name rather than page furniture."""
+    if not 3 <= len(text) <= _TITLE_MAX_CHARS:
+        return False
+    if not re.search(r"[0-9a-z]", text, re.IGNORECASE):
+        return False
+    lowered = text.lower()
+    for junk in _TITLE_JUNK_PHRASES:
+        if junk in lowered:
+            return False
+    # A single dot-separated token is the site, not the product: "Amazon.eg",
+    # "Noon.com", "2B.com.eg". Such a title is stored as the tracker's name and
+    # shows up in the UI as an unlabeled link.
+    if " " not in text and re.fullmatch(r"[a-z0-9.+-]+(\.[a-z]{2,})+", lowered):
+        return False
+    return True
 
 
 def _extract_meta(html: str, prop: str) -> Optional[str]:

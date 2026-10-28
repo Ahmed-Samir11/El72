@@ -93,6 +93,12 @@ class ChatResponse(BaseModel):
     language: str = "en"
     store_status: List[Dict[str, Any]] = Field(default_factory=list)
 
+    # Only add-to-feed can create a tracker. The client must not guess success
+    # from a non-empty search_results list: the ordinary message path also returns
+    # results, and a failed add can still echo one. False means "nothing was
+    # created", so the UI shows the explanation instead of a success toast.
+    tracker_created: bool = False
+
 
 class AddToFeedRequest(BaseModel):
     """Request to add a search result to the user's feed (tracked items).

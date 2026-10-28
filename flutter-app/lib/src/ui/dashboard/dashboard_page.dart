@@ -431,6 +431,12 @@ class _ProfileTab extends ConsumerWidget {
             ref.invalidate(trackedItemsProvider);
             ref.invalidate(liveDealsProvider);
             ref.invalidate(platformStatsProvider);
+            // Same contract as the demo-mode toggle and the login/register
+            // pages: `chatConversationProvider`'s doc says to invalidate it on
+            // logout so the next account starts with an empty chat. Without
+            // this, the previous user's messages and search results survive
+            // into the signed-out welcome screen.
+            ref.invalidate(chatConversationProvider);
             if (context.mounted) {
               Navigator.of(
                 context,
