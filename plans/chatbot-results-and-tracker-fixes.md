@@ -322,7 +322,23 @@ The loop's shape is worth noting for the maintainer: rounds 10-12 each truncated
 that earlier rounds answered with tests. The recurring claims trace to two sentences in *this
 plan file*, one of which is now reworded.
 
-## Test strategy
+## Review response (PR #43 re-review, round 13: 10 findings, 0 CRITICAL, REQUEST_CHANGES)
+
+Reviewer comment id `6475659004`, feedback id `c41ce5ae-8756-4841-88a1-01eba954fa57`,
+confidence 0.78, 538.8 s, reviewed `76e229e`. Diff truncated again (`357564 → 50000`).
+
+| # | Finding | Verdict | Where |
+| --- | --- | --- | --- |
+| 1 | WARNING — `addTrackerFailedText` is a hardcoded English fallback | STILL OPEN, seventh round | unchanged: the Arabic twin is the maintainer's, and no existing key says what needs saying. Ask is recorded at the end of this file |
+| 2 | WARNING — the draft setter stores arbitrary text | FIXED, moving the bound onto the state | round 9 clipped at the page's `_saveDraft`; the setter in `ChatConversation` now clips to `maxChatContentLength`, so every writer inherits the limit and the page call site is plain assignment again. `chat_conversation_test.dart`: a 25 000-character draft lands at the bound, ordinary text is untouched, `reset()` still clears |
+| 3 | INFO — the `sessionId` setter neither validates nor clips | FIXED | the setter clips to `maxIdentifierLength`. `ChatbotRepository.isSessionId` still decides whether an id may be *used*; this keeps a hostile path fragment from being carried by the conversation at all |
+| 4 | WARNING — the hook key/matcher change may disable the branch guard | ALREADY COVERED | `services/common/test_hook_config.py` (rounds 7-8) pins `version: 1`, the `preToolUse` group, `type: "command"`, exactly one shell key, integer `timeoutSec`, a compiling matcher, that the script path exists, and Claude/Copilot parity; `test_branch_guard.py` runs both guards against throwaway repos |
+| 5 | WARNING — the hooks depend on Python scripts that must be in the PR | FALSE (truncation) | `scripts/check_branch.py` and `scripts/check_agents.py` are on this branch, and the test above asserts the configured command points at a script that exists on disk |
+| 6 | INFO — a non-http `url` survives in `SearchResultModel` | FIXED | `url` is now cleared unless it is an absolute http/https address — the same rule `image_url` already followed. `isLaunchable` gated the tap either way; the point is that no consumer of the field can mistake `file:`/`data:` for a safe value. `https://…/product-1.html#price` is still kept whole |
+| 7 | INFO — `displayName` folds whitespace but not control characters | FIXED | `foldWhitespace` removes control characters that are not whitespace before folding: unlike a newline they survive a whitespace fold and reach the screen as a replacement glyph |
+| 8 | INFO — the url guard misses non-ASCII separators | FIXED | the refused set now covers C1 separators, the Unicode line/paragraph separators, NBSP and the zero-width/format characters, for the same reason as ASCII: `Uri` percent-encodes them into the host instead of rejecting the link. International and percent-encoded hosts stay acceptable, which is pinned too |
+| 9 | INFO — the stored bearer token is not trimmed | FIXED | `_authOptions` trims before building the header, so a token read back with stray whitespace cannot become `Bearer  <jwt> ` and be read as malformed rather than unauthenticated |
+| 10 | WARNING — the PR description reports two failing Arabic tests | ROOT CAUSE FOUND | **the PR body said it**, not the code: "Chatbot: 32 passed, 2 failed … also fail on the base branch". That sentence is what every round from 5 to 13 re-raised. It is replaced with the current run — `pytest services/chatbot -q` → 35 passed, 0 failed — and the Python/Flutter counts are refreshed to 803 passed/1 skipped and 257 passed |
 
 ## Test strategy
 - API: link parsing (parametrized), title persisted and exposed (incl.
