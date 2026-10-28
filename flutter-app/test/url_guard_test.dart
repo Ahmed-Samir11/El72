@@ -72,5 +72,24 @@ void main() {
 
     // A real link percent-encodes its own spaces, and stays acceptable.
     expect(isHttpUrl('https://2b.com.eg/p/1%20x'), true);
+
+    // Non-ASCII separators and zero-width characters are refused for the same
+    // reason: `Uri` percent-encodes them into the host instead of rejecting the
+    // link, so a scraped value that carried one becomes one odd address.
+    for (final url in const [
+      'https://a\u2028b.test/p',
+      'https://a\u2029b.test/p',
+      'https://a\u0085b.test/p',
+      'https://a\u00a0b.test/p',
+      'https://a\u200fb.test/p',
+      'https://a\ufeff.test/p',
+    ]) {
+      expect(isHttpUrl(url), false, reason: url);
+    }
+
+    // Ordinary international hostnames are unaffected: they are percent-encoded
+    // by the parser and stay real addresses.
+    expect(isHttpUrl('https://xn--btoa.test/p'), true);
+    expect(isHttpUrl('https://2b.com.eg/p/1?name=Araf%20Elhamour'), true);
   });
 }

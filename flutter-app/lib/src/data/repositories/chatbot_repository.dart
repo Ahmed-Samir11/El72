@@ -167,7 +167,11 @@ class ChatbotRepository {
   /// client's `baseUrl` applies; a bare `RequestOptions` passed to
   /// `_dio.fetch` has no host.
   Future<Options> _authOptions() async {
-    final token = await _getToken();
+    // Trimmed, not passed through: a token read back from secure storage with
+    // stray whitespace around it would send `Authorization: Bearer  <jwt> `, which
+    // the service reads as a malformed token rather than as "unauthenticated".
+    final raw = await _getToken();
+    final token = raw?.trim();
     // An empty string would send `Authorization: Bearer `, which the service
     // reads as a malformed token rather than as "unauthenticated".
     return Options(
