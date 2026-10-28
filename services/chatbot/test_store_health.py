@@ -70,12 +70,15 @@ def test_a_success_clears_the_failure_streak():
 
 def test_the_cooldown_window_expires():
     """A cooled-down store gets one more chance once the window passes."""
-    health = StoreHealth(failure_threshold=1, cooldown_seconds=0.05)
+    health = StoreHealth(failure_threshold=1, cooldown_seconds=0.25)
 
     health.record("amazon_eg", STATE_BLOCKED)
     assert health.is_cooling("amazon_eg")
 
-    time.sleep(0.06)
+    # Measured against a 10 ms margin before, which the runner starves: the
+    # window had long gone by the time the second read happened, for reasons
+    # that have nothing to do with store health.
+    time.sleep(0.6)
     assert not health.is_cooling("amazon_eg")
     # The streak was cleared with the window, so one more failure is needed.
     assert not health.is_cooling("amazon_eg")

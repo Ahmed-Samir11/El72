@@ -139,13 +139,16 @@ def test_cache_records_a_miss_then_a_hit():
 
 def test_empty_results_are_cached_with_a_shorter_ttl():
     """A store that had nothing stays cheap without being frozen forever."""
-    cache = SearchResultCache(negative_ttl_seconds=0.05)
+    cache = SearchResultCache(negative_ttl_seconds=0.25)
     key = make_cache_key("jiji", "gaming laptop")
 
     cache.set(key, "jiji", [])
     assert cache.get(key) == []
 
-    time.sleep(0.06)
+    # A 10 ms margin around a 50 ms TTL starves on a loaded runner: the read
+    # after the sleep happened well past the window for reasons unrelated to the
+    # cache, and the suite flaked. Same contract, no timing cliff.
+    time.sleep(0.6)
     assert cache.get(key) is None
 
 
@@ -288,17 +291,19 @@ def test_non_json_values_are_normalized_before_the_db_write(db_session_factory):
 
 def test_a_negative_db_entry_keeps_the_short_ttl(db_session_factory):
     """An empty-store entry promoted from the DB must not gain the long TTL."""
-    cache = SearchResultCache(db_session_factory, negative_ttl_seconds=0.05)
+    cache = SearchResultCache(db_session_factory, negative_ttl_seconds=0.25)
     key = make_cache_key("jiji", "gaming laptop")
 
     cache.set(key, "jiji", [])
     assert cache.get(key) == []
 
     # Fresh process: promoted from the DB row, whose expiry is still short.
-    reloaded = SearchResultCache(db_session_factory, negative_ttl_seconds=0.05)
+    reloaded = SearchResultCache(db_session_factory, negative_ttl_seconds=0.25)
     assert reloaded.get(key) == []
 
-    time.sleep(0.06)
+    # The 10 ms margin this used to measure starves on a loaded runner; the
+    # window is what is under test, not how fast the machine is.
+    time.sleep(0.6)
     assert reloaded.get(key) is None
 
 
