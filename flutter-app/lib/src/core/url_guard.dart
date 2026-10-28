@@ -17,6 +17,14 @@
 /// the server's own network off the target list — changing it here must not be
 /// read as changing what the server will visit.
 bool isHttpUrl(String url) {
+  // A url carrying a space, a newline or a control character is refused. `Uri`
+  // would not reject it: it percent-encodes the character *into the host*, so
+  // `https://a b.com/x` parses as the single host `a%20b.com`. Scraped markup
+  // wraps long attributes across line breaks for exactly that shape, and one
+  // broken-looking address is not something to hand a browser. A legitimate link
+  // never needs it: real urls percent-encode their own spaces.
+  if (url.split(_urlControlChars).length > 1) return false;
+
   final uri = Uri.tryParse(url);
   // `hasAuthority`, not `isAbsolute`: Uri.isAbsolute means "has a scheme and
   // no fragment", so it would reject a perfectly good scraped product link
@@ -26,3 +34,9 @@ bool isHttpUrl(String url) {
   if (uri == null || !uri.hasAuthority || uri.host.isEmpty) return false;
   return uri.scheme == 'http' || uri.scheme == 'https';
 }
+
+/// Whitespace and control characters, which no real url contains.
+//
+/// Matched through `String.split` because this Dart SDK exposes no `RegExp.test`
+/// and no `RegExp.match`.
+final _urlControlChars = RegExp('[\\x00-\\x20\\x7f]');
