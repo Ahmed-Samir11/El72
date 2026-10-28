@@ -42,6 +42,10 @@ apply_file "$DATABASE_URL" \
 apply_file "$DATABASE_URL" \
     infra/sql/migrations/postgres/0004_schema_compatibility_repairs.sql
 
+# Top up free accounts created under the old 3-credit allowance to 100.
+apply_file "$DATABASE_URL" \
+    infra/sql/migrations/postgres/0005_free_tier_100_credits.sql
+
 # Legacy operational migrations (flat numbering, pre-subdirectory layout):
 # cash payments, cash audit events, admin dispute/refund, and subscriptions.
 # These must run AFTER 0003/0004: 0008 and 0010 widen the payment_audit_log

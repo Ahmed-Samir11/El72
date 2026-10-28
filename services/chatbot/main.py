@@ -43,6 +43,8 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
 try:
+    from services.chatbot.arabic_nlp import detect_language, parse_add_command
+    from services.chatbot.i18n import format_message
     from services.chatbot.models import (
         AddToFeedRequest,
         ChatRequest,
@@ -50,10 +52,10 @@ try:
         HealthResponse,
         SearchResult,
     )
-    from services.chatbot.arabic_nlp import detect_language, parse_add_command
-    from services.chatbot.i18n import format_message
     from services.chatbot.search_service import ChatbotSearchService
 except ImportError:
+    from arabic_nlp import detect_language, parse_add_command
+    from i18n import format_message
     from models import (
         AddToFeedRequest,
         ChatRequest,
@@ -61,8 +63,6 @@ except ImportError:
         HealthResponse,
         SearchResult,
     )
-    from arabic_nlp import detect_language, parse_add_command
-    from i18n import format_message
     from search_service import ChatbotSearchService
 
 logger = logging.getLogger(__name__)
@@ -247,6 +247,7 @@ async def send_message(
                     result_id=cached_results[add_index - 1]["url"],
                 ),
                 db,
+                auth_header=request.headers.get("Authorization", ""),
                 language=language,
             )
         message = format_message("no_search_results", language)
@@ -349,6 +350,7 @@ async def add_to_feed(
             target_price=add_to_feed_request.target_price,
         ),
         db,
+        auth_header=request.headers.get("Authorization", ""),
         language="en",
     )
 
@@ -516,13 +518,15 @@ def _save_search_result(db: Session, session_id: UUID, result: dict):
 async def _handle_add_to_feed(
     request: AddToFeedRequest,
     db: Session,
+    auth_header: str = "",
     language: str = "en",
 ) -> ChatResponse:
     """Handle an 'add to feed' action.
 
     If [request.result_id] is a URL, looks up that specific search result.
     Otherwise falls back to the most recent search result for the session.
-    Creates a tracked item via the API service.
+    Creates a tracked item via the API service, forwarding the caller's
+    Authorization header so the tracker is owned by (and charged to) them.
     """
     # Find the search result for this session.
     if request.result_id:
@@ -571,6 +575,7 @@ async def _handle_add_to_feed(
             response = await client.post(
                 f"{API_BASE_URL}/tracked-items/from-url",
                 json=payload,
+                headers={"Authorization": auth_header} if auth_header else None,
             )
 
             if response.status_code == 402:
@@ -610,6 +615,7 @@ async def _handle_add_to_feed(
                 )
             ],
             language=language,
+            tracker_created=True,
         )
 
     except httpx.HTTPError as e:

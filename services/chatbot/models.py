@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import List, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class SearchResult(BaseModel):
@@ -59,6 +59,11 @@ class ChatResponse(BaseModel):
     session_id: UUID
     search_results: List[SearchResult] = Field(default_factory=list)
     language: str = "en"
+    # Only add-to-feed can create a tracker. The client must not guess success
+    # from a non-empty search_results list: the ordinary message path also returns
+    # results, and a failed add can still echo one. False means "nothing was
+    # created", so the UI shows the explanation instead of a success toast.
+    tracker_created: bool = False
 
 
 class AddToFeedRequest(BaseModel):
@@ -67,13 +72,16 @@ class AddToFeedRequest(BaseModel):
     Note: user_id is not supplied by the client; it is resolved server-side
     from the JWT token. If present, it is ignored.
 
-    result_id may be None when the client wants to add the latest search
-    result without specifying a URL.
+    result_id is the product URL of the search result to add; clients send it
+    as "product_url". It may be None when the client wants to add the latest
+    search result without specifying a URL.
     """
+
+    model_config = ConfigDict(populate_by_name=True)
 
     session_id: UUID
     user_id: Optional[int] = None
-    result_id: Optional[str] = None  # store_id:url hash or similar
+    result_id: Optional[str] = Field(default=None, alias="product_url")
     target_price: Optional[float] = None
 
 

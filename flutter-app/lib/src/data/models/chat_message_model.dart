@@ -1,3 +1,105 @@
+import 'package:flutter/foundation.dart';
+
+import '../../core/format/toast_title.dart';
+import '../../core/url_guard.dart';
+
+/// Storage bounds for text the chatbot service hands over.
+
+/// The service caps its own LLM output by token budget and the chat keeps a
+/// fixed number of turns, so a reply is normally a couple of thousand
+/// characters. These limits sit far above anything the service can legitimately
+/// produce, so nothing real is clipped: they exist to make the turn cap honest,
+/// because 'the last 30 turns' is not a memory bound while a single turn can
+/// be arbitrarily large.
+const int maxChatContentLength = 20000;
+const int maxResultTitleLength = 500;
+const int maxResultStoreNameLength = 200;
+
+/// Upper bound on an identifier handed over by the service.
+//
+///  Session and message ids are UUIDs (36 characters), and a session id is
+///  interpolated into the chatbot's URL path by the repository, so an oversized
+///  one is payload rather than an identifier. Bounding it where the reply is
+///  parsed keeps the value small in memory as well; the shape check
+///  `ChatbotRepository.isSessionId` still decides whether a session id is
+///  adopted at all, and it runs before the id is ever used in a request.
+const int maxIdentifierLength = 64;
+
+/// A link longer than this is payload, not a product page. It is dropped rather
+/// than clipped: a half-url would still be handed to the browser and land the
+/// user somewhere they were never shown.
+const int maxResultUrlLength = 4096;
+
+const int maxResultStoreIdLength = 64;
+const int maxResultCurrencyLength = 16;
+
+/// How many results one reply may bring into the app.
+//
+/// Mirrors `ChatConversation.maxSearchResults`, but has to be applied here as
+/// well: trimming in the conversation happens after every entry has already
+/// been turned into a model and its strings copied, so a service that answers
+/// with fifty thousand results gets to spend that work before anything is
+/// thrown away. Checking before parsing makes the cap a cost bound.
+const int maxParsedSearchResults = 50;
+
+/// How many entries a single reply may make the app look at.
+//
+/// The usable count is capped at [maxParsedSearchResults], but an array made
+/// of entries that all fail to parse would otherwise still be walked to its
+/// end, and every failure would log. Scanning stops here whatever the entries
+/// are, so a hostile array is neither parsed nor printed without a limit.
+const int maxScannedSearchResults = maxParsedSearchResults * 10;
+
+/// Turn the `search_results` array into models one entry at a time, skipping
+/// the entries that are not usable.
+//
+/// `SearchResultModel.fromJson` is strict — a missing field or a field of the
+/// wrong type throws — and that used to be all-or-nothing for the whole reply:
+/// one junk entry in an answer that had perfectly good products in it destroyed
+/// the answer, and the user got an error snackbar. Each entry is now decided
+/// on its own, and parsing stops at [maxParsedSearchResults] rather than
+/// building objects that are going to be trimmed away.
+List<SearchResultModel> _parseSearchResults(List<dynamic>? entries) {
+  final results = <SearchResultModel>[];
+  var scanned = 0;
+  var skipped = 0;
+  String? firstFailure;
+
+  for (final entry in entries ?? const []) {
+    if (results.length >= maxParsedSearchResults ||
+        scanned >= maxScannedSearchResults) {
+      break;
+    }
+    scanned++;
+
+    if (entry is! Map<String, dynamic>) {
+      skipped++;
+      firstFailure ??= 'entry ${scanned - 1} is not an object';
+      continue;
+    }
+    try {
+      results.add(SearchResultModel.fromJson(entry));
+    } catch (error) {
+      skipped++;
+      // Keep the first failure with its message: a service whose schema broke
+      // would otherwise look like an empty list plus a count, which is the
+      // difference between "one hostile entry" and "nothing parses any more".
+      // A test pins that good entries are never dropped by this net.
+      firstFailure ??= 'entry ${scanned - 1}: $error';
+    }
+  }
+
+  // One line for a whole reply, not one per junk entry: a service that answers
+  // with garbage would otherwise fill the log on every search.
+  if (skipped > 0) {
+    debugPrint(
+      'Skipped $skipped unusable chatbot search result(s) '
+      'of $scanned scanned; first failure: $firstFailure',
+    );
+  }
+  return results;
+}
+
 /// Parse an ISO 8601 date string robustly.
 ///
 /// Python's datetime.isoformat() may produce strings with microsecond
@@ -77,10 +179,12 @@ class ChatMessageModel {
     }
 
     return ChatMessageModel(
-      id: id,
-      sessionId: sessionId,
+      id: clip(id, maxIdentifierLength),
+      sessionId: clip(sessionId, maxIdentifierLength),
       role: role,
-      content: content,
+      // Bounded where it enters the app, so the turn cap cannot be spent on one
+      // oversized reply.
+      content: clip(content, maxChatContentLength),
       createdAt: createdAt,
       language: json['language'] as String? ?? 'en',
     );
@@ -121,7 +225,7 @@ class ChatSessionModel {
     }
 
     return ChatSessionModel(
-      id: id,
+      id: clip(id, maxIdentifierLength),
       userId: userId,
       createdAt: createdAt,
       updatedAt: updatedAt,
@@ -142,6 +246,17 @@ class SearchResultModel {
   final String url;
   final String imageUrl;
   final bool inStock;
+
+  /// Whether this result's url may be handed to a browser at all.
+  //
+  /// `url` is scraped out of third-party pages, so it can be empty, malformed,
+  /// or carry a scheme that is not a web page (`file:`, `data:`, some app's
+  /// custom scheme). Only absolute http/https may leave the app; the card's
+  /// tap-to-open and its "Add to Feed" button are both gated on this so a hostile
+  /// page cannot make the app launch another program. The rule itself lives in
+  /// [isHttpUrl], which the chatbot repository shares: one copy, so the UI
+  /// promise and the server-side guard cannot drift apart.
+  bool get isLaunchable => isHttpUrl(url);
 
   const SearchResultModel({
     required this.storeId,
@@ -189,14 +304,42 @@ class SearchResultModel {
       throw FormatException('SearchResultModel: missing required field "url"');
     }
 
+    // A url is dropped when it is not an absolute http/https address, and when
+    // it is longer than any real product page. `isLaunchable` gates the tap today
+    // either way, but a model that keeps `file:` or `data:` in its `url` field is
+    // a footgun for the next consumer that reads the field directly, and a
+    // half-truncated address would still be handed to the browser.
+    final safeUrl = url.length > maxResultUrlLength || !isHttpUrl(url)
+        ? ''
+        : url;
+    final rawImageUrl = imageUrl ?? '';
+    // The image url is scraped out of the same page, so `data:`, `file:` or a
+    // custom-scheme value can arrive here too. Clearing the field leaves the
+    // card on its placeholder icon instead of handing the value to the image
+    // loader: `ProductImage` already refuses non-web urls, and bounding the
+    // field where the text enters the app is what keeps that rule from having
+    // to be remembered at every call site.
+    final safeImageUrl =
+        rawImageUrl.length > maxResultUrlLength || !isHttpUrl(rawImageUrl)
+        ? ''
+        : rawImageUrl;
+
     return SearchResultModel(
-      storeId: storeId,
-      storeName: storeName,
-      title: title,
+      // A store id and a currency code are identifiers, not display text: the
+      // service sends a slug and an ISO three-letter code. Clipping far above
+      // that shape costs nothing legitimate and keeps an oversized field from
+      // staying alive in the conversation for the whole signed-in session.
+      storeId: clip(storeId, maxResultStoreIdLength),
+      storeName: clip(foldWhitespace(storeName), maxResultStoreNameLength),
+      // The card renders this, and third-party titles come wrapped over lines:
+      // folding first means the cap is spent on the product name rather than
+      // on invisible characters, and control characters that survive a fold
+      // (a stray escape from the page's own pipeline) never reach the screen.
+      title: clip(foldWhitespace(title), maxResultTitleLength),
       price: price,
-      currency: currency,
-      url: url,
-      imageUrl: imageUrl ?? '',
+      currency: clip(currency, maxResultCurrencyLength),
+      url: safeUrl,
+      imageUrl: safeImageUrl,
       inStock: inStock ?? true,
     );
   }
@@ -209,11 +352,20 @@ class ChatResponseModel {
   final List<SearchResultModel> searchResults;
   final String language;
 
+  /// Whether the chatbot created a tracked item while answering.
+  //
+  /// The add-to-feed endpoint answers 200 whether or not a tracker was made, so
+  /// the UI must read this flag instead of assuming a non-empty
+  /// [searchResults] means success — an ordinary search reply also carries
+  /// results, and a failed add can still echo the product it tried.
+  final bool trackerCreated;
+
   const ChatResponseModel({
     required this.message,
     required this.sessionId,
     required this.searchResults,
     this.language = 'en',
+    this.trackerCreated = false,
   });
 
   factory ChatResponseModel.fromJson(Map<String, dynamic> json) {
@@ -233,12 +385,13 @@ class ChatResponseModel {
     }
 
     return ChatResponseModel(
-      message: message,
-      sessionId: sessionId,
-      searchResults: (resultsList ?? const [])
-          .map((r) => SearchResultModel.fromJson(r))
-          .toList(),
+      // The reply text is the same remote text the conversation keeps, so it is
+      // bounded at the same place instead of only when a screen renders it.
+      message: clip(message, maxChatContentLength),
+      sessionId: clip(sessionId, maxIdentifierLength),
+      searchResults: _parseSearchResults(resultsList),
       language: json['language'] as String? ?? 'en',
+      trackerCreated: json['tracker_created'] == true,
     );
   }
 }

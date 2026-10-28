@@ -8,7 +8,9 @@
 #
 set -euo pipefail
 
-REPO_DIR="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+# Resolve the repo root without relying on BASH_SOURCE (some hook runners invoke
+# this script through a shell that does not set it).
+REPO_DIR="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
 AGENTS_DIR="$REPO_DIR/.agents"
 SKILLS_DIR="$AGENTS_DIR/skills"
 

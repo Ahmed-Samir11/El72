@@ -33,6 +33,7 @@ from services.api.tracked_items_models import (
     TrackedItem,
     TrackedItemStore,
 )
+from services.common.url_policy import fetch_block_reason
 
 logger = logging.getLogger(__name__)
 
@@ -153,6 +154,18 @@ _STATUS_SEVERITY = {
     FETCH_BLOCKED: 2,
     FETCH_NO_PRICE: 3,
 }
+
+
+def _item_title(item: TrackedItem) -> Optional[str]:
+    """Product name scraped from the page (``specs["title"]``), if any.
+
+    ``specs`` is free-form JSON (spec-based trackers store their own keys),
+    so anything that is not a dict with a string title yields None.
+    """
+    specs = item.specs
+    if isinstance(specs, dict) and isinstance(specs.get("title"), str):
+        return specs["title"]
+    return None
 
 
 def _aggregate_fetch_status(stores) -> tuple:
@@ -301,6 +314,8 @@ async def list_tracked_items(
             {
                 "id": item.id,
                 "canonical_product_id": item.canonical_product_id,
+                # Product name scraped from the page, once a fetch succeeded.
+                "title": _item_title(item),
                 "target_price": float(item.target_price) if item.target_price else None,
                 "is_active": item.is_active,
                 "store_count": store_count,
@@ -387,6 +402,7 @@ async def get_tracked_item(
     return {
         "id": item.id,
         "canonical_product_id": item.canonical_product_id,
+        "title": _item_title(item),
         "specs": item.specs,
         "target_price": float(item.target_price) if item.target_price else None,
         "is_active": item.is_active,
@@ -738,6 +754,18 @@ def _persist_fetched_price(tracked_item_id, store_id: str, url: str, canonical_i
                 )
             )
 
+        # Keep the product's real name from the page: trackers created from a
+        # link otherwise only have an id derived from the URL to show.
+        if fetched.title and fetched.title.strip():
+            item = (
+                db.query(TrackedItem).filter(TrackedItem.id == tracked_item_id).first()
+            )
+            if item is not None:
+                # Reassign (not mutate) so SQLAlchemy detects the JSON change.
+                specs = dict(item.specs or {})
+                specs["title"] = fetched.title.strip()[:300]
+                item.specs = specs
+
         # Commit the price upserts first: a best-effort history append must
         # never roll back (and lose) the current/lowest price rows.
         db.commit()
@@ -820,6 +848,69 @@ def _persist_fetched_price(tracked_item_id, store_id: str, url: str, canonical_i
         db.close()
 
 
+# Store detection by host substring. A store may use several domains (e.g.
+# ElBadr moved to elbadrgroupeg.store; Sigma sells on sigma-computer.com).
+_STORE_DOMAINS = (
+    ("amazon_eg", "amazon.eg"),
+    ("jumia_eg", "jumia.eg"),
+    ("noon_eg", "noon.com"),
+    ("elbadr_eg", "elbadrgroup.com"),
+    ("elbadr_eg", "elbadrgroupeg.store"),
+    ("compumarts_eg", "compumarts.com"),
+    ("sigma_eg", "sigma-eg.com"),
+    ("sigma_eg", "sigma-computer.com"),
+    ("geeks_store_eg", "geeks-store.com"),
+    ("ravin_eg", "ravin.com"),
+    ("tie_house_eg", "tiehouse.com"),
+    ("town_team_eg", "town-team.com"),
+    ("alfrensia_eg", "alfrensia.com"),
+    ("2b_eg", "2b.com.eg"),
+)
+
+
+def _store_and_sku_from_url(url: str) -> tuple:
+    """(store_id, sku) for a product URL.
+
+    The SKU doubles as the tracker's fallback display name, so it should be
+    the product slug, not URL plumbing:
+    - Amazon ``/<slug>/dp/<ASIN>/ref=...``: the slug before ``dp`` (else the
+      ASIN); ``ref=...`` tracking segments are never used.
+    - ``?id=<slug>`` pages (e.g. Sigma's ``/en/item?id=...``): the id value.
+    - Otherwise: the last path segment.
+    """
+    from urllib.parse import parse_qs, urlparse
+
+    parsed = urlparse(url)
+    host = (parsed.netloc or "").lower()
+    path = parsed.path or "/"
+
+    store_id = "unknown"
+    for key, domain in _STORE_DOMAINS:
+        if domain in host:
+            store_id = key
+            break
+
+    segments = [s for s in path.split("/") if s and not s.startswith("ref=")]
+    sku = ""
+    if "dp" in segments:
+        dp = segments.index("dp")
+        # "-" is Amazon's locale placeholder (/-/en/<slug>/dp/...).
+        before = segments[dp - 1] if dp > 0 else ""
+        if before and before not in ("-", "en", "ar"):
+            sku = before
+        elif dp + 1 < len(segments):
+            sku = segments[dp + 1]
+    if not sku:
+        query_id = parse_qs(parsed.query).get("id", [""])[0]
+        if len(query_id) >= 3:
+            sku = query_id
+    if not sku and segments:
+        sku = segments[-1]
+    if len(sku) < 3:
+        sku = path.strip("/").replace("/", "-") or "item"
+    return store_id, sku
+
+
 @router.post("/from-url", status_code=status.HTTP_201_CREATED)
 async def create_tracked_item_from_url(
     payload: TrackedItemByUrl,
@@ -831,38 +922,23 @@ async def create_tracked_item_from_url(
 
     Derives a canonical product id and store mapping from the URL so the
     frontend can create trackers with just a link (and optional target price).
+
+    The URL is checked before anything is written: this endpoint later visits
+    it server-side, so an unchecked value turns the API into a proxy for
+    whatever host the caller names. The rule lives in [fetch_block_reason];
+    the Flutter app's own guard is UI convenience, not this boundary.
     """
-    from urllib.parse import urlparse
+    block = fetch_block_reason(payload.url)
+    if block:
+        # Name the class of problem, never the url itself: the input is
+        # attacker-controlled and lands in the log an operator reads.
+        logger.warning(f"Refusing an unfetchable tracker url ({block})")
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Only public http/https product pages can be tracked",
+        )
 
-    parsed = urlparse(payload.url)
-    host = (parsed.netloc or "").lower()
-    path = parsed.path or "/"
-
-    # Detect store from host.
-    store_id = "unknown"
-    for key, domain in (
-        ("amazon_eg", "amazon.eg"),
-        ("jumia_eg", "jumia.eg"),
-        ("noon_eg", "noon.com"),
-        ("elbadr_eg", "elbadrgroup.com"),
-        ("compumarts_eg", "compumarts.com"),
-        ("sigma_eg", "sigma-eg.com"),
-        ("geeks_store_eg", "geeks-store.com"),
-        ("ravin_eg", "ravin.com"),
-        ("tie_house_eg", "tiehouse.com"),
-        ("town_team_eg", "town-team.com"),
-        ("alfrensia_eg", "alfrensia.com"),
-    ):
-        if domain in host:
-            store_id = key
-            break
-
-    # Last non-empty path segment = SKU / slug.
-    segments = [s for s in path.split("/") if s]
-    sku = segments[-1] if segments else path.strip("/")
-    if len(sku) < 3:
-        sku = path.strip("/").replace("/", "-") or "item"
-
+    store_id, sku = _store_and_sku_from_url(payload.url)
     canonical_id = f"{store_id}:{sku}"
 
     # Avoid duplicate trackers for the same URL.

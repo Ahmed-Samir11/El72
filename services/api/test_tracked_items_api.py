@@ -327,6 +327,66 @@ def test_create_tracked_item_from_url(client, monkeypatch):
     assert data["price_status"] == "fetching"
     assert "id" in data
 
+# The API visits whatever url it is given, so a client that names an internal
+# host would get the server to fetch it. These are the shapes used to reach
+# those hosts; each must end in a refusal before anything is written.
+SSRF_URLS = [
+    "http://127.0.0.1:8000/tracked-items",
+    "http://localhost/latest",
+    "http://169.254.169.254/latest/meta-data/iam/security-credentials/",
+    "http://169.254.170.189/latest/user-data",
+    "http://metadata.google.internal/computeMetadata/v1/",
+    "http://metadata.tencentyun.com/latest/meta-data/",
+    "http://10.0.0.5/internal",
+    "http://172.16.0.1/internal",
+    "http://192.168.1.1:5000/internal",
+    "http://2130746113/",
+    "http://127.0.0.1.nip.io/",
+    "https://",
+    "http://example.com/a b",
+]
+
+# Shapes the url model itself already rejects: not an http/https address at all.
+# Kept alongside the policy cases so both layers of the check stay visible.
+NON_HTTP_URLS = [
+    "file:///etc/passwd",
+    "data:text/html,hi",
+    "ftp://files.example.com/pub",
+    "/dp/123",
+    "javascript:alert(1)",
+    "",
+]
+
+
+@pytest.mark.parametrize("url", SSRF_URLS, ids=SSRF_URLS)
+def test_from_url_refuses_a_target_the_server_may_not_visit(client, url):
+    api, session, user = client
+
+    resp = api.post("/tracked-items/from-url", json={"url": url})
+
+    assert resp.status_code == 422, resp.text
+    assert (
+        resp.json()["detail"] == "Only public http/https product pages can be tracked"
+    )
+    # Nothing was written: the row insert (and the credit the tracker would
+    # have charged) sit behind this check, so a refusal leaves no trace.
+    rows = session.query(TrackedItem).filter(TrackedItem.user_id == user.id)
+    assert rows.count() == 0
+
+
+@pytest.mark.parametrize("url", NON_HTTP_URLS, ids=NON_HTTP_URLS)
+def test_from_url_still_rejects_a_url_that_is_not_a_web_address(client, url):
+    api, session, user = client
+
+    resp = api.post("/tracked-items/from-url", json={"url": url})
+
+    # The model validator refuses before the handler runs, and its detail is
+    # FastAPI's validation-error list, so only the status and the absence of a
+    # row are pinned here.
+    assert resp.status_code == 422, resp.text
+    rows = session.query(TrackedItem).filter(TrackedItem.user_id == user.id)
+    assert rows.count() == 0
+
 
 def test_persist_fetched_price_retry_logic(db_session, monkeypatch):
     session, user = db_session
@@ -417,6 +477,70 @@ def test_persist_fetched_price_retry_logic(db_session, monkeypatch):
     )
     assert store_row.last_fetch_status == "ok"
     assert store_row.last_fetch_error is None
+    # The page's product name is kept as the tracker's display title.
+    saved = session.query(TrackedItem).filter(TrackedItem.id == item_id).first()
+    assert saved.specs["title"] == "Test Item"
+
+
+@pytest.mark.parametrize(
+    "url, expected",
+    [
+        # Amazon: slug before /dp/, never the ref= tracking segment.
+        (
+            "https://www.amazon.eg/-/en/iSiS-Natural-Regieme-Tea-Peppermint"
+            "/dp/B07FZP9STS/ref=sr_1_1_mod_primary_new?sbo=x",
+            ("amazon_eg", "iSiS-Natural-Regieme-Tea-Peppermint"),
+        ),
+        ("https://www.amazon.eg/dp/B07FZP9STS", ("amazon_eg", "B07FZP9STS")),
+        # ElBadr's current domain.
+        (
+            "https://elbadrgroupeg.store/asus-tuf-gaming-vg27aqml5f-monitor",
+            ("elbadr_eg", "asus-tuf-gaming-vg27aqml5f-monitor"),
+        ),
+        # Sigma: product slug lives in ?id=, the path is just /en/item.
+        (
+            "https://www.sigma-computer.com/en/item?id=logitech-g102-mouse",
+            ("sigma_eg", "logitech-g102-mouse"),
+        ),
+        (
+            "https://alfrensia.com/en/product/asus-a23-case/",
+            ("alfrensia_eg", "asus-a23-case"),
+        ),
+        ("https://example.com/p/widget-9000", ("unknown", "widget-9000")),
+    ],
+)
+def test_store_and_sku_from_url(url, expected):
+    from services.api.tracked_items_api import _store_and_sku_from_url
+
+    assert _store_and_sku_from_url(url) == expected
+
+
+def test_list_tracked_items_exposes_scraped_title(client):
+    api, session, user = client
+    session.add(
+        TrackedItem(
+            user_id=user.id,
+            canonical_product_id="amazon_eg:B07FZP9STS",
+            specs={"source_url": "https://amazon.eg/dp/B07FZP9STS", "title": "Tea"},
+            is_active=True,
+        )
+    )
+    session.commit()  # one item per commit: ids are generated per flush
+    session.add(
+        TrackedItem(
+            user_id=user.id,
+            canonical_product_id="spec-based",
+            specs=["not", "a", "dict"],
+            is_active=True,
+        )
+    )
+    session.commit()
+
+    resp = api.get("/tracked-items")
+    assert resp.status_code == 200
+    titles = {i["canonical_product_id"]: i["title"] for i in resp.json()}
+    assert titles["amazon_eg:B07FZP9STS"] == "Tea"
+    assert titles["spec-based"] is None
 
 
 def test_persist_fetched_price_retry_exhaustion(db_session, monkeypatch):

@@ -24,6 +24,7 @@ spawn a browser per item). Fetches are network-bound and user-driven
 from __future__ import annotations
 
 import contextlib
+import html as html_lib
 import ipaddress
 import json
 import logging
@@ -378,7 +379,45 @@ _IMG_SKIP_HINTS = (
     "avatar",
     ".svg",
     "data:",
+    # Amazon's 1x1 tracking beacons (fls-eu.amazon.eg/1/batch/1/OP/...).
+    "/batch/1/",
+    "fls-",
 )
+
+
+def _extract_main_product_image(html: str, page_url: str) -> Optional[str]:
+    """The main gallery image on pages that mark it explicitly, else None.
+
+    Amazon has no og:image; its product photo is
+    ``<img id="landingImage" data-old-hires="..." data-a-dynamic-image='{...}'>``
+    (``imgBlkFront`` on book pages). Prefer the hi-res URL, then the largest
+    entry of the dynamic-image map (``{"url": [width, height], ...}``), then
+    ``src``.
+    """
+    for tag in re.findall(r"<img[^>]+>", html, re.IGNORECASE):
+        if not re.search(
+            r'\bid=["\'](?:landingImage|imgBlkFront)["\']', tag, re.IGNORECASE
+        ):
+            continue
+        hires = re.search(r'\bdata-old-hires=["\']([^"\']+)["\']', tag)
+        if hires and hires.group(1).strip():
+            return _absolutize(hires.group(1), page_url)
+        dynamic = re.search(r"\bdata-a-dynamic-image=(['\"])(.+?)\1", tag)
+        if dynamic:
+            try:
+                sizes = json.loads(html_lib.unescape(dynamic.group(2)))
+                if isinstance(sizes, dict) and sizes:
+                    best = max(
+                        sizes.items(),
+                        key=lambda kv: kv[1][0] if isinstance(kv[1], list) else 0,
+                    )[0]
+                    return _absolutize(best, page_url)
+            except (ValueError, TypeError, IndexError):
+                pass
+        src = re.search(r'\bsrc=["\']([^"\']+)["\']', tag, re.IGNORECASE)
+        if src and src.group(1).strip():
+            return _absolutize(src.group(1), page_url)
+    return None
 
 
 def _extract_image_from_meta(html: str, page_url: str) -> Optional[str]:
@@ -572,7 +611,8 @@ def _extract_from_html(
     3. WooCommerce price markup.
     4. A regex over visible text for an EGP amount.
 
-    Image cascade: JSON-LD ``image`` → OG/Twitter meta → ``<img>`` scan.
+    Image cascade: JSON-LD ``image`` → OG/Twitter meta → marked main gallery
+    image (Amazon ``#landingImage``) → ``<img>`` scan.
     All image URLs are resolved to absolute (see :func:`_absolutize`).
 
     Returns ``(price, currency, title, image_url)`` or ``None`` if no price
@@ -622,14 +662,22 @@ def _extract_from_html(
     if price is None:
         return None
 
-    # Title fallback (JSON-LD takes precedence).
+    # Title fallbacks (JSON-LD takes precedence).
     if title is None:
         title = _extract_meta(html, "og:title")
+        if not _is_plausible_title(title or ""):
+            # An og:title can be the site name or a wall headline too; treat it
+            # as absent and fall through to the markup rules.
+            title = None
+    if title is None:
+        title = _extract_title_from_markup(html)
 
     # Image fallbacks (JSON-LD takes precedence), then normalize whatever we
     # found to an absolute URL the app can load directly.
     if image_url is None:
         image_url = _extract_image_from_meta(html, page_url)
+    if image_url is None:
+        image_url = _extract_main_product_image(html, page_url)
     if image_url is None:
         image_url = _extract_image_from_imgs(html, page_url)
     if image_url is not None and page_url:
@@ -638,6 +686,68 @@ def _extract_from_html(
     # The app targets the Egyptian market; pages that omit priceCurrency
     # are assumed to quote EGP.
     return price, (currency or "EGP"), title, image_url
+
+
+def _extract_title_from_markup(html: str) -> Optional[str]:
+    """Product name from page markup when there is no JSON-LD/OG title.
+
+    Amazon renders it as ``<span id="productTitle">``; otherwise use the
+    ``<title>`` tag, minus a trailing `` : Amazon.eg``-style site suffix.
+    """
+    for pattern in (
+        r'<span[^>]+id=["\']productTitle["\'][^>]*>(.*?)</span>',
+        r"<title[^>]*>(.*?)</title>",
+    ):
+        m = re.search(pattern, html, re.IGNORECASE | re.DOTALL)
+        if not m:
+            continue
+        text = html_lib.unescape(re.sub(r"<[^>]+>", "", m.group(1)))
+        text = re.sub(r"\s+", " ", text).strip()
+        text = re.sub(r"\s*[:|\-–]\s*Amazon\.[a-z.]+\s*$", "", text, flags=re.I)
+        if _is_plausible_title(text):
+            return text
+    return None
+
+
+# The markup fallback only runs on pages with no JSON-LD and no og:title, which
+# is exactly where a challenge wall, a "loading" placeholder or the bare site
+# name sits in <title>. A product name is a few words; these are not.
+_TITLE_MAX_CHARS = 300
+
+# Phrases from challenge walls, placeholders and error pages. Kept to the
+# English wording those stores emit; page-level blocking is already caught by
+# _looks_like_bot_wall, so this list only rejects titles that got through it.
+_TITLE_JUNK_PHRASES = (
+    "just a moment",
+    "enable javascript",
+    "you must enable",
+    "access denied",
+    "forbidden",
+    "page not found",
+    "not found",
+    "captcha",
+    "are you trying to browse",
+    "loading",
+    "sign in",
+)
+
+
+def _is_plausible_title(text: str) -> bool:
+    """Whether ``<title>`` text is a product name rather than page furniture."""
+    if not 3 <= len(text) <= _TITLE_MAX_CHARS:
+        return False
+    if not re.search(r"[0-9a-z]", text, re.IGNORECASE):
+        return False
+    lowered = text.lower()
+    for junk in _TITLE_JUNK_PHRASES:
+        if junk in lowered:
+            return False
+    # A single dot-separated token is the site, not the product: "Amazon.eg",
+    # "Noon.com", "2B.com.eg". Such a title is stored as the tracker's name and
+    # shows up in the UI as an unlabeled link.
+    if " " not in text and re.fullmatch(r"[a-z0-9.+-]+(\.[a-z]{2,})+", lowered):
+        return False
+    return True
 
 
 def _extract_meta(html: str, prop: str) -> Optional[str]:

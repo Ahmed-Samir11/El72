@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import '../../core/url_guard.dart';
 import '../config.dart';
 import '../models/chat_message_model.dart';
 
@@ -43,6 +44,9 @@ Future<T> _retryGet<T>(Future<T> Function() future, int maxRetries) async {
       return await future();
     } on DioException catch (e) {
       // Only retry on transient network errors, not HTTP error responses.
+      // Anything else — including the ArgumentError the session-id path guard
+      // raises — propagates on the first attempt: a bad id is not a condition
+      // that a retry can fix.
       if (e.type == DioExceptionType.connectionTimeout ||
           e.type == DioExceptionType.connectionError ||
           e.type == DioExceptionType.receiveTimeout ||
@@ -97,12 +101,103 @@ class ChatbotRepository {
     return await _storage.read(key: 'access_token');
   }
 
-  /// Add the Bearer token to request options if one is stored.
-  Future<void> _addAuthHeader(RequestOptions options) async {
-    final token = await _getToken();
-    if (token != null) {
-      options.headers['Authorization'] = 'Bearer $token';
+  /// Rejects a session id that is not a UUID, and returns it unchanged.
+  //
+  /// The app generates a UUID, but the value is overwritten with whatever the
+  /// chatbot echoes back, so this is checked wherever one leaves the app:
+  //
+  ///  * interpolated into `/chatbot/sessions/<id>`, where an id carrying `/`,
+  ///    `?`, `#` or `..` would silently move the request to another route of
+  ///    the proxied service instead of staying an identifier;
+  ///  * in a JSON body, where it cannot affect routing but a non-UUID means the
+  ///    conversation state was poisoned upstream — better a local ArgumentError
+  ///    than a confusing 4xx from the chatbot.
+  static final _uuidPattern = RegExp(
+    r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+    caseSensitive: false,
+  );
+
+  /// Whether a value has the shape the chatbot uses for session ids.
+  static bool isSessionId(String sessionId) => _uuidPattern.hasMatch(sessionId);
+
+  static String _requireSessionId(String sessionId) {
+    if (_uuidPattern.hasMatch(sessionId)) return sessionId;
+    throw ArgumentError.value(
+      sessionId,
+      'sessionId',
+      'must be a UUID before it leaves the app',
+    );
+  }
+
+  /// Reject a scraped product url that the app may not forward at all.
+  ///
+  /// The value is copied straight out of a third-party page, and it is
+  /// forwarded to the tracker service, which is the component that will go and
+  /// fetch it. A relative url would be resolved against the API base by the
+  /// service, a non-web scheme (`file:`, `data:`, some app's custom scheme) is
+  /// not something that can ever be priced, and a link longer than
+  /// [maxResultUrlLength] is payload rather than an address — the model parser
+  /// already refuses such a link on the way in, and this path must not be able
+  /// to smuggle one through.
+  ///
+  /// [SearchResultCard] already disables its button on the same rule, but
+  /// `addToFeed` is public API, so the repository refuses it rather than trusting
+  /// its caller.
+  //
+  ///  Note what this is *not*: a client-side check is defence in depth, bypassed
+  ///  by anyone who builds their own request. The authoritative fetch policy is
+  ///  `services/common/url_policy.py`, enforced by the API service before it visits
+  ///  a url. Both sides call the shared [isHttpUrl] helper so the UI promise and
+  ///  this check cannot drift apart from each other.
+  static String _requireHttpUrl(String productUrl) {
+    if (!isHttpUrl(productUrl) || productUrl.length > maxResultUrlLength) {
+      throw ArgumentError.value(
+        productUrl,
+        'productUrl',
+        'must be an absolute http/https url no longer than '
+            '$maxResultUrlLength characters',
+      );
     }
+    return productUrl;
+  }
+
+  /// Request [Options] carrying the Bearer token, if one is stored.
+  ///
+  /// Requests go through `_dio.get`/`_dio.post` with these options so the
+  /// client's `baseUrl` applies; a bare `RequestOptions` passed to
+  /// `_dio.fetch` has no host.
+  Future<Options> _authOptions() async {
+    // Trimmed, not passed through: a token read back from secure storage with
+    // stray whitespace around it would send `Authorization: Bearer  <jwt> `, which
+    // the service reads as a malformed token rather than as "unauthenticated".
+    final raw = await _getToken();
+    final token = raw?.trim();
+    // An empty string would send `Authorization: Bearer `, which the service
+    // reads as a malformed token rather than as "unauthenticated".
+    return Options(
+      headers: {
+        if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
+      },
+    );
+  }
+
+  /// Refuse a message longer than the app's own turn bound.
+  //
+  /// The chat page cuts what it sends to [maxChatContentLength] before building
+  /// the request, but `sendMessage` is public API, so the bound is enforced here
+  /// as well rather than trusting the caller: an oversized payload would be
+  /// billed by the service and could never be read by the model behind it. A
+  /// rejection rather than a silent cut — a caller that hands over more than one
+  //  turn is holding text the app should not have kept.
+  static String _requireMessage(String message) {
+    if (message.length > maxChatContentLength) {
+      throw ArgumentError.value(
+        message.length,
+        'message',
+        'must not exceed $maxChatContentLength characters',
+      );
+    }
+    return message;
   }
 
   /// Send a message to the chatbot and get the response with search results.
@@ -113,12 +208,9 @@ class ChatbotRepository {
     required String sessionId,
     required String message,
   }) async {
-    final headers = <String, dynamic>{};
-    final token = await _getToken();
-    if (token != null) {
-      headers['Authorization'] = 'Bearer $token';
-    }
-    final options = Options(headers: headers);
+    _requireSessionId(sessionId);
+    _requireMessage(message);
+    final options = await _authOptions();
 
     try {
       final response = await _dio.post(
@@ -166,15 +258,14 @@ class ChatbotRepository {
   ///
   /// GET is retried up to 3 times on transient network failures.
   Future<List<ChatSessionModel>> getSessions() async {
-    final options = RequestOptions(method: 'GET', path: '/chatbot/sessions');
-    await _addAuthHeader(options);
+    final options = await _authOptions();
 
     return await _retryGet(() => _fetchSessions(options), 3);
   }
 
   /// Internal fetch for getSessions, extracted for retry.
-  Future<List<ChatSessionModel>> _fetchSessions(RequestOptions options) async {
-    final response = await _dio.fetch(options);
+  Future<List<ChatSessionModel>> _fetchSessions(Options options) async {
+    final response = await _dio.get('/chatbot/sessions', options: options);
 
     if (response.statusCode == 200 && response.data is List) {
       return (response.data as List)
@@ -195,19 +286,20 @@ class ChatbotRepository {
     String? productUrl,
     double? targetPrice,
   }) async {
-    final options = RequestOptions(
-      method: 'POST',
-      path: '/chatbot/add-to-feed',
-      data: {
-        'session_id': sessionId,
-        ...(productUrl != null ? {'product_url': productUrl} : {}),
-        ...(targetPrice != null ? {'target_price': targetPrice} : {}),
-      },
-    );
-    await _addAuthHeader(options);
+    _requireSessionId(sessionId);
+    if (productUrl != null) _requireHttpUrl(productUrl);
+    final options = await _authOptions();
 
     try {
-      final response = await _dio.fetch(options);
+      final response = await _dio.post(
+        '/chatbot/add-to-feed',
+        data: {
+          'session_id': sessionId,
+          ...(productUrl != null ? {'product_url': productUrl} : {}),
+          ...(targetPrice != null ? {'target_price': targetPrice} : {}),
+        },
+        options: options,
+      );
 
       if (response.statusCode == 200 && response.data is Map<String, dynamic>) {
         return ChatResponseModel.fromJson(
@@ -226,18 +318,20 @@ class ChatbotRepository {
   ///
   /// GET is retried up to 3 times on transient network failures.
   Future<ChatSessionModel> getSession({required String sessionId}) async {
-    final options = RequestOptions(
-      method: 'GET',
-      path: '/chatbot/sessions/$sessionId',
-    );
-    await _addAuthHeader(options);
+    final options = await _authOptions();
 
-    return await _retryGet(() => _fetchSession(options), 3);
+    return await _retryGet(() => _fetchSession(sessionId, options), 3);
   }
 
   /// Internal fetch for getSession, extracted for retry.
-  Future<ChatSessionModel> _fetchSession(RequestOptions options) async {
-    final response = await _dio.fetch(options);
+  Future<ChatSessionModel> _fetchSession(
+    String sessionId,
+    Options options,
+  ) async {
+    final response = await _dio.get(
+      '/chatbot/sessions/${_requireSessionId(sessionId)}',
+      options: options,
+    );
 
     if (response.statusCode == 200 && response.data is Map<String, dynamic>) {
       return ChatSessionModel.fromJson(response.data as Map<String, dynamic>);
