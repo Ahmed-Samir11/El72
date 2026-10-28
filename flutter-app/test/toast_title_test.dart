@@ -101,25 +101,30 @@ void main() {
   // The fold that turns a title into one line used to run over the entire
   // payload before anything was thrown away, so a megabyte title spent a
   // megabyte of work (and a full copy of the text) to decide on 80 characters.
-  test('the fold only ever reads a bounded window of a hostile title', () {
+  test('the fold only ever copies a bounded window of a hostile title', () {
     final out = toastTitle('x' * 1000000);
     expect(out.length, maxToastTitleLength);
     expect(out.contains('\n'), false);
 
-    // Observable proof the window is applied rather than merely measured: content
-    // that starts past the window (8x the cap = 640 units) never reaches the
-    // fold, so a payload front-loaded with whitespace yields nothing. Without
-    // the window the whole 100k units would be folded and "Real title" would
-    // survive.
+    // The window is anchored on the first character that is not whitespace, so
+    // padding longer than the window cannot swallow the title behind it: the
+    // anchored scan walks the padding and copies only the window that follows.
     final buried = '${'\n' * 100000}Real title';
-    expect(toastTitle(buried), '');
+    expect(toastTitle(buried), 'Real title');
+
+    // A payload that is nothing but padding has no content to keep.
+    expect(toastTitle('\n' * 100000), '');
   });
 
-  test('the window is generous enough for ordinary whitespace padding', () {
-    // 400 units of newlines is well inside the window, so the fold still
-    // collapses them and the title is shown whole.
-    final padded = '${'\n\t' * 200}Samsung Odyssey G5';
-    expect(toastTitle(padded), 'Samsung Odyssey G5');
+  test('a padded title is folded and then cut at the cap', () {
+    // Padding inside the window collapses first, so the cap is spent on the
+    // title rather than on invisible characters, and an over-long title behind
+    // that padding is still cut at 80 characters.
+    final padded = '${'\n\t' * 200}Samsung Odyssey ${'G5 ' * 100}';
+    final out = toastTitle(padded);
+    expect(out.length, maxToastTitleLength);
+    expect(out.contains('\n'), false);
+    expect(out.startsWith('Samsung Odyssey'), true);
   });
 
   // The service's own explanation of a failed add-to-tracker is remote text too,

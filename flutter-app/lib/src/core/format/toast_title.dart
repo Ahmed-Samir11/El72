@@ -50,6 +50,26 @@ String clip(String value, int max) {
 /// Length of a toast title, ellipsis included.
 const maxToastTitleLength = 80;
 
+/// Index of the first character in [value] that is not whitespace.
+//
+/// Done by removing the leading run and measuring what was lost, because this
+/// Dart SDK exposes no `RegExp.match` and no `String.matchAll`. The payload is
+/// walked a chunk at a time so a hostile title is never copied whole.
+int _contentStart(String value, int chunkSize) {
+  for (var start = 0; start < value.length; start += chunkSize) {
+    final end = value.length - start < chunkSize
+        ? value.length
+        : start + chunkSize;
+    final chunk = value.substring(start, end);
+    // `^` anchors at the start of the chunk: the units it removes are the
+    // padding in front of this chunk's content.
+    final padding = chunk.length - chunk.replaceAll(RegExp(r'^\s+'), '').length;
+    if (padding < chunk.length) return start + padding;
+  }
+  // Nothing but whitespace: there is no content to keep.
+  return value.length;
+}
+
 /// Whitespace-folded, cut to `max` characters with the tail replaced by "…".
 String _oneLine(String value, int max) {
   // A line this short has no room for content plus an ellipsis, and indexing
@@ -58,12 +78,18 @@ String _oneLine(String value, int max) {
     return max <= 0 ? '' : '\u2026';
   }
 
-  // Fold only a bounded window: folding a multi-megabyte title to decide how
-  // much of it to show spends the work (and a full copy of the text) that the
-  // cap exists to avoid. The window is 8x the cap, so a line whose content is
-  // front-loaded with whitespace is still measured after folding.
-  final window = value.length > max * 8 ? clip(value, max * 8) : value;
-  final singleLine = window.replaceAll(RegExp(r'\s+'), ' ').trim();
+  // Only `max * 8` units are ever copied and folded: folding a whole payload
+  // to decide on one line spends the work, and the copy, that the cap exists
+  // to avoid. The window is anchored on the first character that is not
+  // whitespace, so padding cannot push the product name out of it and cannot
+  // break a word in half; finding that character is done a chunk at a time,
+  // so no more than `max * 8` units of the payload are held at once.
+  final start = _contentStart(value, max * 8);
+  final end = value.length < start + max * 8 ? value.length : start + max * 8;
+  final singleLine = value
+      .substring(start, end)
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
   if (singleLine.length <= max) return singleLine;
 
   // The cap is the whole line the user sees, so the cut leaves a slot for the
