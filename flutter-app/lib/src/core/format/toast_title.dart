@@ -55,6 +55,13 @@ const maxToastTitleLength = 80;
 /// Done by removing the leading run and measuring what was lost, because this
 /// Dart SDK exposes no `RegExp.match` and no `String.matchAll`. The payload is
 /// walked a chunk at a time so a hostile title is never copied whole.
+//
+///  Precondition for the cost of that walk: callers hand over text that is
+///  already bounded where it entered the app — a scraped product title at
+///  `maxResultTitleLength` (500), the service's own explanation at
+///  `maxChatContentLength` (20000) — so the worst case here is a 20 000-unit
+///  scan for an 80-character line. A caller that fed unbounded remote text in
+///  would inherit an unbounded scan, and should clip at the boundary first.
 int _contentStart(String value, int chunkSize) {
   for (var start = 0; start < value.length; start += chunkSize) {
     final end = value.length - start < chunkSize
