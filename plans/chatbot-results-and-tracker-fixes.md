@@ -361,6 +361,23 @@ Six findings, none CRITICAL. The two hook items are the same ones answered in
 rounds 7-9; the one WARNING open for six rounds straight (`addTrackerFailedText`)
 cannot be closed here, because the Arabic wording belongs to the maintainer.
 
+### Follow-up owed on the stacked PR #44
+
+This branch's history was rewritten (revert pairs collapsed), so #44's branch
+no longer has it as an ancestor: `git merge-base` falls back to `3bc37d0`, and
+GitHub now shows 17 commits and +6 903 for #44 — work that belongs to #43.
+
+`git rebase feat/chatbot-results-and-tracker-fixes feat/tracker-delete-and-price-ranges`
+fixes it. Measured on a scratch branch (nothing pushed): the first conflict is
+`services/chatbot/search_service.py` while reapplying `55515d0` *"chatbot: price
+ranges, drop off-topic products, find in-budget items"*, against the rounds 4-6
+rewrite of that same file. Nine files overlap in total
+(`search_service.py`, `main.py`, `models.py`, `arabic_nlp.py`, `i18n.py`,
+`test_main.py`, `test_migration_files.py`, `dashboard_page.dart`,
+`scripts/db-bootstrap.sh`). Resolve them against this branch's current
+tool-calling schema and search shape rather than the old one, then force-push
+#44's branch.
+
 ## Test strategy
 - API: link parsing (parametrized), title persisted and exposed (incl.
   non-dict `specs`), Amazon image/title extraction, beacon skipping; credit
