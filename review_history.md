@@ -15395,3 +15395,162 @@ WARNING: Diff truncated from 319868 to 50000 chars
 Review completed in 266.0s
 Decision: REQUEST_CHANGES (confidence: 0.72)
 Findings: 10
+## PR Review: Tracker deletion, reliable tracker list behind HTTPS proxies, chatbot price ranges
+Model: local/qwen-27b
+Files changed: 43
+WARNING: Diff truncated from 393448 to 50000 chars
+
+### Raw LLM Response
+{
+  "summary": "This PR adds Flutter tracker deletion with confirmation, fixes tracker loading behind HTTPS proxies by requesting the exact trailing-slash route, improves live-mode error handling with a retry action, and introduces chatbot query caching plus SQL migration support for cached searches and ordered result groups. The visible changes are generally thoughtful and well documented, but there are several correctness, performance, testing, and security follow-ups that should be addressed before merge.",
+  "decision": "REQUEST_CHANGES",
+  "confidence": 0.78,
+  "findings": [
+    {
+      "file": "flutter-app/lib/src/ui/dashboard/dashboard_page.dart",
+      "line": 208,
+      "severity": "WARNING",
+      "category": "correctness",
+      "title": "Async delete flow should guard against disposed widget/ref",
+      "description": "After awaiting the confirmation dialog, the code uses ref.read and ScaffoldMessenger. If the user navigates away while the dialog is open or immediately after confirming, the widget and Riverpod ref may be disposed before the async continuation completes. The code guards ScaffoldMessenger with context.mounted, but it does not guard the repository read or the overall continuation.",
+      "suggestion": "Capture the repository before awaiting the dialog, and check both context.mounted and ref.mounted before using them after the await. For example: final repository = ref.read(trackedItemsRepositoryProvider); if (!context.mounted || !ref.mounted) return false; before deletion and before showing snackbars."
+    },
+    {
+      "file": "flutter-app/lib/src/ui/dashboard/dashboard_page.dart",
+      "line": 131,
+      "severity": "INFO",
+      "category": "correctness",
+      "title": "Swipe direction may not be 'left' in Arabic RTL layouts",
+      "description": "Dismissible uses DismissDirection.endToStart, which is direction-aware. In an Arabic RTL layout, endToStart may correspond to a right swipe rather than the described 'swipe left' interaction.",
+      "suggestion": "Verify the intended behavior in RTL. If the requirement is always swipe left regardless of locale, use an explicit direction such as DismissDirection.rightToLeft, or add a widget test for Arabic RTL."
+    },
+    {
+      "file": "flutter-app/lib/src/data/repositories/tracked_items_repository.dart",
+      "line": 100,
+      "severity": "INFO",
+      "category": "testing",
+      "title": "DELETE route proxy/redirect behavior is not covered",
+      "description": "The GET route was changed to '/tracked-items/' to avoid a proxy redirect issue. deleteTrackedItem uses '/tracked-items/$itemId' without a trailing slash. This is probably correct, but the PR description emphasizes proxy redirect behavior, so the DELETE route should be explicitly verified and tested.",
+      "suggestion": "Add a repository test that asserts the DELETE request path and response handling, and verify against the API route definition and proxy behavior."
+    },
+    {
+      "file": "docker-compose.yml",
+      "line": 110,
+      "severity": "WARNING",
+      "category": "performance",
+      "title": "Cache sweep tied to writes can leave expired rows in long-running read-heavy workloads",
+      "description": "The cache is swept on the first cache read of a process and then every CACHE_SWEEP_EVERY_WRITES writes. If a long-running process mostly hits the cache and performs few writes, expired rows may remain in chat_query_cache for a long time.",
+      "suggestion": "Add a periodic sweep on reads after a time interval, or sweep when the number of expired rows exceeds a threshold. Alternatively, document that this is acceptable because the table is bounded by distinct queries and process restarts."
+    },
+    {
+      "file": "docker-compose.yml",
+      "line": 110,
+      "severity": "WARNING",
+      "category": "performance",
+      "title": "CACHE_MAX_PRODUCTS bounds product count but not payload size",
+      "description": "The cache caps each entry at CACHE_MAX_PRODUCTS products, but a single product can still contain large titles, URLs, image URLs, or other JSON fields. JSONB rows can therefore grow beyond the intended memory/storage budget.",
+      "suggestion": "Cap the serialized JSON size per cache entry, strip unnecessary fields before caching, or enforce a maximum byte size in addition to the product count."
+    },
+    {
+      "file": "services/chatbot/main.py",
+      "line": 1,
+      "severity": "WARNING",
+      "category": "security",
+      "title": "Rate limiting is ineffective behind a shared proxy source address",
+      "description": "The PR description notes that behind Tailscale Funnel all clients share one source address, so the chatbot's 10/minute IP-based rate limit is shared between users. This can cause legitimate users to be throttled by unrelated traffic and weakens abuse protection.",
+      "suggestion": "Key the limiter by authenticated user id when available, fall back to IP only for unauthenticated requests, and ensure proxy headers are trusted only when the deployment is behind a known proxy."
+    },
+    {
+      "file": "infra/sql/migrations/0011_chatbot_query_cache.sql",
+      "line": 120,
+      "severity": "WARNING",
+      "category": "performance",
+      "title": "Legacy backfill uses a correlated NOT EXISTS subquery",
+      "description": "The backfill excludes sessions that already have grouped rows using a correlated NOT EXISTS for each unstamped row. This is acceptable for small chat_search_results tables, but it can become expensive if the table grows.",
+      "suggestion": "Precompute sessions that already have search_id values and use an anti-join or CTE, or add a guard/limit if the migration is expected to run against large historical data."
+    },
+    {
+      "file": "infra/sql/migrations/0011_chatbot_query_cache.sql",
+      "line": 105,
+      "severity": "INFO",
+      "category": "performance",
+      "title": "Index creation is not concurrent",
+      "description": "The migration creates idx_chat_search_results_session_search inside the migration transaction. This can lock chat_search_results during upgrade. The comment justifies this because the table is small, but it is still an operational consideration.",
+      "suggestion": "Keep as-is if deployments are small, or provide an operational note that large deployments should create the index concurrently outside the migration transaction."
+    },
+    {
+      "file": "plans/chatbot-enhancements.md",
+      "line": 1,
+      "severity": "INFO",
+      "category": "documentation",
+      "title": "Plan file referenced in PR description differs from added plan",
+      "description": "The PR description references plans/tracker-delete-and-price-ranges.md, but the visible diff adds plans/chatbot-enhancements.md. This may be intentional, but it makes the documented plan harder to follow.",
+      "suggestion": "Ensure the referenced plan file exists, update the PR description, or link the added plan explicitly."
+    },
+    {
+      "file": "services/chatbot/arabic_nlp.py",
+      "line": 1,
+      "severity": "WARNING",
+      "category": "testing",
+      "title": "Known Arabic price-parsing failures remain",
+      "description": "The PR description reports 2 failing Arabic price-parsing tests that also fail on the base branch. Since this PR explicitly adds Arabic range parsing and manual Arabic examples, leaving known failing tests unaddressed reduces confidence in the feature.",
+      "suggestion": "Fix the Arabic parser, or mark the tests as expected failures with a clear issue reference and reason. Do not leave failing tests in the suite without an explicit marker."
+    },
+    {
+      "file": "services/chatbot/search_service.py",
+      "line": 1,
+      "severity": "WARNING",
+      "category": "correctness",
+      "title": "Price-range parser should define behavior for reversed or invalid ranges",
+      "description": "The new intent supports min_price and max_price, but the visible diff does not show how reversed ranges such as '70k to 40k' or impossible ranges where min > max are handled. This can produce empty or confusing results.",
+      "suggestion": "Swap reversed ranges, reject invalid ranges with a user-facing message, or clamp min/max consistently. Add tests for reversed ranges, min only, max only, and min == max."
+    },
+    {
+      "file": "services/chatbot/search_service.py",
+      "line": 1,
+      "severity": "WARNING",
+      "category": "testing",
+      "title": "Truncated JSON recovery needs strict malformed-output tests",
+      "description": "The PR recovers complete products from a cut-off LLM answer. If recovery is too permissive, it may include partial products or malformed entries. The visible diff does not show tests proving that incomplete JSON objects are excluded.",
+      "suggestion": "Add tests for truncated JSON with complete products, partial final product, malformed JSON, and empty recovery. Ensure only fully valid product objects are returned."
+    },
+    {
+      "file": "services/chatbot/main.py",
+      "line": 1,
+      "severity": "WARNING",
+      "category": "security",
+      "title": "Ownership checks for tracker deletion and chatbot add-to-feed should be tested",
+      "description": "Tracker deletion cascades to price history, and chatbot add-to-feed resolves results by session. If these endpoints do not enforce user/session ownership, a guessed id could expose or modify another user's data. The visible diff does not show tests for this.",
+      "suggestion": "Add tests that user A cannot delete user B's tracker, and user A cannot resolve or add results from user B's chat session."
+    }
+  ],
+  "missed_tests": [
+    "Flutter repository test for deleteTrackedItem success, HTTP 404, network failure, and unexpected response.",
+    "Flutter widget test for swipe-to-delete: confirmation shown, cancel slides card back, successful delete removes card, failed delete shows error and slides card back.",
+    "Flutter widget test for live-mode tracker load error showing the retry button and invalidating the provider.",
+    "Flutter widget test for demo-mode fallback when the tracker request fails.",
+    "Flutter localization test or snapshot test for new English and Arabic tracker deletion strings.",
+    "SQL migration test that legacy chat_search_results rows are backfilled with deterministic search_id and 0-based positions.",
+    "SQL migration idempotency test: rerunning 0011 does not re-rank already stamped rows or duplicate cache table constraints.",
+    "SQL migration test that sessions with already grouped rows are not backfilled.",
+    "Chatbot parser tests for English and Arabic price ranges, over/under, 'k' amounts, reversed ranges, min only, max only, and invalid ranges.",
+    "Chatbot tests for dropping irrelevant products and preserving relevant products when the LLM marks relevance.",
+    "Chatbot tests for truncated JSON recovery, ensuring partial products are not included.",
+    "Cache tests for CACHE_PROFILE_VERSION invalidation, negative cache TTL, detached copies, and cache key normalization.",
+    "Security tests for tracker deletion authorization and chatbot session ownership."
+  ],
+  "positive_notes": [
+    "The trailing-slash fix directly addresses the proxy redirect/cleartext failure in release builds and is well explained in comments.",
+    "Live-mode load failures now surface an error with an explicit retry action instead of silently showing an empty list.",
+    "Demo mode remains separate from live mode, preserving sample data fallback where appropriate.",
+    "New English and Arabic strings are added consistently through the localization pipeline.",
+    "The cache design includes TTLs, negative-result TTLs, profile versioning, bounded product counts, and expiry indexing.",
+    "The SQL migration is idempotent, handles fresh versus migrated databases, and carefully backfills legacy result positions.",
+    "The PR description documents known limitations and manual verification steps clearly."
+  ]
+}
+
+
+Review completed in 447.7s
+Decision: REQUEST_CHANGES (confidence: 0.78)
+Findings: 13
