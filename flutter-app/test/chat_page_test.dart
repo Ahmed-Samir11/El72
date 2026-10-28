@@ -692,8 +692,10 @@ void main() {
     expect(messages.first.content.length, maxChatContentLength);
     expect(tester.takeException(), isNull);
 
-    // ...while the service still receives what the user actually typed. The
-    // bound is on what the app retains, not on what the user may submit.
-    expect(repository.lastSentLength, pasted.length);
+    // ...while the service receives at most what the app is willing to keep:
+    // the send path cuts the turn at the same bound the draft and the history
+    // use, so a pasted megabyte cannot spend a credit on a payload the LLM
+    // could never have read.
+    expect(repository.lastSentLength, maxChatContentLength);
   });
 }

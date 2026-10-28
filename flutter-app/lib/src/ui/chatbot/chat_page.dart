@@ -112,14 +112,10 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
     super.dispose();
   }
 
-  /// Remember what the user is typing, bounded to the size the app retains.
-  //
-  /// A pasted wall of text (a page dump, a megabyte of JSON) otherwise stays
-  /// reachable for as long the signed-in session lives: the draft is re-shown
-  /// when the tab is reopened, and it is the one copy of user text that never
-  /// passes through the model parser, which is where remote text gets clipped.
-  /// Honest limit: this bounds what the app keeps, not what the user can paste
-  /// into a send — the repository still receives the full text.
+  // A pasted wall of text (a page dump, a megabyte of JSON) otherwise stays
+  // reachable for as long the signed-in session lives: the draft is re-shown
+  // when the tab is reopened, and it is the one copy of user text that never
+  // passes through the model parser, which is where remote text gets clipped.
   void _saveDraft() {
     if (_conversation.isDisposed) return;
     _conversation.draft = clip(_controller.text, maxChatContentLength);
@@ -185,8 +181,18 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
   Future<void> _sendMessage() async {
     if (!mounted) return;
 
-    final text = _controller.text.trim();
-    if (text.isEmpty) return;
+    final typed = _controller.text.trim();
+    if (typed.isEmpty) return;
+
+    // What the app transmits is what the app keeps: one bound on a turn of the
+    // chat, applied before the request is built. The input field itself places
+    // no limit on typing or pasting, and the service's own budget is far below
+    // this limit, so a payload larger than this is not a search the user could
+    // get an answer to — it would spend a credit and be truncated by the model.
+    // Rejecting it out loud would need a new localized string (and with it the
+    // Arabic twin this model must not author), so the text is cut at the same
+    // bound the draft and the history use.
+    final text = clip(typed, maxChatContentLength);
 
     // Captured up front: the conversation outlives this page, so a reply that
     // arrives after the user switched tabs is still recorded there; only the
@@ -212,18 +218,16 @@ class _ChatPageBodyState extends State<_ChatPageBody> {
       conversation.sessionId = sessionId;
     }
 
-    // Add user message optimistically — use UUID to avoid collisions.
-    // The stored copy is clipped at the same bound the parser uses for the
-    // service's own text, so the history cap stays honest: "keep the last 200
-    // turns" is not a memory bound while one turn can be arbitrarily large. The
-    // request still carries the full text — this bounds what the app retains,
-    // not what the user is allowed to submit.
+    // Add user message optimistically — use UUID to avoid collisions. `text`
+    // is already cut at the turn bound above, so the history and the request
+    // carry the same characters: "keep the last 200 turns" is only a memory
+    // bound while a single turn is bounded too.
     conversation.addMessage(
       ChatMessageModel(
         id: _generateUuid(),
         sessionId: sessionId,
         role: 'user',
-        content: clip(text, maxChatContentLength),
+        content: text,
         createdAt: DateTime.now(),
       ),
     );
