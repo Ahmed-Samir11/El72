@@ -20,6 +20,9 @@ const int maxResultStoreNameLength = 200;
 /// user somewhere they were never shown.
 const int maxResultUrlLength = 4096;
 
+const int maxResultStoreIdLength = 64;
+const int maxResultCurrencyLength = 16;
+
 /// How many results one reply may bring into the app.
 //
 /// Mirrors `ChatConversation.maxSearchResults`, but has to be applied here as
@@ -50,6 +53,7 @@ List<SearchResultModel> _parseSearchResults(List<dynamic>? entries) {
   final results = <SearchResultModel>[];
   var scanned = 0;
   var skipped = 0;
+  String? firstFailure;
 
   for (final entry in entries ?? const []) {
     if (results.length >= maxParsedSearchResults ||
@@ -60,12 +64,18 @@ List<SearchResultModel> _parseSearchResults(List<dynamic>? entries) {
 
     if (entry is! Map<String, dynamic>) {
       skipped++;
+      firstFailure ??= 'entry ${scanned - 1} is not an object';
       continue;
     }
     try {
       results.add(SearchResultModel.fromJson(entry));
-    } catch (_) {
+    } catch (error) {
       skipped++;
+      // Keep the first failure with its message: a service whose schema broke
+      // would otherwise look like an empty list plus a count, which is the
+      // difference between "one hostile entry" and "nothing parses any more".
+      // A test pins that good entries are never dropped by this net.
+      firstFailure ??= 'entry ${scanned - 1}: $error';
     }
   }
 
@@ -74,7 +84,7 @@ List<SearchResultModel> _parseSearchResults(List<dynamic>? entries) {
   if (skipped > 0) {
     debugPrint(
       'Skipped $skipped unusable chatbot search result(s) '
-      'of $scanned scanned',
+      'of $scanned scanned; first failure: $firstFailure',
     );
   }
   return results;
@@ -301,11 +311,15 @@ class SearchResultModel {
         : rawImageUrl;
 
     return SearchResultModel(
-      storeId: storeId,
+      // A store id and a currency code are identifiers, not display text: the
+      // service sends a slug and an ISO three-letter code. Clipping far above
+      // that shape costs nothing legitimate and keeps an oversized field from
+      // staying alive in the conversation for the whole signed-in session.
+      storeId: clip(storeId, maxResultStoreIdLength),
       storeName: clip(storeName, maxResultStoreNameLength),
       title: clip(title, maxResultTitleLength),
       price: price,
-      currency: currency,
+      currency: clip(currency, maxResultCurrencyLength),
       url: safeUrl,
       imageUrl: safeImageUrl,
       inStock: inStock ?? true,

@@ -469,6 +469,34 @@ void main() {
       expect(model.imageUrl, '');
     });
 
+    test('a store id and a currency code are bounded too', () {
+      // These are identifiers rather than display text — a slug and an ISO
+      // three-letter code — so a hostile reply that stuffs megabytes into them
+      // must not have them kept alive in the conversation for the whole session.
+      final model = SearchResultModel.fromJson({
+        'store_id': 's' * 5000,
+        'store_name': 'Sigma Computer',
+        'title': 'Monitor',
+        'price': 100,
+        'currency': 'c' * 5000,
+        'url': 'https://sigma-computer.com/product/1',
+      });
+      expect(model.storeId.length, maxResultStoreIdLength);
+      expect(model.currency.length, maxResultCurrencyLength);
+
+      // The legitimate shapes are far inside both bounds and stay untouched.
+      final real = SearchResultModel.fromJson({
+        'store_id': 'amazon_eg',
+        'store_name': 'Amazon Egypt',
+        'title': 'Kindle',
+        'price': 100,
+        'currency': 'EGP',
+        'url': 'https://amazon.eg/dp/1',
+      });
+      expect(real.storeId, 'amazon_eg');
+      expect(real.currency, 'EGP');
+    });
+
     test('clipping never splits a surrogate pair', () {
       // A cut between the two halves would leave a lone surrogate that renders
       // as a replacement glyph.
