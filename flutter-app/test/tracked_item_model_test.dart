@@ -118,6 +118,19 @@ void main() {
       expect(item.displayName, 'amazon_eg:---_');
     });
 
+    test('a scraped title is folded onto one line', () {
+      // The scraper stores the page title as the markup had it, which can wrap
+      // across lines or pad it with tabs. The card lays `displayName` out on
+      // one line, so the whitespace is folded where the model reads the field -
+      // the same rule the toast helpers use, without their length cap.
+      final item = TrackedItem.fromJson({
+        'id': 10,
+        'canonical_product_id': 'amazon_eg:kindle',
+        'title': '  Kindle\n\tPaperwhite   Signature\nEdition  ',
+      });
+      expect(item.displayName, 'Kindle Paperwhite Signature Edition');
+    });
+
     test('an empty id has no label to invent', () {
       // Nothing to derive from and no key to invent: the card shows an empty
       // title rather than a made-up English one.

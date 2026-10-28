@@ -101,8 +101,11 @@ class TrackedItem {
   /// and inventing a word like "Unknown" would be a new i18n key that needs
   /// its Arabic twin authored.
   String get displayName {
-    final scraped = title?.trim();
-    if (scraped != null && scraped.isNotEmpty) return scraped;
+    // The scraped title is folded before it is used as a label: a store page
+    // can carry a title that its markup wrapped across lines, and the card lays
+    // this out on one line.
+    final scraped = foldWhitespace(title ?? '');
+    if (scraped.isNotEmpty) return scraped;
     final colon = canonicalProductId.indexOf(':');
     final slug = colon >= 0
         ? canonicalProductId.substring(colon + 1)

@@ -70,6 +70,18 @@ int _contentStart(String value, int chunkSize) {
   return value.length;
 }
 
+/// Runs of whitespace, folded to a single space before any cap is measured.
+final _whitespaceRuns = RegExp(r'\s+');
+
+/// A remote string made safe to sit inside a line the app is laying out.
+//
+/// Whitespace runs collapse to one space and both ends are trimmed, so a title
+/// that its source markup wrapped across lines cannot break whatever shows it.
+/// No length bound here: the screens that need one call [toastTitle] or
+/// [toastMessage], which fold first and then cut at the cap.
+String foldWhitespace(String value) =>
+    value.replaceAll(_whitespaceRuns, ' ').trim();
+
 /// Whitespace-folded, cut to `max` characters with the tail replaced by "…".
 String _oneLine(String value, int max) {
   // A line this short has no room for content plus an ellipsis, and indexing
@@ -88,7 +100,7 @@ String _oneLine(String value, int max) {
   final end = value.length < start + max * 8 ? value.length : start + max * 8;
   final singleLine = value
       .substring(start, end)
-      .replaceAll(RegExp(r'\s+'), ' ')
+      .replaceAll(_whitespaceRuns, ' ')
       .trim();
   if (singleLine.length <= max) return singleLine;
 
