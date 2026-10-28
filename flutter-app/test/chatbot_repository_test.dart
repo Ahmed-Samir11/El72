@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:elhaq_tracker/src/data/models/chat_message_model.dart';
 import 'package:elhaq_tracker/src/data/repositories/chatbot_repository.dart';
 
 /// In-memory stand-in for [FlutterSecureStorage]: no platform channel is touched,
@@ -134,6 +135,26 @@ void main() {
           reason: bad,
         );
       }
+    });
+
+    test('refuses a product url longer than any product page', () async {
+      // The model parser already drops such a link on the way in; this path
+      // takes a url handed straight to it, so the same bound has to hold here
+      // or an over-long payload could still be forwarded to the service that
+      // will fetch it.
+      final repo = ChatbotRepository(dio: Dio(), storage: _FakeSecureStorage());
+      const sessionId = '550e8400-e59b-4f0f-9249-6b1f1de2e80a';
+
+      final overLong = 'https://2b.com.eg/p/${'a' * (maxResultUrlLength + 10)}';
+      await expectLater(
+        repo.addToFeed(sessionId: sessionId, productUrl: overLong),
+        throwsA(isA<ArgumentError>()),
+        reason: 'an over-long link must not reach the fetching service',
+      );
+
+      // The other side of the same bound — a real link with 900 characters of
+      // referral parameters — is pinned where no network is needed: see
+      // `chatbot_models_test.dart`, "a long product page link stays launchable".
     });
   });
 }

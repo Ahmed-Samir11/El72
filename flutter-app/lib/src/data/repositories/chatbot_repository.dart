@@ -129,23 +129,33 @@ class ChatbotRepository {
     );
   }
 
-  /// Reject a scraped product url that is not an absolute web address.
+  /// Reject a scraped product url that the app may not forward at all.
   ///
   /// The value is copied straight out of a third-party page, and it is
   /// forwarded to the tracker service, which is the component that will go and
   /// fetch it. A relative url would be resolved against the API base by the
-  /// service, and a non-web scheme (`file:`, `data:`, some app's custom
-  /// scheme) is not something that can ever be priced. [SearchResultCard]
-  /// already disables its button on the same rule, but `addToFeed` is public
-  /// API, so the repository refuses it rather than trusting its caller. Both
-  /// sides call the shared [isHttpUrl] helper so the UI promise and this
-  /// server-side guard cannot drift apart.
+  /// service, a non-web scheme (`file:`, `data:`, some app's custom scheme) is
+  /// not something that can ever be priced, and a link longer than
+  /// [maxResultUrlLength] is payload rather than an address — the model parser
+  /// already refuses such a link on the way in, and this path must not be able
+  /// to smuggle one through.
+  ///
+  /// [SearchResultCard] already disables its button on the same rule, but
+  /// `addToFeed` is public API, so the repository refuses it rather than trusting
+  /// its caller.
+  //
+  ///  Note what this is *not*: a client-side check is defence in depth, bypassed
+  ///  by anyone who builds their own request. The authoritative fetch policy is
+  ///  `services/common/url_policy.py`, enforced by the API service before it visits
+  ///  a url. Both sides call the shared [isHttpUrl] helper so the UI promise and
+  ///  this check cannot drift apart from each other.
   static String _requireHttpUrl(String productUrl) {
-    if (!isHttpUrl(productUrl)) {
+    if (!isHttpUrl(productUrl) || productUrl.length > maxResultUrlLength) {
       throw ArgumentError.value(
         productUrl,
         'productUrl',
-        'must be an absolute http/https url',
+        'must be an absolute http/https url no longer than '
+            '$maxResultUrlLength characters',
       );
     }
     return productUrl;

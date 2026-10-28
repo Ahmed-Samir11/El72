@@ -42,6 +42,35 @@ void main() {
     });
   });
 
+  group('TrackedItem title stays bounded', () {
+    test('a page-sized scraped title is clipped where it enters the app', () {
+      // The scraper copies the store page's title straight out of third-party
+      // markup, and the card renders it. Bounded at parse time, no later screen
+      // has to remember to do it, and a runaway page cannot keep a megabyte of
+      // text alive for the whole dashboard session.
+      final item = TrackedItem.fromJson({
+        'id': 5,
+        'canonical_product_id': 'amazon_eg:kindle',
+        'title': 't' * 5000,
+      });
+      expect(item.title!.length, maxTrackedItemTitleLength);
+      // The card label comes from the same field, so it is bounded too.
+      expect(item.displayName.length, maxTrackedItemTitleLength);
+    });
+
+    test('a legitimate product name is left whole', () {
+      final item = TrackedItem.fromJson({
+        'id': 6,
+        'canonical_product_id': 'amazon_eg:kindle',
+        'title': 'Kindle Paperwhite Signature Edition (32 GB, 6.8" display)',
+      });
+      expect(
+        item.displayName,
+        'Kindle Paperwhite Signature Edition (32 GB, 6.8" display)',
+      );
+    });
+  });
+
   group('TrackedItem.displayName', () {
     test('prefers the scraped page title', () {
       final item = TrackedItem.fromJson({

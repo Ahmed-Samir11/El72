@@ -1,5 +1,7 @@
-/// Backend fetch-status values for a tracker's store mapping(s), mirroring
-/// the Python constants in `services/api/price_fetcher.py` (FETCH_*).
+import '../../core/format/toast_title.dart';
+
+/// Backend fetch-status values for a tracker's store mapping(s), mirroring the
+/// Python constants in `services/api/price_fetcher.py` (FETCH_*).
 /// `TrackedItem.fetchStatus` is `null` when never fetched / in flight;
 /// compare against these constants instead of raw string literals so the
 /// allowed states live in one place.
@@ -20,6 +22,16 @@ abstract final class FetchStatus {
   static bool isRetryable(String? status) =>
       status == blocked || status == fetchFailed;
 }
+
+/// Upper bound on a scraped product name held by a tracker.
+//
+///  `title` is written by the scraper out of a third-party page, and the card
+///  renders it. The same reasoning as the chat models: a bound applied where
+///  the text enters the app means no later screen has to remember it, and a
+///  hostile or runaway page cannot keep a megabyte of text alive for the whole
+///  dashboard session. Far above any real product name, so nothing legitimate
+///  is cut.
+const int maxTrackedItemTitleLength = 500;
 
 /// Model for a tracked item as returned by `GET /tracked-items`.
 ///
@@ -110,7 +122,9 @@ class TrackedItem {
     return TrackedItem(
       id: (json['id'] as num?)?.toInt() ?? 0,
       canonicalProductId: json['canonical_product_id'] as String? ?? '',
-      title: json['title'] is String ? json['title'] as String : null,
+      title: json['title'] is String
+          ? clip(json['title'] as String, maxTrackedItemTitleLength)
+          : null,
       targetPrice: (json['target_price'] as num?)?.toDouble(),
       isActive: json['is_active'] as bool? ?? true,
       storeCount: (json['store_count'] as num?)?.toInt() ?? 0,
