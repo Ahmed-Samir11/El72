@@ -68,5 +68,32 @@ void main() {
       });
       expect(item.displayName, 'Iphone 15 Pro');
     });
+
+    test('an id with nothing after the store prefix keeps the whole id', () {
+      // Stripping the prefix would leave an empty label, i.e. a card with no
+      // name at all. The raw id is the only thing that still identifies the
+      // tracker, and inventing a word like "Unknown" would be a new i18n key
+      // with an Arabic twin to author, so it is not an option here.
+      final item = TrackedItem.fromJson({
+        'id': 2,
+        'canonical_product_id': 'amazon_eg:',
+      });
+      expect(item.displayName, 'amazon_eg:');
+    });
+
+    test('a slug of nothing but separators keeps the whole id', () {
+      final item = TrackedItem.fromJson({
+        'id': 3,
+        'canonical_product_id': 'amazon_eg:---_',
+      });
+      expect(item.displayName, 'amazon_eg:---_');
+    });
+
+    test('an empty id has no label to invent', () {
+      // Nothing to derive from and no key to invent: the card shows an empty
+      // title rather than a made-up English one.
+      final item = TrackedItem.fromJson({'id': 4, 'canonical_product_id': ''});
+      expect(item.displayName, '');
+    });
   });
 }

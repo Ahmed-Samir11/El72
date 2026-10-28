@@ -81,6 +81,13 @@ class TrackedItem {
   /// label derived from the canonical id without its `store:` prefix (the
   /// store is not part of the product name, and is `unknown` for stores the
   /// backend does not recognise).
+  //
+  /// A name is what the card shows, so an id that leaves nothing behind once
+  /// the prefix is cut (`"amazon_eg:"`, or a slug that is only separators like
+  /// `"amazon_eg:---"`) falls back to the whole id instead of an empty string:
+  /// a card with no name at all is worse than one showing its raw identifier,
+  /// and inventing a word like "Unknown" would be a new i18n key that needs
+  /// its Arabic twin authored.
   String get displayName {
     final scraped = title?.trim();
     if (scraped != null && scraped.isNotEmpty) return scraped;
@@ -93,7 +100,9 @@ class TrackedItem {
         .split(' ')
         .where((w) => w.isNotEmpty)
         .map((w) => w[0].toUpperCase() + w.substring(1));
-    return words.join(' ').trim();
+    final label = words.join(' ').trim();
+    if (label.isEmpty) return canonicalProductId;
+    return label;
   }
 
   factory TrackedItem.fromJson(Map<String, dynamic> json) {
