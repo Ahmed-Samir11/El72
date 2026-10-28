@@ -18,7 +18,10 @@ class ChatConversation extends ChangeNotifier {
   /// Cap on the results kept from one search. The service answers with a handful
   /// per store; an oversized or hostile response must not be kept alive for the
   /// whole run. The list is ranked best-first, so the extras are the weakest.
-  static const int maxSearchResults = 50;
+  /// One constant, shared with the parser in `chat_message_model.dart`: the
+  /// reply is now cut while it is parsed, and trimming here afterwards is the
+  /// same limit seen from the other side, so the two cannot drift apart.
+  static const int maxSearchResults = maxParsedSearchResults;
 
   final List<ChatMessageModel> _messages = [];
   final List<SearchResultModel> _searchResults = [];

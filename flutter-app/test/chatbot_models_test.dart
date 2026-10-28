@@ -601,6 +601,33 @@ void main() {
       expect(maxParsedSearchResults, ChatConversation.maxSearchResults);
     });
 
+    test('a flood of junk is scanned only to its own limit', () {
+      // A valid entry placed past the scan limit must stay unseen: reaching it
+      // would mean the parser walked every broken entry in front of it, which
+      // is exactly the cost this bound exists to prevent.
+      final junk = List.generate(
+        maxScannedSearchResults + 5,
+        (_) => {'oops': 'nothing usable'},
+      );
+      final response = ChatResponseModel.fromJson({
+        'message': 'x',
+        'session_id': 's1',
+        'search_results': [...junk, _resultEntry('past the scan limit')],
+      });
+      expect(response.searchResults, isEmpty);
+
+      // The same array with its usable entry inside the limit is found.
+      final reachable = ChatResponseModel.fromJson({
+        'message': 'x',
+        'session_id': 's1',
+        'search_results': [
+          ...junk.take(maxScannedSearchResults - 1),
+          _resultEntry('inside the scan limit'),
+        ],
+      });
+      expect(reachable.searchResults.single.title, 'inside the scan limit');
+    });
+
     test('a valid reply still parses every result', () {
       final response = ChatResponseModel.fromJson({
         'message': 'Found 3 products',

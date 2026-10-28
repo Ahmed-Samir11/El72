@@ -29,6 +29,14 @@ const int maxResultUrlLength = 4096;
 /// thrown away. Checking before parsing makes the cap a cost bound.
 const int maxParsedSearchResults = 50;
 
+/// How many entries a single reply may make the app look at.
+//
+/// The usable count is capped at [maxParsedSearchResults], but an array made
+/// of entries that all fail to parse would otherwise still be walked to its
+/// end, and every failure would log. Scanning stops here whatever the entries
+/// are, so a hostile array is neither parsed nor printed without a limit.
+const int maxScannedSearchResults = maxParsedSearchResults * 10;
+
 /// Turn the `search_results` array into models one entry at a time, skipping
 /// the entries that are not usable.
 //
@@ -40,17 +48,34 @@ const int maxParsedSearchResults = 50;
 /// building objects that are going to be trimmed away.
 List<SearchResultModel> _parseSearchResults(List<dynamic>? entries) {
   final results = <SearchResultModel>[];
+  var scanned = 0;
+  var skipped = 0;
+
   for (final entry in entries ?? const []) {
-    if (results.length >= maxParsedSearchResults) break;
+    if (results.length >= maxParsedSearchResults ||
+        scanned >= maxScannedSearchResults) {
+      break;
+    }
+    scanned++;
+
     if (entry is! Map<String, dynamic>) {
-      debugPrint('Ignoring a chatbot search result that is not an object');
+      skipped++;
       continue;
     }
     try {
       results.add(SearchResultModel.fromJson(entry));
-    } catch (error) {
-      debugPrint('Ignoring a malformed chatbot search result: $error');
+    } catch (_) {
+      skipped++;
     }
+  }
+
+  // One line for a whole reply, not one per junk entry: a service that answers
+  // with garbage would otherwise fill the log on every search.
+  if (skipped > 0) {
+    debugPrint(
+      'Skipped $skipped unusable chatbot search result(s) '
+      'of $scanned scanned',
+    );
   }
   return results;
 }
