@@ -340,6 +340,27 @@ confidence 0.78, 538.8 s, reviewed `76e229e`. Diff truncated again (`357564 → 
 | 9 | INFO — the stored bearer token is not trimmed | FIXED | `_authOptions` trims before building the header, so a token read back with stray whitespace cannot become `Bearer  <jwt> ` and be read as malformed rather than unauthenticated |
 | 10 | WARNING — the PR description reports two failing Arabic tests | ROOT CAUSE FOUND | **the PR body said it**, not the code: "Chatbot: 32 passed, 2 failed … also fail on the base branch". That sentence is what every round from 5 to 13 re-raised. It is replaced with the current run — `pytest services/chatbot -q` → 35 passed, 0 failed — and the Python/Flutter counts are refreshed to 803 passed/1 skipped and 257 passed |
 
+## Review response (PR #43 re-review, round 14: 6 findings, 0 CRITICAL, REQUEST_CHANGES)
+
+Reviewer comment id `6476123974`, feedback id `2f3516cf-6211-4ee1-8eba-aa87b0ad3bed`,
+confidence 0.78, 531.4 s, reviewed `c05809f`. Truncation unchanged (`367271 → 50000`).
+
+The Arabic-test claim is gone after the PR body was rewritten — which confirms
+that the rounds re-raising it were reading the description, not the suite.
+
+| # | Finding | Verdict | Where |
+| --- | --- | --- | --- |
+| 1 | WARNING — `_oneLine` folds whitespace but never removes control characters | FIXED | `foldWhitespace` closed that hole for card labels while `_oneLine` missed it, so the toast paths kept it: a stray escape survives a whitespace fold — it is not a line break — and renders as a replacement glyph |
+| 2 | WARNING — result `title`/`storeName` are clipped but not display-sanitized | FIXED | folded *before* clipping. Clipping first spends the cap on invisible characters instead of the product name a user is trying to recognize |
+| 3 | INFO — the url guard misses bidi embedding and override controls | FIXED | the refused set became the whole U+2000-U+206F block — Unicode spaces, line and paragraph separators, bidi controls, invisible formatting characters — plus C1 separators, NBSP, the zero-width marker and the interlinear annotation tags. `Uri` percent-encodes any of them into the host, which is exactly how a spoofed hostname reads clean. Non-ASCII *text* still passes |
+| 4 | INFO — the surrogate back-off was duplicated in `clip` and `_oneLine` | FIXED | one `_safeCut` helper; two copies of that rule were free to drift |
+| 5 | INFO — `${CLAUDE_PROJECT_DIR:-.}` under a `powershell` matcher may not expand | FALSE | Claude Code substitutes `${CLAUDE_PROJECT_DIR}` itself before the command runs — it is not shell expansion, so the tool UI cannot break it. A relative `scripts/check_branch.py` would work too, and the guard fails closed either way, but the expansion is the documented form: `.claude/settings.json` is left unchanged |
+| 6 | INFO — the hook schema change may disable the branch guard, "tests may only validate JSON shape" | ALREADY COVERED | `test_branch_guard.py` runs both guard scripts as real subprocesses against throwaway repos — denied on `main`, allowed on a feature branch, fail-closed outside a repo — and `test_hook_config.py` pins the key/entry/script path both loaders read |
+
+Six findings, none CRITICAL. The two hook items are the same ones answered in
+rounds 7-9; the one WARNING open for six rounds straight (`addTrackerFailedText`)
+cannot be closed here, because the Arabic wording belongs to the maintainer.
+
 ## Test strategy
 - API: link parsing (parametrized), title persisted and exposed (incl.
   non-dict `specs`), Amazon image/title extraction, beacon skipping; credit
