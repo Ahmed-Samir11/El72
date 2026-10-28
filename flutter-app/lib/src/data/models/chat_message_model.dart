@@ -330,8 +330,12 @@ class SearchResultModel {
       // that shape costs nothing legitimate and keeps an oversized field from
       // staying alive in the conversation for the whole signed-in session.
       storeId: clip(storeId, maxResultStoreIdLength),
-      storeName: clip(storeName, maxResultStoreNameLength),
-      title: clip(title, maxResultTitleLength),
+      storeName: clip(foldWhitespace(storeName), maxResultStoreNameLength),
+      // The card renders this, and third-party titles come wrapped over lines:
+      // folding first means the cap is spent on the product name rather than
+      // on invisible characters, and control characters that survive a fold
+      // (a stray escape from the page's own pipeline) never reach the screen.
+      title: clip(foldWhitespace(title), maxResultTitleLength),
       price: price,
       currency: clip(currency, maxResultCurrencyLength),
       url: safeUrl,

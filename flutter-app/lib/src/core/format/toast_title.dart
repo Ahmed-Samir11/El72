@@ -39,12 +39,17 @@ String clip(String value, int max) {
   if (value.length <= max) {
     return value;
   }
-  var cut = max;
+  return value.substring(0, _safeCut(value, max));
+}
+
+/// Largest safe cut at or below [cut]: a `substring` cut that lands between the
+/// two halves of a surrogate pair — every emoji, and most non-BMP text — would
+/// leave a lone half that renders as a replacement glyph, so the pair is dropped
+/// whole instead.
+int _safeCut(String value, int cut) {
   final keptUnit = value.codeUnits[cut - 1];
-  if ((keptUnit & 0xfc00) == 0xd800) {
-    cut -= 1;
-  }
-  return value.substring(0, cut);
+  if ((keptUnit & 0xfc00) == 0xd800) cut -= 1;
+  return cut;
 }
 
 /// Length of a toast title, ellipsis included.
@@ -113,27 +118,16 @@ String _oneLine(String value, int max) {
   // so no more than `max * 8` units of the payload are held at once.
   final start = _contentStart(value, max * 8);
   final end = value.length < start + max * 8 ? value.length : start + max * 8;
-  final singleLine = value
-      .substring(start, end)
-      .replaceAll(_whitespaceRuns, ' ')
-      .trim();
+  // Control characters are removed before the fold, on the window rather than
+  // the payload: unlike whitespace they survive folding and would reach the
+  // snackbar as a replacement glyph or as text the user never saw.
+  final singleLine = foldWhitespace(value.substring(start, end));
   if (singleLine.length <= max) return singleLine;
 
   // The cap is the whole line the user sees, so the cut leaves a slot for the
   // ellipsis that replaces everything after it: a cut at `max` plus "…" would
   // be one character over the documented limit.
-  var cut = max - 1;
-
-  // `substring` counts UTF-16 code units, so a cut can land between the two
-  // halves of a surrogate pair — every emoji, and most non-BMP text — leaving
-  // a lone surrogate that renders as a replacement glyph. The unit kept at
-  // `cut - 1` is checked: a leading surrogate whose partner falls at `cut` is
-  // dropped instead, which backs the line off by one unit and keeps the pair
-  // whole. A cut may still fall between a base character and a combining mark
-  // or inside a ZWJ sequence, which loses decoration but stays valid text;
-  // grapheme-accurate boundaries would need an intl dependency.
-  final keptUnit = singleLine.codeUnits[cut - 1];
-  if ((keptUnit & 0xfc00) == 0xd800) cut -= 1;
+  final cut = _safeCut(singleLine, max - 1);
 
   return '${singleLine.substring(0, cut)}…';
 }

@@ -426,6 +426,21 @@ void main() {
       expect(model.message, answer);
     });
 
+    test('a card label is folded before it is cut', () {
+      // Third-party titles arrive wrapped over lines and can carry a stray escape
+      // from the page's own pipeline. Folding first spends the cap on the product
+      // name, and the escape never reaches the card as a replacement glyph.
+      final wrapped = SearchResultModel.fromJson({
+        'store_id': '2b_egypt',
+        'store_name': '2B\n\u007fEgypt',
+        'title': '${'\n  ' * 300}Samsung Odyssey G5\u0002',
+        'price': 100,
+        'url': 'https://2b.test/p',
+      });
+      expect(wrapped.title, 'Samsung Odyssey G5');
+      expect(wrapped.storeName, '2B Egypt');
+    });
+
     test('an oversized product title and store name are clipped', () {
       final model = SearchResultModel.fromJson({
         'store_id': 'sigma',

@@ -130,6 +130,27 @@ void main() {
   // The service's own explanation of a failed add-to-tracker is remote text too,
   // and it reaches the same snackbar; it is bounded here so the chat page does
   // not grow a second, drifting copy of the rule.
+  test('control characters never reach a toast', () {
+    // A scraped page can carry a stray escape from its own pipeline. Unlike
+    // whitespace it survives a fold, and on screen it is a replacement glyph -
+    // or, with the right sequence, text the user never saw being written.
+    final out = toastTitle('Monitor\u0002\u007fG5\u001b[31m');
+    expect(out, 'MonitorG5[31m');
+    expect(out.contains('\u0002'), false);
+    expect(out.contains('\u001b'), false);
+
+    // Same through the failure-message path.
+    expect(toastMessage('price\u0007 unavailable'), 'price unavailable');
+  });
+
+  test('a title is folded before it is cut, so the cap shows the product', () {
+    // 400 units of padding plus a real name: folding first means the 80-character
+    // toast carries the name, not the invisible characters.
+    final out = toastTitle('${'\n\t' * 200}Samsung Odyssey G5 ${'x' * 300}');
+    expect(out.length, maxToastTitleLength);
+    expect(out.startsWith('Samsung Odyssey G5'), true);
+  });
+
   test('a page-sized failure message becomes one bounded line', () {
     final hostile = "couldn't reach ${'store\n' * 400}";
     final out = toastMessage(hostile);
