@@ -36,12 +36,15 @@ bool isHttpUrl(String url) {
 }
 
 /// Characters no real url contains: ASCII control characters and space, the
-/// delete character, C1 separators, the Unicode line and paragraph separators,
-/// and the zero-width or format characters used to hide and reorder text.
+/// delete character, C1 separators, the whole U+2000-U+206F block (Unicode
+/// spaces, the line and paragraph separators, the bidi embedding/override controls
+/// and the invisible formatting characters), NBSP, the zero-width no-break
+/// marker and the interlinear annotation tags.
 //
 /// Matched through `String.split` because this Dart SDK exposes no `RegExp.test`
 /// and no `RegExp.match`. Anything left in is percent-encoded by `Uri`, which
-/// hides it inside the host rather than rejecting the link.
+/// hides it inside the host rather than rejecting the link — which is exactly
+/// how a bidi override becomes a visually spoofed hostname.
 final _urlControlChars = RegExp(
-  r'[\x00-\x20\x7f\x85\xa0\u200b-\u200f\u2028\u2029\u202f\u205f\u3000\ufeff]',
+  r'[\x00-\x20\x7f\x85\xa0\u2000-\u206f\ufeff\ufff9-\ufffb]',
 );
