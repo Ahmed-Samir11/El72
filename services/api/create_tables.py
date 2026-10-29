@@ -81,6 +81,14 @@ BEGIN
         EXECUTE format('ALTER TABLE affiliate_clicks DROP CONSTRAINT %I',
                        con.conname);
     END LOOP;
+    -- Orphaned user_id values (rows pointing at users deleted while the
+    -- table had no FK) would make ADD CONSTRAINT fail; the column is
+    -- nullable BY DESIGN, so an orphan degrades to an anonymous click
+    -- row — the same end state ON DELETE SET NULL would give.
+    UPDATE affiliate_clicks
+       SET user_id = NULL
+     WHERE user_id IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = affiliate_clicks.user_id);
     IF NOT EXISTS (
         SELECT 1 FROM pg_constraint
         WHERE conrelid = 'affiliate_clicks'::regclass
@@ -196,21 +204,19 @@ def _affiliate_upgrade_statements(dialect: str) -> list[str]:
 
 
 def _run_affiliate_upgrades(engine, dialect: str) -> None:
-    """Apply the affiliate constraint-parity statements (idempotent).
+    """Apply the affiliate constraint-parity statements.
 
-    A missing table means a fresh database that create_all just built from
-    the canonical ORM metadata — nothing to upgrade; anything else stays
-    loud.
+    A missing affiliate_clicks table means a fresh database that create_all
+    just built from the canonical ORM metadata — nothing to upgrade; with
+    the table present, every statement is idempotent and any failure is a
+    real upgrade error, so it stays loud (no blanket "does not exist"
+    swallowing that could hide a broken statement).
     """
+    if not inspect(engine).has_table("affiliate_clicks"):
+        return
     for ddl in _affiliate_upgrade_statements(dialect):
-        try:
-            with engine.begin() as conn:
-                conn.exec_driver_sql(ddl)
-        except Exception as exc:  # noqa: BLE001
-            detail = str(exc).lower()
-            if "no such table" in detail or "does not exist" in detail:
-                return
-            raise
+        with engine.begin() as conn:
+            conn.exec_driver_sql(ddl)
 
 
 if __name__ == "__main__":

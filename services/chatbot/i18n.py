@@ -7,8 +7,7 @@ MESSAGES = {
             "Try a different search term."
         ),
         "found_results": (
-            "I found {count} product{plural} matching "
-            "'{query}'{price_filter}:"
+            "I found {count} product{plural} matching " "'{query}'{price_filter}:"
         ),
         "added_to_feed": (
             "I've added '{title}' to your tracking feed. I'll monitor the price "
@@ -20,8 +19,7 @@ MESSAGES = {
             "Please try again later."
         ),
         "insufficient_credits": (
-            "Insufficient credits: {detail}. Upgrade your plan "
-            "to continue."
+            "Insufficient credits: {detail}. Upgrade your plan " "to continue."
         ),
         "empty_query": "Please enter a product to search for.",
         "price_filter": " under {max_price:g} EGP",

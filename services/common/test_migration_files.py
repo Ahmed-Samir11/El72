@@ -390,6 +390,9 @@ def test_affiliate_attribution_keeps_click_history_on_user_delete():
     # ...and the repair block must converge an old CASCADE (deltype 'c').
     assert "deltype <> 'n'" in migration
     assert "ON DELETE SET NULL" in migration
+    # Orphaned user_id rows must be neutralized before ADD CONSTRAINT, or
+    # the migration aborts on real deployed data.
+    assert "SET user_id = NULL" in migration
     table_body = schema[schema.index("affiliate_clicks (") :]
     assert (
         "ON DELETE CASCADE" not in table_body.split(");")[0]

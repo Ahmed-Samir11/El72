@@ -84,6 +84,14 @@ BEGIN
         EXECUTE format('ALTER TABLE affiliate_clicks DROP CONSTRAINT %I',
                        con.conname);
     END LOOP;
+    -- Orphaned user_id values (rows pointing at users deleted while the
+    -- table had no FK) would make ADD CONSTRAINT fail; the column is
+    -- nullable BY DESIGN, so an orphan degrades to an anonymous click
+    -- row — the same end state ON DELETE SET NULL would give.
+    UPDATE affiliate_clicks
+       SET user_id = NULL
+     WHERE user_id IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = affiliate_clicks.user_id);
     IF NOT EXISTS (
         SELECT 1 FROM pg_constraint
         WHERE conrelid = 'affiliate_clicks'::regclass
