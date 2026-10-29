@@ -183,9 +183,12 @@ class AffiliateClick(Base):
     session_id = Column(String(128), nullable=True)
     user_id = Column(
         OperationalIdType(),
-        # SET NULL, not CASCADE: a click row is not PII and must survive
-        # deletion of the user so Gate 3/4 KPIs never silently undercount
-        # historical clicks; it degrades to an anonymous click row.
+        # Same TypeDecorator as users.id (Integer on every dialect) — the
+        # repo-wide type for FKs into users; a plain Integer would drift
+        # from the PK it mirrors. SET NULL, not CASCADE: a click row is
+        # not PII and must survive deletion of the user so Gate 3/4 KPIs
+        # never silently undercount historical clicks; it degrades to an
+        # anonymous click row.
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )

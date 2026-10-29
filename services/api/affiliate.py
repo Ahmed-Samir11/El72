@@ -68,10 +68,11 @@ def normalize_click_source(source: str | None) -> str:
 
 # Bounded, printable, hostile-free charset for a client-declared category. A
 # category is display context (unlike source, it is not an enum the app
-# controls), so anything outside this set — markup, scheme-ish tokens,
-# control characters — is dropped to NULL rather than stored and later
-# rendered.
-_CATEGORY_RE = re.compile(r"[A-Za-z0-9 ()&,.'+/-]{1,100}\Z")
+# controls), so anything outside this set — markup, scheme-ish or path-like
+# tokens, control characters — is dropped to NULL rather than stored and later
+# rendered. No slash: a real category label never needs one, while
+# 'example.com/path' always has one.
+_CATEGORY_RE = re.compile(r"[A-Za-z0-9 ()&,.'+-]{1,100}\Z")
 
 
 def normalize_category(category: str | None) -> str | None:

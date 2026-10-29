@@ -183,6 +183,7 @@ def test_normalize_category_clamps_to_safe_display_text():
     # Markup, scheme-shaped probes and oversized labels never reach the row.
     assert normalize_category("<script>alert(1)</script>") is None
     assert normalize_category("https://evil.example/x") is None
+    assert normalize_category("example.com/path") is None
     assert normalize_category("x" * 101) is None
 
 
@@ -300,6 +301,32 @@ def test_url_smuggled_into_opaque_id_is_rejected(client):
     )
     assert resp.status_code == 400
     assert _rows(client) == []
+
+
+def test_blank_optional_ids_are_treated_as_absent(client):
+    # Honest clients send empty optional fields; that is "not declared",
+    # not a malformed id: the click must still be logged.
+    resp = client.get(
+        "/affiliate/redirect",
+        params={"target_url": AMAZON_URL, "sku": "  ", "deal_id": "", "source": "web"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 307
+    (row,) = _rows(client)
+    assert row.sku is None and row.deal_id is None
+
+
+def test_ids_are_stripped_before_storage(client):
+    # One metric value per product: ' ABC123 ' must not split the CTR of
+    # ABC123 across whitespace variants.
+    resp = client.get(
+        "/affiliate/redirect",
+        params={"target_url": AMAZON_URL, "sku": "  ABC123  ", "source": "web"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 307
+    (row,) = _rows(client)
+    assert row.sku == "ABC123"
 
 
 def test_hostile_category_is_dropped_not_stored(client):

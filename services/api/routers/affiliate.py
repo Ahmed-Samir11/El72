@@ -94,6 +94,14 @@ def affiliate_redirect(
             detail="store does not match the target URL's merchant host",
         )
 
+    # A blank optional field means "not declared", not "reject": trim and
+    # normalize BEFORE the opaque-id check, so honest clients that send
+    # empty optional params still get their click, and stored values are
+    # never whitespace-variants of the same sku (one metric value per
+    # product, no split CTR).
+    sku = (sku or "").strip() or None
+    deal_id = (deal_id or "").strip() or None
+
     if not is_opaque_id(sku) or not is_opaque_id(deal_id):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
