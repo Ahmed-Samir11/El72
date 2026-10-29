@@ -117,8 +117,7 @@ def _pg_db(tmp_db=sqlite3.connect):
         lambda: f"{next(seq):032x}",
     )
     conn.create_function("now", 0, lambda: "2024-01-01T00:00:00Z")
-    conn.executescript(
-        '''
+    conn.executescript('''
         CREATE TABLE "public".users (id INTEGER PRIMARY KEY, tier VARCHAR(20) NOT NULL);
         CREATE TABLE "public".user_credits (
             user_id INTEGER PRIMARY KEY,
@@ -132,8 +131,7 @@ def _pg_db(tmp_db=sqlite3.connect):
             reason TEXT,
             created_at TEXT NOT NULL
         );
-        '''
-    )
+        ''')
     return conn
 
 
@@ -161,31 +159,25 @@ def _apply_free_tier_top_up(conn) -> None:
     conn.execute(f'CREATE TEMP TABLE allowance AS {_cte_body(sql, "allowance")}')
     # ``upgraded`` is the migration's UPDATE ... RETURNING; SQLite needs the
     # update and the returned rows as separate steps.
-    conn.execute(
-        """
+    conn.execute("""
         CREATE TEMP TABLE upgraded AS
         SELECT a.user_id, 100 - a.starting_credits AS granted
         FROM allowance AS a
         WHERE a.starting_credits < 100
-        """
-    )
-    conn.execute(
-        """
+        """)
+    conn.execute("""
         UPDATE "public".user_credits AS c
            SET balance = c.balance + (100 - a.starting_credits),
                updated_at = now()
           FROM allowance AS a
          WHERE a.user_id = c.user_id AND a.starting_credits < 100
-        """
-    )
-    conn.execute(
-        """
+        """)
+    conn.execute("""
         INSERT INTO "public".credit_transactions
         (id, user_id, amount, reason, created_at)
         SELECT gen_random_uuid(), user_id, granted, 'free_tier_100', now()
         FROM upgraded
-        """
-    )
+        """)
 
 
 def test_no_committed_database_backups():
@@ -369,10 +361,85 @@ def test_free_tier_top_up_is_a_no_op_when_reapplied():
 
     _apply_free_tier_top_up(conn)
 
-    assert conn.execute(
-        'SELECT balance FROM "public".user_credits WHERE user_id = 1'
-    ).fetchone()[0] == first
+    assert (
+        conn.execute(
+            'SELECT balance FROM "public".user_credits WHERE user_id = 1'
+        ).fetchone()[0]
+        == first
+    )
     assert conn.execute(COUNT_GRANTS).fetchone()[0] == 1
+
+
+def test_affiliate_attribution_keeps_click_history_on_user_delete():
+    """affiliate_clicks is Gate 3/4 KPI data, not PII: the user FK must be
+    ON DELETE SET NULL in the canonical schema, the fresh-add column and the
+    repair block of the migration, and never CASCADE. A tree that already
+    recorded the first draft's CASCADE FK is repaired (drop non-SET NULL FKs,
+    add exactly one SET NULL FK)."""
+    schema = _strip_comments(
+        (INFRA_SQL / "schema/postgres.sql").read_text(encoding="utf-8")
+    )
+    migration = _strip_comments(
+        (INFRA_SQL / "migrations" / "0012_affiliate_click_attribution.sql").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert "user_id INTEGER REFERENCES users(id) ON DELETE SET NULL" in schema
+    # Fresh ADD must match the schema's retention rule...
+    assert "REFERENCES users(id) ON DELETE SET NULL" in migration
+    # ...and the repair block must converge an old CASCADE (deltype 'c').
+    assert "deltype <> 'n'" in migration
+    assert "ON DELETE SET NULL" in migration
+    table_body = schema[schema.index("affiliate_clicks (") :]
+    assert (
+        "ON DELETE CASCADE" not in table_body.split(");")[0]
+    ), "affiliate_clicks table body must not carry a CASCADE FK"
+
+
+def test_affiliate_attribution_source_is_not_null_everywhere():
+    """source is the CTR metric dimension: fresh schema, migration ADD and
+    the in-place upgrade (create_tables) all declare NOT NULL DEFAULT 'unknown',
+    and the migration backfills NULL rows left by older upgrade paths."""
+    schema = (INFRA_SQL / "schema/postgres.sql").read_text(encoding="utf-8")
+    migration = (
+        INFRA_SQL / "migrations/0012_affiliate_click_attribution.sql"
+    ).read_text(encoding="utf-8")
+    from services.api import create_tables
+
+    assert "source VARCHAR(32)" in schema and "NOT NULL DEFAULT 'unknown'" in schema
+    assert "source VARCHAR(32)" in migration
+    assert "NOT NULL DEFAULT 'unknown'" in migration
+    assert "SET source = 'unknown' WHERE source IS NULL" in migration
+    assert "SET NOT NULL" in migration
+    specs = {
+        spec
+        for table, column, spec in create_tables._REQUIRED_COLUMNS
+        if (table, column) == ("affiliate_clicks", "source")
+    }
+    assert specs == {"TEXT NOT NULL DEFAULT 'unknown'"}
+    common = "\n".join(create_tables._AFFILIATE_UPGRADES_COMMON)
+    assert "SET source = 'unknown' WHERE source IS NULL" in common
+
+
+def test_affiliate_rename_guard_and_legacy_index_cleanup():
+    """The clicked_at rename must be guarded on BOTH sides (old present AND
+    new absent) and must drop the legacy-named index so migrated trees keep
+    only the canonical idx_affiliate_clicks_created_at."""
+    migration = _strip_comments(
+        (INFRA_SQL / "migrations" / "0012_affiliate_click_attribution.sql").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert "DROP INDEX IF EXISTS idx_affiliate_clicks_clicked_at" in migration
+    assert "column_name = 'clicked_at'" in migration
+    assert "NOT EXISTS" in migration and "column_name = 'created_at'" in migration
+    # create_tables' in-place upgrade must drop the same legacy index.
+    from services.api import create_tables
+
+    assert (
+        "DROP INDEX IF EXISTS idx_affiliate_clicks_clicked_at"
+        in create_tables._AFFILIATE_UPGRADES_COMMON
+    )
 
 
 def test_env_example_has_no_plaintext_passwords():

@@ -24,6 +24,7 @@ from services.api.affiliate import (
     AFFILIATE_TAG_ENV_VARS,
     build_affiliate_url,
     is_opaque_id,
+    normalize_category,
     normalize_click_source,
     store_for_url,
     tag_presence,
@@ -84,8 +85,10 @@ def affiliate_redirect(
 
     # A client may declare which store it believes it is opening; a claim
     # that disagrees with the URL means the caller is mislabeling (or probing)
-    # the metric dimension, so the click is refused, not misattributed.
-    if store is not None and store.strip().lower() != store_id:
+    # the metric dimension, so the click is refused, not misattributed. A
+    # blank claim is treated as "not declared", not as a mismatch.
+    store_claim = (store or "").strip().lower()
+    if store_claim and store_claim != store_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="store does not match the target URL's merchant host",
@@ -104,16 +107,20 @@ def affiliate_redirect(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
         ) from exc
 
-    # Category: the client's label is bounded context, never identity. When
-    # it sends none but names a sku, fill it from the server's own product
-    # context — the alerts table is the server-side table that records a
-    # category per sku as the app's tracker flow created it.
-    resolved_category = (category or "").strip() or None
+    # Category: the client's label is bounded context, never identity —
+    # normalize_category drops anything outside the safe display charset
+    # (markup, scheme-shaped probes) instead of storing it. When the client
+    # sends none but names a sku, fill it from the server's own product
+    # context; the order_by makes the fill deterministic when a sku has
+    # several alert rows (arbitrary but stable, never "whichever row the
+    # planner happened to reach first").
+    resolved_category = normalize_category(category)
     if resolved_category is None and sku:
         resolved_category = (
             db.execute(
                 select(Alert.category)
                 .where(Alert.sku == sku, Alert.category.isnot(None))
+                .order_by(Alert.id)
                 .limit(1)
             )
             .scalars()

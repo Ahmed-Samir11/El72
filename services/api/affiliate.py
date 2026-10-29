@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 STORE_HOSTS = {
@@ -65,17 +66,45 @@ def normalize_click_source(source: str | None) -> str:
     return value if value in VALID_CLICK_SOURCES else "unknown"
 
 
+# Bounded, printable, hostile-free charset for a client-declared category. A
+# category is display context (unlike source, it is not an enum the app
+# controls), so anything outside this set — markup, scheme-ish tokens,
+# control characters — is dropped to NULL rather than stored and later
+# rendered.
+_CATEGORY_RE = re.compile(r"[A-Za-z0-9 ()&,.'+/-]{1,100}\Z")
+
+
+def normalize_category(category: str | None) -> str | None:
+    """Clamp a client-supplied category to a safe display string or None.
+
+    Returns the trimmed value when it matches the bounded charset (ASCII
+    letters/digits and a small set of separators), otherwise None — so a
+    probe with markup or a URL-shaped category cannot pollute the §11
+    category dimension. None then lets the server fill the real category
+    from its own alerts context.
+    """
+    value = (category or "").strip()
+    return value if value and _CATEGORY_RE.match(value) else None
+
+
+# Allowlist charset for opaque ids: letters, digits and the punctuation real
+# product ids actually use — no colon (scheme), slash (path), '?'/'#' (query).
+_OPAQUE_ID_RE = re.compile(r"[A-Za-z0-9._+\-]{1,255}\Z")
+
+
 def is_opaque_id(value: str | None) -> bool:
     """True when a client-supplied id is an opaque token, not a URL.
 
     sku/deal_id identify products on the server's own tables; a caller that
-    smuggles a URL into an id field is probing the redirect surface, so the
-    request is rejected (400) instead of logged.
+    smuggles anything URL-shaped (a scheme, a path, a host with dots, query
+    punctuation) into an id field is probing the redirect surface, so the
+    request is rejected (400) instead of logged. Allowlisting the charset
+    beats blacklisting '://' shapes: 'mailto:x', 'example.com/p' or '//evil'
+    are all refused, while real opaque product ids pass.
     """
     if value is None:
         return True
-    lowered = value.strip().lower()
-    return "://" not in lowered and not lowered.startswith("www.")
+    return _OPAQUE_ID_RE.match(value.strip()) is not None
 
 
 def _host_allowed(store_id: str, hostname: str) -> bool:

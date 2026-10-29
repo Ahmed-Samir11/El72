@@ -90,7 +90,7 @@ def get_optional_user(
         phone = payload.get("sub")
     except JWTError:
         return None
-    if not phone:
+    if not isinstance(phone, str) or not phone:
         return None
     return db.query(User).filter(User.phone == phone, User.status == "ACTIVE").first()
 

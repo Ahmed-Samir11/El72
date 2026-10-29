@@ -318,6 +318,9 @@ CREATE TRIGGER payment_audit_log_append_only
 -- (deal_feed | search_result | tracker_card | browse | web; 'unknown' for
 -- callers that do not declare one). created_at renames the legacy clicked_at
 -- (deployed trees are migrated by migrations/0012_affiliate_click_attribution.sql).
+-- The user FK is ON DELETE SET NULL, never CASCADE: the click itself is not
+-- PII, so deleting a user must not erase click history from Gate 3/4 KPIs —
+-- the row degrades to an anonymous click.
 CREATE TABLE IF NOT EXISTS affiliate_clicks (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     store_id VARCHAR(32) NOT NULL,
@@ -326,7 +329,7 @@ CREATE TABLE IF NOT EXISTS affiliate_clicks (
     category VARCHAR(100),
     source VARCHAR(32) NOT NULL DEFAULT 'unknown',
     session_id VARCHAR(128),
-    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
     event_id VARCHAR(64),
     target_url TEXT NOT NULL,
     affiliate_url TEXT NOT NULL,

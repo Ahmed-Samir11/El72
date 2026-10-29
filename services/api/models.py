@@ -183,7 +183,10 @@ class AffiliateClick(Base):
     session_id = Column(String(128), nullable=True)
     user_id = Column(
         OperationalIdType(),
-        ForeignKey("users.id", ondelete="CASCADE"),
+        # SET NULL, not CASCADE: a click row is not PII and must survive
+        # deletion of the user so Gate 3/4 KPIs never silently undercount
+        # historical clicks; it degrades to an anonymous click row.
+        ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
     event_id = Column(String(64), nullable=True)

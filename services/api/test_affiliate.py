@@ -30,6 +30,7 @@ from services.api.affiliate import (
     build_affiliate_url,
     is_opaque_id,
     missing_affiliate_tags,
+    normalize_category,
     normalize_click_source,
     store_for_url,
     tag_presence,
@@ -163,6 +164,26 @@ def test_is_opaque_id_refuses_urls():
     assert is_opaque_id(None)
     assert not is_opaque_id("https://amazon.eg/dp/B0XYZ")
     assert not is_opaque_id("www.amazon.eg/dp/B0XYZ")
+    # Allowlisting beats blacklisting: schemeless/host-shaped and other URL-
+    # shaped probes are refused too.
+    assert not is_opaque_id("mailto:x")
+    assert not is_opaque_id("example.com/path")
+    assert not is_opaque_id("//evil")
+    assert not is_opaque_id("ftp://x/y")
+    assert not is_opaque_id("B0XYZ?next=https")
+    assert not is_opaque_id("")
+    assert not is_opaque_id("x" * 300)
+
+
+def test_normalize_category_clamps_to_safe_display_text():
+    assert normalize_category(" laptops ") == "laptops"
+    assert normalize_category("Phone & Tablets (big)") == "Phone & Tablets (big)"
+    assert normalize_category(None) is None
+    assert normalize_category("   ") is None
+    # Markup, scheme-shaped probes and oversized labels never reach the row.
+    assert normalize_category("<script>alert(1)</script>") is None
+    assert normalize_category("https://evil.example/x") is None
+    assert normalize_category("x" * 101) is None
 
 
 def test_tag_presence_and_missing(monkeypatch):
@@ -258,6 +279,19 @@ def test_store_mismatch_is_rejected(client):
     assert _rows(client) == []
 
 
+def test_blank_store_claim_is_treated_as_absent(client):
+    # A client that sends an empty optional field must not be 400'd out of
+    # its own attribution; blank means "not declared", like omitting it.
+    resp = client.get(
+        "/affiliate/redirect",
+        params={"target_url": AMAZON_URL, "store": "  ", "source": "web"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 307
+    (row,) = _rows(client)
+    assert row.store_id == "amazon_eg"
+
+
 def test_url_smuggled_into_opaque_id_is_rejected(client):
     resp = client.get(
         "/affiliate/redirect",
@@ -266,6 +300,17 @@ def test_url_smuggled_into_opaque_id_is_rejected(client):
     )
     assert resp.status_code == 400
     assert _rows(client) == []
+
+
+def test_hostile_category_is_dropped_not_stored(client):
+    resp = client.get(
+        "/affiliate/redirect",
+        params={"target_url": AMAZON_URL, "category": "<script>alert(1)</script>"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 307
+    (row,) = _rows(client)
+    assert row.category is None
 
 
 def test_client_source_outside_allowlist_recorded_as_unknown(client):
@@ -297,6 +342,31 @@ def test_category_filled_from_server_context(client):
     assert resp.status_code == 307
     (row,) = _rows(client)
     assert row.category == "gaming-laptops"
+
+
+def test_category_fill_from_alerts_is_deterministic(client):
+    # Several alert rows for one sku must never make the stored category
+    # depend on planner luck: same request twice yields the same fill.
+    db = _db()
+    user = User(phone="+201000000046", password_hash="x", salt="y", tier="free")
+    db.add(user)
+    db.commit()
+    db.add(Alert(user_id=user.id, sku="DUPSKU", category="first-category"))
+    db.commit()
+    db.add(Alert(user_id=user.id, sku="DUPSKU", category="second-category"))
+    db.commit()
+
+    for _ in range(2):
+        resp = client.get(
+            "/affiliate/redirect",
+            params={"target_url": AMAZON_URL, "sku": "DUPSKU", "source": "web"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 307
+    rows = _rows(client)
+    assert len(rows) == 2
+    assert rows[0].category == rows[1].category
+    assert rows[0].category in ("first-category", "second-category")
 
 
 def test_redirect_is_rate_limited(client, monkeypatch):
