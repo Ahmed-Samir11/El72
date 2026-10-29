@@ -2,7 +2,7 @@
 
 **Branch:** `feat/affiliate-merchant-click-attribution` (off `main`)
 **Date:** 2026-10-29
-**Status:** In implementation — MS1 backend: PR #46 (`feat/affiliate-click-attribution`); MS2+MS3 client: PR #47 (`feat/affiliate-merchant-click-attribution`, blocked on #46 and on the owner-supplied Arabic label for "Open product"); MS4 awaits H1/H5 owner input.
+**Status:** In implementation — MS1 backend: PR #46 (`feat/affiliate-click-attribution`); MS2+MS3 client incl. tracker-card "Open product" + l10n pair: PR #47 (`feat/affiliate-merchant-click-attribution`, blocked on #46); MS4 awaits H1/H5 owner input.
 **Series:** 1 of 5 release-priority plans (P1 → P2 notifications, P3 free-tracker model, P4 analytics, P5 activation/trust). See each sibling plan's "Series" note.
 
 ---
@@ -255,4 +255,6 @@ English label in the card.
 | `launchUrl(uri, method: UriLaunchMethod.externalBrowser)` | `launchUrl(uri, mode: LaunchMode.externalApplication)` | pinned url_launcher `^6.3.1`; `UriLaunchMethod` is the 7.x API. `externalApplication` = merchant app when installed, else browser |
 | `clicked_at` column renamed in every tree | Canonical fresh schema + migration `0012_affiliate_click_attribution.sql` (deployed Postgres) + `create_tables.ensure_columns` rename (in-place upgraded DBs); ORM keeps `clicked_at = synonym('created_at')` | Skill 4: canonical schema, migration and owning model move together |
 
-Open until owner input: tracker-card "Open product" label (needs `app_en.arb`+`app_ar.arb` pair, Arabic supplied by the owner), MS4 device verification (H1 production `API_BASE_URL`, H5 per-store tag values).
+The "Open product" label landed on owner authorization during implementation: the Arabic value (open + al_product, composed from the file's existing words to avoid invented wording) was supplied by the owner request, and both locales + generated getters landed in one commit; `l10n_coverage_test` guards the pair.
+
+Still open until owner input: MS4 device verification (H1 production `API_BASE_URL`, H5 per-store tag values).
