@@ -184,7 +184,11 @@ def test_normalize_category_clamps_to_safe_display_text():
     assert normalize_category("<script>alert(1)</script>") is None
     assert normalize_category("https://evil.example/x") is None
     assert normalize_category("example.com/path") is None
-    assert normalize_category("x" * 101) is None
+    assert (
+        normalize_category("x" * 101) is None
+    )  # Unicode word characters pass (the app ships an Arabic UI): escape
+    # written here to keep the test source locale-proof.
+    assert normalize_category("ال laptops") == "ال laptops"
 
 
 def test_tag_presence_and_missing(monkeypatch):
@@ -327,6 +331,33 @@ def test_ids_are_stripped_before_storage(client):
     assert resp.status_code == 307
     (row,) = _rows(client)
     assert row.sku == "ABC123"
+
+
+def test_session_and_event_tokens_are_clamped(client):
+    # Markup-shaped tokens never enter the log; padded real tokens are
+    # stored trimmed so one session's CTR cannot split across variants.
+    resp = client.get(
+        "/affiliate/redirect",
+        params={
+            "target_url": AMAZON_URL,
+            "session_id": "<script>s1</script>",
+            "event_id": "",
+            "source": "web",
+        },
+        follow_redirects=False,
+    )
+    assert resp.status_code == 307
+    (row,) = _rows(client)
+    assert row.session_id is None and row.event_id is None
+
+    resp = client.get(
+        "/affiliate/redirect",
+        params={"target_url": AMAZON_URL, "session_id": "  s-2 ", "source": "web"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 307
+    rows = _rows(client)
+    assert rows[-1].session_id == "s-2"
 
 
 def test_hostile_category_is_dropped_not_stored(client):

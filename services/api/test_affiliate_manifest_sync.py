@@ -12,6 +12,7 @@ refuses a server Location outside ``flutter-app/lib/src/core/url_guard.dart``
 """
 
 import re
+import warnings
 from pathlib import Path
 
 from services.api.affiliate import STORE_HOSTS
@@ -88,7 +89,14 @@ def test_client_location_gate_matches_server_hosts():
     text = URL_GUARD.read_text(encoding="utf-8")
     match = _SUFFIX_LIST.search(text)
     if match is None:
-        # Client PR #47 not merged yet; the merged tree must declare it.
+        # Loud, not silent: the constant lands with client PR #47, so a
+        # pre-merge branch warns; the MERGED tree (where this guard exists
+        # for a reason) must carry the declaration and reach the assert.
+        warnings.warn(
+            "url_guard.dart does not declare merchantHostSuffixes yet — "
+            "the client Location gate is unguarded until PR #47 merges",
+            stacklevel=1,
+        )
         return
     declared = set(_STRING_LIT.findall(match.group(1)))
     server_domains = {

@@ -175,7 +175,13 @@ def ensure_columns(engine) -> None:
             # migration already renamed it): "no such column" means the
             # rename is done; anything else must stay loud.
             detail = str(exc).lower()
-            if "no such column" in detail or "already exists" in detail:
+            if (
+                "no such column" in detail
+                or "already exists" in detail
+                # Postgres phrasing when a concurrent migration already
+                # renamed the column out from under this ALTER.
+                or "does not exist" in detail
+            ):
                 continue
             raise
         logger.info("Renamed legacy column %s.%s -> %s", table, old_column, new_column)

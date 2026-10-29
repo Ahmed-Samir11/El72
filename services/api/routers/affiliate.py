@@ -26,6 +26,7 @@ from services.api.affiliate import (
     is_opaque_id,
     normalize_category,
     normalize_click_source,
+    normalize_opaque_token,
     store_for_url,
     tag_presence,
 )
@@ -124,7 +125,7 @@ def affiliate_redirect(
     # planner happened to reach first").
     resolved_category = normalize_category(category)
     if resolved_category is None and sku:
-        resolved_category = (
+        server_category = (
             db.execute(
                 select(Alert.category)
                 .where(Alert.sku == sku, Alert.category.isnot(None))
@@ -134,6 +135,10 @@ def affiliate_redirect(
             .scalars()
             .first()
         )
+        # Same clamp on the server-filled value: alerts rows predate today's
+        # rules, and a 100-char-safe dimension must stay length-bounded
+        # even when its own table once stored something wilder.
+        resolved_category = normalize_category(server_category)
 
     db.add(
         AffiliateClick(
@@ -142,9 +147,9 @@ def affiliate_redirect(
             deal_id=deal_id,
             category=resolved_category,
             source=normalize_click_source(source),
-            session_id=(session_id or "").strip() or None,
+            session_id=normalize_opaque_token(session_id, 128),
             user_id=user.id if user is not None else None,
-            event_id=(event_id or "").strip() or None,
+            event_id=normalize_opaque_token(event_id, 64),
             target_url=target_url,
             affiliate_url=affiliate_url,
         )

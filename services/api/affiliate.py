@@ -70,15 +70,16 @@ def normalize_click_source(source: str | None) -> str:
 # category is display context (unlike source, it is not an enum the app
 # controls), so anything outside this set — markup, scheme-ish or path-like
 # tokens, control characters — is dropped to NULL rather than stored and later
-# rendered. No slash: a real category label never needs one, while
-# 'example.com/path' always has one.
-_CATEGORY_RE = re.compile(r"[A-Za-z0-9 ()&,.'+-]{1,100}\Z")
+# rendered. Unicode word characters are in-set (the app ships an Arabic UI,
+# so a category label may legitimately be Arabic); slash stays out — a real
+# label never needs one, while 'example.com/path' always has one.
+_CATEGORY_RE = re.compile(r"[\w \(\)\,\.'+\-&]{1,100}\Z")
 
 
 def normalize_category(category: str | None) -> str | None:
     """Clamp a client-supplied category to a safe display string or None.
 
-    Returns the trimmed value when it matches the bounded charset (ASCII
+    Returns the trimmed value when it matches the bounded charset (Unicode
     letters/digits and a small set of separators), otherwise None — so a
     probe with markup or a URL-shaped category cannot pollute the §11
     category dimension. None then lets the server fill the real category
@@ -86,6 +87,24 @@ def normalize_category(category: str | None) -> str | None:
     """
     value = (category or "").strip()
     return value if value and _CATEGORY_RE.match(value) else None
+
+
+# Tokens that are logged and may later surface in web pages: opaque ids
+# plus a few separators — never markup, spaces or control bytes.
+_SAFE_TOKEN_RE = re.compile(r"[A-Za-z0-9._:+\-]{1,256}\Z")
+
+
+def normalize_opaque_token(value: str | None, max_length: int = 128) -> str | None:
+    """Trim a caller-supplied session/event token and drop anything outside
+    the safe charset (empty or oversized-after-trim values go to NULL too,
+    so one client cannot split a session's CTR across ' x ' and 'x').
+    """
+    token = (value or "").strip()
+    return (
+        token
+        if token and len(token) <= max_length and _SAFE_TOKEN_RE.match(token)
+        else None
+    )
 
 
 # Allowlist charset for opaque ids: letters, digits and the punctuation real
