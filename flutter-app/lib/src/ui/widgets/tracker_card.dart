@@ -6,6 +6,7 @@ import '../../core/styles/app_colors.dart';
 import '../../core/styles/app_theme.dart';
 import '../../data/models/tracked_item_model.dart';
 import '../common/merchant_link.dart';
+import '../../core/url_guard.dart';
 import 'product_image.dart';
 
 /// Product tracker row.
@@ -61,6 +62,12 @@ class TrackerCard extends StatelessWidget {
     this.merchantLink,
   });
 
+  /// True when the card can offer "Open product": a non-empty url that
+  /// passes the shared [isHttpUrl] rule. A junk/off-scheme url from a
+  /// corrupt mapping renders no action at all instead of one that can only
+  /// fail into a snackbar.
+  bool get _canOpenProduct => productUrl.isNotEmpty && isHttpUrl(productUrl);
+
   /// Open the tracked product page at the merchant through [MerchantLink]
   /// (GET /affiliate/redirect first: the tap writes an attributable
   /// affiliate_clicks row and the opened URL carries the store's tag).
@@ -68,9 +75,9 @@ class TrackerCard extends StatelessWidget {
     // Messenger captured before the await: the resolve request can outlive
     // the card, and re-looking it up on a disposed context throws.
     final messenger = ScaffoldMessenger.of(context);
-    final opened = await (merchantLink ?? MerchantLink()).open(
+    final opened = await (merchantLink ?? MerchantLink.shared).open(
       targetUrl: productUrl,
-      source: 'tracker_card',
+      source: sourceTrackerCard,
       sku: sku.isEmpty ? null : sku,
     );
     if (!opened && context.mounted) {
@@ -263,7 +270,7 @@ class TrackerCard extends StatelessWidget {
               // "Open product": the card's merchant affordance (plan p1). Only
               // rendered when a product URL exists; secondary by design (icon
               // + label) so its CTR stays separable by source.
-              if (productUrl.isNotEmpty) ...[
+              if (_canOpenProduct) ...[
                 const SizedBox(width: 8),
                 _openProductAction(context, colorScheme),
               ],

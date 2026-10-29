@@ -60,7 +60,6 @@ class _FakeLink extends MerchantLink {
     required String source,
     String? sku,
     String? dealId,
-    String? category,
   }) async {
     sources.add(source);
     return opened;

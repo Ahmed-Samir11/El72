@@ -40,7 +40,10 @@ class Deal {
           json['store_name'] as String? ?? json['store'] as String? ?? '',
       imageUrl: _imageUrl(json),
       sourceUrl: json['source_url'] as String? ?? json['url'] as String? ?? '',
-      sku: json['sku'] as String? ?? '',
+      // A numeric sku from an upstream scraper must not throw the whole
+      // row parse away: only a real String counts, anything else stays
+      // empty (the card then sends no sku context).
+      sku: json['sku'] is String ? json['sku'] as String : '',
       price: price,
       originalPrice: original,
       discountPercentage: discount,

@@ -59,6 +59,7 @@ class _ResponderAdapter implements HttpClientAdapter {
   final Map<String, List<String>> headers;
   final Object? failure;
 
+  int requestCount = 0;
   late RequestOptions lastRequest;
 
   @override
@@ -70,6 +71,7 @@ class _ResponderAdapter implements HttpClientAdapter {
     Stream<Uint8List>? requestStream,
     Future<void>? cancelFuture,
   ) async {
+    requestCount++;
     lastRequest = options;
     if (failure != null) throw failure!;
     return ResponseBody.fromBytes(<int>[], statusCode, headers: headers);
@@ -98,7 +100,6 @@ void main() {
           source: 'deal_feed',
           sku: 'ABC123',
           dealId: 'deal-7',
-          category: 'laptops',
         );
 
         expect(resolved, taggedUrl);
@@ -125,7 +126,6 @@ void main() {
         source: 'search_result',
         sku: 'ABC123',
         dealId: 'deal-7',
-        category: 'laptops',
       );
 
       final params = adapter.lastRequest.queryParameters;
@@ -133,7 +133,6 @@ void main() {
       expect(params['source'], 'search_result');
       expect(params['sku'], 'ABC123');
       expect(params['deal_id'], 'deal-7');
-      expect(params['category'], 'laptops');
       // Session id is generated per app run, never empty, so CTR can be
       // measured per session even for unauthenticated callers.
       expect(params['session_id'], isA<String>());
@@ -220,5 +219,75 @@ void main() {
       );
       expect(resolved, taggedUrl);
     });
+
+    test('the resolve request is bounded by an explicit timeout', () async {
+      // The shared client is tuned for 30 s scraper reads; attribution must
+      // not be able to hold the tap open that long.
+      final adapter = _ResponderAdapter(
+        failure: DioException(
+          type: DioExceptionType.connectionTimeout,
+          requestOptions: RequestOptions(path: '/affiliate/redirect'),
+        ),
+      );
+      final client = ApiClient.withStorage(_FakeSecureStorage());
+      client.dio.httpClientAdapter = adapter;
+      final repo = AffiliateRepository(apiClient: client);
+
+      final resolved = await repo.resolve(
+        targetUrl: originalUrl,
+        source: 'web',
+      );
+      expect(resolved, originalUrl);
+      // The knobs themselves, pinned on the outgoing request:
+      expect(adapter.lastRequest.connectTimeout, const Duration(seconds: 2));
+      expect(adapter.lastRequest.receiveTimeout, const Duration(seconds: 3));
+    });
+
+    test(
+      'a target url beyond the server bound skips attribution, not the tap',
+      () async {
+        // The server bounds target_url at 2048 chars; a pathological scrape
+        // longer than that must not even try (a guaranteed 422) — and must
+        // still return the original URL.
+        final adapter = _ResponderAdapter(
+          headers: {
+            'location': [taggedUrl],
+          },
+        );
+        final client = ApiClient.withStorage(_FakeSecureStorage());
+        client.dio.httpClientAdapter = adapter;
+        final repo = AffiliateRepository(apiClient: client);
+
+        final huge = 'https://www.amazon.eg/dp/${'A' * 2100}';
+        final resolved = await repo.resolve(targetUrl: huge, source: 'web');
+        expect(resolved, huge);
+        expect(adapter.requestCount, 0);
+      },
+    );
+
+    test(
+      'an unparseable Location still returns the original, never throws',
+      () async {
+        // The never-throws contract covers the repository's OWN catch blocks:
+        // a Location that cannot be parsed against the tapped URL must degrade
+        // to "open the original", not escape as a parse error from inside the
+        // DioException handler.
+        final adapter = _ResponderAdapter(
+          statusCode: 307,
+          headers: {
+            'location': ['%https://x bad'],
+          },
+        );
+        final client = ApiClient.withStorage(_FakeSecureStorage());
+        client.dio.httpClientAdapter = adapter;
+        final repo = AffiliateRepository(apiClient: client);
+
+        final resolved = await repo.resolve(
+          targetUrl: originalUrl,
+          source: 'web',
+        );
+        expect(resolved, originalUrl);
+      },
+    );
   });
 }

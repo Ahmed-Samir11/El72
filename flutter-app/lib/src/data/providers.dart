@@ -31,7 +31,10 @@ final dealsRepositoryProvider = Provider<DealsRepository>((ref) {
 /// merchant tap (via `ui/common/merchant_link.dart`). Stateless over the
 /// shared ApiClient singleton, so one instance serves the whole app.
 final affiliateRepositoryProvider = Provider<AffiliateRepository>((ref) {
-  return AffiliateRepository();
+  // The process-wide instance — the same Dio pool every default
+  // MerchantLink uses, so provider-injected code and widget taps never
+  // split attribution across two repositories.
+  return AffiliateRepository.shared;
 });
 
 final statsRepositoryProvider = Provider<StatsRepository>((ref) {

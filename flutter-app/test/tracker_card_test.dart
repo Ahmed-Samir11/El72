@@ -212,6 +212,15 @@ void main() {
     expect(find.text('Open product'), findsNothing);
   });
 
+  testWidgets('a corrupt non-web product url renders no action either', (
+    tester,
+  ) async {
+    // A junk scheme from a corrupt store mapping must not render an affordance
+    // that could only fail into a snackbar; isHttpUrl gates the affordance.
+    await _pumpCard(tester, _card(productUrl: 'file:///etc/passwd'));
+    expect(find.byIcon(Icons.open_in_new), findsNothing);
+  });
+
   testWidgets('a failed Open product tap shows the unableToOpen snackbar', (
     tester,
   ) async {
@@ -244,7 +253,6 @@ class _FakeLink extends MerchantLink {
     required String source,
     String? sku,
     String? dealId,
-    String? category,
   }) async {
     sources.add(source);
     targetUrls.add(targetUrl);

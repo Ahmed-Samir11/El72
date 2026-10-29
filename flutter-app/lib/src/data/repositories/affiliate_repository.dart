@@ -19,9 +19,16 @@ import '../services/api_client.dart';
 /// the endpoint) returns the ORIGINAL url and never throws at the call site.
 class AffiliateRepository {
   /// Creates a repository. An [ApiClient] may be injected for testing;
-  /// a default client is created when omitted.
+  /// a default client is created when omitted. Prefer [shared] so the
+  /// whole app resolves through one Dio instance (one connection pool,
+  /// one place for the provider below) instead of building a client per
+  /// widget.
   AffiliateRepository({ApiClient? apiClient})
     : _apiClient = apiClient ?? ApiClient();
+
+  /// The process-wide instance: what the Riverstone provider and every
+  /// default-constructed [MerchantLink] use.
+  static final AffiliateRepository shared = AffiliateRepository();
 
   final ApiClient _apiClient;
 
@@ -37,15 +44,17 @@ class AffiliateRepository {
     required String source,
     String? sku,
     String? dealId,
-    String? category,
   }) async {
+    // The server bounds target_url at 2048 chars; sending anything longer
+    // only earns a 422. A merchant URL beyond that limit is a pathological
+    // scrape: skip attribution (never the tap) and open it as-is.
+    if (targetUrl.length > 2048) return targetUrl;
     final params = <String, dynamic>{
       'target_url': targetUrl,
       'source': source,
       'session_id': AppConfig.sessionId,
       if (sku != null) 'sku': sku,
       if (dealId != null) 'deal_id': dealId,
-      if (category != null) 'category': category,
     };
     try {
       final response = await _apiClient.dio.get<String?>(
@@ -60,11 +69,16 @@ class AffiliateRepository {
           // exposes; there is no `maxFollowRedirects` option in it.
           followRedirects: false,
           maxRedirects: 0,
+          // The tap's fallback must be fast: the shared client is tuned
+          // for 30 s scraper reads, but a hanging attribution endpoint may
+          // not delay opening the merchant page by half a minute.
+          connectTimeout: const Duration(seconds: 2),
+          receiveTimeout: const Duration(seconds: 3),
         ),
       );
       final location = _locationOf(response.headers);
       if (location != null && location.isNotEmpty) {
-        return Uri.parse(targetUrl).resolve(location).toString();
+        return _joinOrOriginal(targetUrl, location);
       }
       // 2xx without a Location (e.g. a server that logged but cannot tag):
       // the click was still attributed; open the original.
@@ -79,7 +93,7 @@ class AffiliateRepository {
           status != null &&
           status >= 301 &&
           status <= 308) {
-        return Uri.parse(targetUrl).resolve(location).toString();
+        return _joinOrOriginal(targetUrl, location);
       }
       // 400 (host refused / context rejected), timeout, offline, anything
       // else: the user still gets their tap. debugPrint is the counter hook
@@ -95,6 +109,23 @@ class AffiliateRepository {
       debugPrint(
         'AffiliateRepository: unexpected attribution failure ($error): '
         'opening the original URL',
+      );
+      return targetUrl;
+    }
+  }
+
+  /// Resolve a returned `Location` against the tapped URL, or fall back to
+  /// the tapped URL itself: the never-throws contract belongs to the whole
+  /// method, including its own catch blocks — a garbage Location (or a
+  /// target URL that failed to parse inside a DioException handler) must
+  /// still end in "open the original".
+  String _joinOrOriginal(String targetUrl, String location) {
+    try {
+      return Uri.parse(targetUrl).resolve(location).toString();
+    } catch (error) {
+      debugPrint(
+        'AffiliateRepository: unusable Location ($location): opening the '
+        'original URL',
       );
       return targetUrl;
     }

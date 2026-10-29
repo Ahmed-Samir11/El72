@@ -15,26 +15,36 @@ import '../../data/repositories/affiliate_repository.dart';
 /// (unknown host, offline, timeout, legacy server) the ORIGINAL URL is
 /// opened instead, and only a genuinely unopenable URL reports failure
 /// through the card's existing `unableToOpen` snackbar.
+/// Stable surface labels for the resolve call — the values the server
+/// allowlists into `affiliate_clicks.source` (the dimension affiliate CTR is
+/// measured along). Constants, not string literals at three call sites, so
+/// the client cannot drift from itself.
+const String sourceDealFeed = 'deal_feed';
+const String sourceSearchResult = 'search_result';
+const String sourceTrackerCard = 'tracker_card';
+
 class MerchantLink {
   /// Builds a link. Tests inject [repository] and [launcher]; production
-  /// callers use the default constructor unchanged.
+  /// callers use [shared] — one repository (one Dio pool) for the whole
+  /// app, instead of a fresh ApiClient per card tap.
   MerchantLink({AffiliateRepository? repository, Launcher? launcher})
-    : _repository = repository ?? AffiliateRepository(),
+    : _repository = repository ?? AffiliateRepository.shared,
       _launcher = launcher ?? _externalLaunch;
+
+  /// The default link used by cards that do not inject one.
+  static final MerchantLink shared = MerchantLink();
 
   final AffiliateRepository _repository;
   final Launcher _launcher;
 
   /// Resolve + open. Returns false only when the URL may not be handed to
-  /// a browser at all (validated with the shared [isHttpUrl] rule on BOTH
-  /// ends: the scraped input and the server's answer) or when the launch
-  /// itself fails — callers then show their existing snackbar.
+  /// a browser at all (validated with the shared [isHttpUrl] rule) or when
+  /// the launch itself fails — callers then show their existing snackbar.
   Future<bool> open({
     required String targetUrl,
     required String source,
     String? sku,
     String? dealId,
-    String? category,
   }) async {
     // Scraped urls can be empty, malformed or hostile (`file:`, `data:`,
     // custom schemes). The same rule the chat UI and the chatbot repository
@@ -48,7 +58,6 @@ class MerchantLink {
         source: source,
         sku: sku,
         dealId: dealId,
-        category: category,
       );
     } catch (error) {
       // Defensive: the real AffiliateRepository already swallows every
@@ -57,7 +66,18 @@ class MerchantLink {
       debugPrint('MerchantLink: resolve failed ($error); opening original');
       resolved = targetUrl;
     }
-    if (!isHttpUrl(resolved)) return false;
+
+    // The endpoint is asked to answer with a tagged URL on a merchant host;
+    // anything else (off-allowlist host, junk) must not steer the OS launch
+    // onto a domain the app never promised. Fall back to the URL the user
+    // actually tapped instead of opening the server's suggestion.
+    if (resolved != targetUrl && !isMerchantUrl(resolved)) {
+      debugPrint(
+        'MerchantLink: server Location is not a supported merchant '
+        'host; opening the tapped URL instead',
+      );
+      resolved = targetUrl;
+    }
 
     try {
       // Android opens the merchant's own app when installed, else the

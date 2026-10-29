@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:elhaq_tracker/src/core/url_guard.dart';
 import 'package:elhaq_tracker/src/data/repositories/affiliate_repository.dart';
 import 'package:elhaq_tracker/src/ui/common/merchant_link.dart';
 
@@ -21,7 +22,6 @@ class _RecordingRepository extends AffiliateRepository {
     required String source,
     String? sku,
     String? dealId,
-    String? category,
   }) async {
     calls.add(
       ResolvedCall(
@@ -29,7 +29,6 @@ class _RecordingRepository extends AffiliateRepository {
         source: source,
         sku: sku,
         dealId: dealId,
-        category: category,
       ),
     );
     if (throwOnResolve) {
@@ -47,14 +46,12 @@ class ResolvedCall {
     required this.source,
     this.sku,
     this.dealId,
-    this.category,
   });
 
   final String targetUrl;
   final String source;
   final String? sku;
   final String? dealId;
-  final String? category;
 }
 
 void main() {
@@ -117,7 +114,8 @@ void main() {
       expect(launched, isEmpty);
     });
 
-    test('a server answer that is not a web url is refused', () async {
+    test('a server answer that is not a web url cannot block or steer the '
+        'tap: the ORIGINAL url is opened', () async {
       final launched = <Uri>[];
       final link = MerchantLink(
         repository: _RecordingRepository(resolvesTo: 'app-store://hijacked'),
@@ -132,10 +130,38 @@ void main() {
           targetUrl: 'https://www.amazon.eg/dp/ABC123',
           source: 'search_result',
         ),
-        false,
+        true,
       );
-      expect(launched, isEmpty);
+      expect(launched.single.toString(), 'https://www.amazon.eg/dp/ABC123');
     });
+
+    test(
+      'a web Location off the merchant allowlist is ignored, not opened',
+      () async {
+        // The endpoint is asked to answer with a tagged merchant URL. A
+        // misconfigured or hostile answer steering the OS launch onto another
+        // domain must not be honored — the user gets the URL they tapped.
+        final launched = <Uri>[];
+        final link = MerchantLink(
+          repository: _RecordingRepository(
+            resolvesTo: 'https://evil.example/steer?tag=el72-20',
+          ),
+          launcher: (uri) async {
+            launched.add(uri);
+            return true;
+          },
+        );
+
+        expect(
+          await link.open(
+            targetUrl: 'https://www.amazon.eg/dp/ABC123',
+            source: 'search_result',
+          ),
+          true,
+        );
+        expect(launched.single.toString(), 'https://www.amazon.eg/dp/ABC123');
+      },
+    );
 
     test('a throwing launcher is reported, not propagated', () async {
       final link = MerchantLink(
@@ -174,6 +200,29 @@ void main() {
         true,
       );
       expect(launched.single.toString(), 'https://www.amazon.eg/dp/ABC123');
+    });
+  });
+
+  group('isMerchantUrl — the gate on the server Location', () {
+    test('supported merchants and their subdomains pass', () {
+      expect(isMerchantUrl('https://www.amazon.eg/dp/X'), true);
+      expect(isMerchantUrl('https://amazon.eg/dp/X'), true);
+      expect(isMerchantUrl('https://www.noon.com/egypt-en/item/P9'), true);
+      expect(isMerchantUrl('https://www.jumia.com.eg/ml-product/x'), true);
+    });
+
+    test('lookalikes, other hosts and non-web urls are refused', () {
+      for (final url in const [
+        'https://evil.example/x',
+        'https://amazon.eg.attacker.com/x', // suffix-trap on the WRONG side
+        'https://redirector.test/next?u=https://www.noon.com/x',
+        'http://localhost/x',
+        'app-store://noon.com',
+        '/egypt-en/relative',
+        '',
+      ]) {
+        expect(isMerchantUrl(url), false, reason: url);
+      }
     });
   });
 }

@@ -17,7 +17,7 @@ class DealCard extends StatelessWidget {
   final MerchantLink merchantLink;
 
   DealCard({super.key, required this.deal, MerchantLink? merchantLink})
-    : merchantLink = merchantLink ?? MerchantLink();
+    : merchantLink = merchantLink ?? MerchantLink.shared;
 
   @override
   Widget build(BuildContext context) {
@@ -37,7 +37,7 @@ class DealCard extends StatelessWidget {
           final messenger = ScaffoldMessenger.of(context);
           final opened = await merchantLink.open(
             targetUrl: deal.sourceUrl,
-            source: 'deal_feed',
+            source: sourceDealFeed,
             sku: deal.sku.isEmpty ? null : deal.sku,
             dealId: deal.id.isEmpty ? null : deal.id,
           );

@@ -52,7 +52,6 @@ class _FakeLink extends MerchantLink {
     required String source,
     String? sku,
     String? dealId,
-    String? category,
   }) async {
     calls.add(
       OpenCall(targetUrl: targetUrl, source: source, sku: sku, dealId: dealId),

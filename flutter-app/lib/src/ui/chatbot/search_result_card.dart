@@ -20,7 +20,7 @@ class SearchResultCard extends StatelessWidget {
     required this.onAddToFeed,
     this.isEnabled = true,
     MerchantLink? merchantLink,
-  }) : merchantLink = merchantLink ?? MerchantLink();
+  }) : merchantLink = merchantLink ?? MerchantLink.shared;
 
   final SearchResultModel result;
   final VoidCallback onAddToFeed;
@@ -73,9 +73,14 @@ class SearchResultCard extends StatelessWidget {
           // only for a URL that must not be handed to a browser at all.
           final opened = await merchantLink.open(
             targetUrl: result.url,
-            source: 'search_result',
+            source: sourceSearchResult,
           );
-          if (!opened) unableToOpen(messenger);
+          // The resolve request can outlive the card: if the chat page was
+          // disposed while it was in flight, the captured messenger belongs
+          // to a disposed ScaffoldMessenger and showSnackBar would throw.
+          if (!opened && context.mounted) {
+            unableToOpen(messenger);
+          }
         },
         child: Padding(
           padding: const EdgeInsets.all(12),
