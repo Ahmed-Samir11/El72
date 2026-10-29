@@ -63,6 +63,14 @@ else
   # loaded) — only relevant in local mode.
   export LLAMA_SERVER_HOST="${LLAMA_SERVER_HOST:-localhost}"
   export LLAMA_SERVER_PORT="${LLAMA_SERVER_PORT:-8080}"
+  # The local qwen reasoning build spends its output budget on the thinking
+  # phase; at the 32k default a full-diff review (Gate p1 PRs run ~60-70k
+  # char diffs) finishes the budget before any JSON appears. The server has
+  # a 256k-token context, so a 64k output budget is safe here.
+  export HGM_MAX_OUTPUT_TOKENS="${HGM_MAX_OUTPUT_TOKENS:-65536}"
+  # Same for the strict-JSON retry: the thinking phase runs again there, and
+  # a retry budget smaller than the first attempt's can never succeed.
+  export HGM_RETRY_MAX_OUTPUT_TOKENS="${HGM_RETRY_MAX_OUTPUT_TOKENS:-98304}"
 fi
 
 # HGM checkout location — overridable, with a clear error if missing.
