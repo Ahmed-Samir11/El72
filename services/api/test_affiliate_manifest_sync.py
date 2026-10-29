@@ -29,6 +29,10 @@ MANIFEST = (
 )
 URL_GUARD = REPO_ROOT / "flutter-app" / "lib" / "src" / "core" / "url_guard.dart"
 
+MERCHANT_LINK = (
+    REPO_ROOT / "flutter-app" / "lib" / "src" / "ui" / "common" / "merchant_link.dart"
+)
+
 # <data android:scheme="https" android:host="…"/> inside the <queries> block.
 # Attribute order is not guaranteed, so host is matched independently of
 # scheme, and only within the queries element so unrelated hosts cannot
@@ -88,7 +92,18 @@ def test_client_location_gate_matches_server_hosts():
         return  # flutter-app core not present on this branch's tree
     text = URL_GUARD.read_text(encoding="utf-8")
     match = _SUFFIX_LIST.search(text)
+    gate_in_tree = (
+        MERCHANT_LINK.is_file()
+        and "isMerchantUrl" in MERCHANT_LINK.read_text(encoding="utf-8")
+    )
     if match is None:
+        if gate_in_tree:
+            # The Location gate ships but its allowlist is missing: a silent
+            # pass would mean every legitimate tagged URL is rejected on-device.
+            raise AssertionError(
+                "merchant_link.dart gates Locations with isMerchantUrl but "
+                "url_guard.dart declares no merchantHostSuffixes"
+            )
         # Loud, not silent: the constant lands with client PR #47, so a
         # pre-merge branch warns; the MERGED tree (where this guard exists
         # for a reason) must carry the declaration and reach the assert.

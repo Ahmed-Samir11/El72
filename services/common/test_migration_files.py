@@ -387,9 +387,11 @@ def test_affiliate_attribution_keeps_click_history_on_user_delete():
     assert "user_id INTEGER REFERENCES users(id) ON DELETE SET NULL" in schema
     # Fresh ADD must match the schema's retention rule...
     assert "REFERENCES users(id) ON DELETE SET NULL" in migration
-    # ...and the repair block must converge an old CASCADE (deltype 'c').
-    assert "deltype <> 'n'" in migration
-    assert "ON DELETE SET NULL" in migration
+    # ...and the repair block converges on EXACTLY one SET NULL FK: every
+    # pre-existing FK from affiliate_clicks to users is dropped (CASCADE
+    # drafts, NO ACTION, duplicates), then one SET NULL constraint is re-added.
+    assert "DROP CONSTRAINT" in migration
+    assert "ADD CONSTRAINT fk_affiliate_clicks_user_id" in migration
     # Orphaned user_id rows must be neutralized before ADD CONSTRAINT, or
     # the migration aborts on real deployed data.
     assert "SET user_id = NULL" in migration
