@@ -2,7 +2,7 @@
 
 **Branch:** `feat/affiliate-merchant-click-attribution` (off `main`)
 **Date:** 2026-10-29
-**Status:** Draft for approval
+**Status:** In implementation — MS1 backend: PR #46 (`feat/affiliate-click-attribution`); MS2+MS3 client: PR #47 (`feat/affiliate-merchant-click-attribution`, blocked on #46 and on the owner-supplied Arabic label for "Open product"); MS4 awaits H1/H5 owner input.
 **Series:** 1 of 5 release-priority plans (P1 → P2 notifications, P3 free-tracker model, P4 analytics, P5 activation/trust). See each sibling plan's "Series" note.
 
 ---
@@ -241,3 +241,18 @@ English label in the card.
 - [ ] A misconfigured tag is loud (startup warning + `/affiliate/config`), not silent.
 - [ ] Backend + Flutter test suites green; `flutter analyze` and `dart format` clean.
 - [ ] Release checklist §6 updated with the two new device-smoke rows.
+
+---
+
+## 9. Implementation Record (deviations actually shipped)
+
+| Planned | Shipped | Why |
+|---|---|---|
+| `user_id UUID REFERENCES users(id)` | `user_id INTEGER REFERENCES users(id) ON DELETE CASCADE` | `users.id` is `SERIAL` in this repo (schema + ORM); FK type must match reality |
+| Manifest fix + `test_affiliate_manifest_sync.py` in MS3 | Both in PR #46 (MS1 branch) | Every PR must be green; the manifest pair and the test that pins it cannot be split across merge order |
+| `Limiter(key_func=_client_ip)` from `main.py` on the route | Module-local `Limiter(key_func=get_remote_address)` in `routers/affiliate.py` (payment.py precedent), limit `"200/minute"` as a module constant read per request | `main.py` cannot be imported from a router (cycle); dynamic limit lets tests dial it down instead of firing 201 requests |
+| Dio `RequestConfig(maxRedirects: 0, maxFollowRedirects: 0)` | Dio 5.x `Options(followRedirects: false, maxRedirects: 0)` | `RequestConfig`/`maxFollowRedirects` do not exist in the pinned dio (^5.9); the two knobs that exist are the two that matter |
+| `launchUrl(uri, method: UriLaunchMethod.externalBrowser)` | `launchUrl(uri, mode: LaunchMode.externalApplication)` | pinned url_launcher `^6.3.1`; `UriLaunchMethod` is the 7.x API. `externalApplication` = merchant app when installed, else browser |
+| `clicked_at` column renamed in every tree | Canonical fresh schema + migration `0012_affiliate_click_attribution.sql` (deployed Postgres) + `create_tables.ensure_columns` rename (in-place upgraded DBs); ORM keeps `clicked_at = synonym('created_at')` | Skill 4: canonical schema, migration and owning model move together |
+
+Open until owner input: tracker-card "Open product" label (needs `app_en.arb`+`app_ar.arb` pair, Arabic supplied by the owner), MS4 device verification (H1 production `API_BASE_URL`, H5 per-store tag values).
