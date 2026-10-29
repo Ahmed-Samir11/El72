@@ -91,7 +91,7 @@ def normalize_category(category: str | None) -> str | None:
 
 # Tokens that are logged and may later surface in web pages: opaque ids
 # plus a few separators — never markup, spaces or control bytes.
-_SAFE_TOKEN_RE = re.compile(r"[A-Za-z0-9._:+\-]{1,256}\Z")
+_SAFE_TOKEN_RE = re.compile(r"[A-Za-z0-9._+\-]{1,256}\Z")
 
 
 def normalize_opaque_token(value: str | None, max_length: int = 128) -> str | None:

@@ -51,7 +51,7 @@ limiter = Limiter(key_func=get_remote_address)
 # multiplier. Dynamic (read at request time) so tests can dial it down
 # instead of firing hundreds of requests, and so ops can retune it via env
 # if the limiter ever needs to follow app behaviour.
-REDIRECT_RATE_LIMIT = os.getenv("AFFILIATE_REDIRECT_RATE_LIMIT", "200/minute")
+REDIRECT_RATE_LIMIT = os.getenv("AFFILIATE_REDIRECT_RATE_LIMIT") or "200/minute"
 
 
 @router.get("/redirect")

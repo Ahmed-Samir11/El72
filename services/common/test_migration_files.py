@@ -436,6 +436,7 @@ def test_affiliate_rename_guard_and_legacy_index_cleanup():
         )
     )
     assert "DROP INDEX IF EXISTS idx_affiliate_clicks_clicked_at" in migration
+    assert "CREATE INDEX IF NOT EXISTS idx_affiliate_clicks_created_at" in migration
     assert "column_name = 'clicked_at'" in migration
     assert "NOT EXISTS" in migration and "column_name = 'created_at'" in migration
     # create_tables' in-place upgrade must drop the same legacy index.
