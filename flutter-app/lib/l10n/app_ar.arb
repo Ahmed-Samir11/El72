@@ -194,6 +194,10 @@
       "price": { "type": "String" }
     }
   },
+  "openProduct": "فتح المنتج",
+  "@openProduct": {
+    "description": "Secondary action on a tracker card that opens the tracked product page at the merchant; the tap is affiliate-attributed (plans/p1)."
+  },
   "currentLabel": "الحالي: {price}",
   "@currentLabel": {
     "placeholders": {
