@@ -11,14 +11,71 @@ STORE_HOSTS = {
     "jumia_eg": {"jumia.com.eg", "www.jumia.com.eg"},
 }
 
+# Per-store affiliate program tag (monetization constants come from env —
+# never a global constant). The env contract mirrors .env.example.
+AFFILIATE_TAG_ENV_VARS = {
+    "amazon_eg": "AMAZON_AFFILIATE_TAG",
+    "noon_eg": "NOON_AFFILIATE_TAG",
+    "jumia_eg": "JUMIA_AFFILIATE_TAG",
+}
+
+# Stable app-surface identifiers for affiliate_clicks.source (report §11: CTR
+# must be separable per surface). A value outside this set is recorded as
+# 'unknown' rather than dropped: an unknown source is still a click.
+VALID_CLICK_SOURCES = frozenset(
+    {"deal_feed", "search_result", "tracker_card", "browse", "web", "unknown"}
+)
+
 
 def _affiliate_tag(store_id: str) -> str:
-    env_names = {
-        "amazon_eg": "AMAZON_AFFILIATE_TAG",
-        "noon_eg": "NOON_AFFILIATE_TAG",
-        "jumia_eg": "JUMIA_AFFILIATE_TAG",
+    return os.getenv(AFFILIATE_TAG_ENV_VARS.get(store_id, ""), "").strip()
+
+
+def tag_presence() -> dict[str, bool]:
+    """Per-store affiliate tag presence (env var set and non-blank).
+
+    Consumed by the /affiliate/config admin report and the production startup
+    warning: an unconfigured tag means "no revenue path configured", never
+    "no traffic" — the click is still logged (build_affiliate_url passes the
+    URL through).
+    """
+    return {
+        store_id: bool(_affiliate_tag(store_id)) for store_id in AFFILIATE_TAG_ENV_VARS
     }
-    return os.getenv(env_names.get(store_id, ""), "").strip()
+
+
+def missing_affiliate_tags() -> list[tuple[str, str]]:
+    """(store_id, env_var) pairs whose affiliate tag is unset in production."""
+    return [
+        (store_id, env_name)
+        for store_id, env_name in AFFILIATE_TAG_ENV_VARS.items()
+        if not _affiliate_tag(store_id)
+    ]
+
+
+def normalize_click_source(source: str | None) -> str:
+    """Clamp a client-supplied source to the allowlist.
+
+    The surface label comes from the client, so it is context, not identity:
+    anything unrecognized (or absent) becomes 'unknown' — the click stays
+    attributable and no caller can inject arbitrary strings into the metric
+    dimension.
+    """
+    value = (source or "").strip().lower()
+    return value if value in VALID_CLICK_SOURCES else "unknown"
+
+
+def is_opaque_id(value: str | None) -> bool:
+    """True when a client-supplied id is an opaque token, not a URL.
+
+    sku/deal_id identify products on the server's own tables; a caller that
+    smuggles a URL into an id field is probing the redirect surface, so the
+    request is rejected (400) instead of logged.
+    """
+    if value is None:
+        return True
+    lowered = value.strip().lower()
+    return "://" not in lowered and not lowered.startswith("www.")
 
 
 def _host_allowed(store_id: str, hostname: str) -> bool:

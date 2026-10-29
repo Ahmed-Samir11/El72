@@ -34,12 +34,37 @@
             android:name="flutterEmbedding"
             android:value="2" />
     </application>
-    <!-- Package visibility for url_launcher: the app only opens Comsumart
-         product URLs. Keep this list minimal (WS3 manifest hygiene). -->
+    <!-- Package visibility for url_launcher: the app may only open the
+         merchant hosts the server itself allows (STORE_HOSTS in
+         services/api/affiliate.py — kept in lockstep by
+         services/api/test_affiliate_manifest_sync.py). One entry per host, apex
+         and www forms included; keep this list minimal (WS3 manifest hygiene).
+         An unlisted host means Android silently refuses the tap on a real
+         device, so any new merchant needs BOTH entries (plan p1 finding C5). -->
     <queries>
         <intent>
             <action android:name="android.intent.action.VIEW"/>
-            <data android:scheme="https" android:host="www.comsumart.com"/>
+            <data android:scheme="https" android:host="amazon.eg"/>
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="https" android:host="www.amazon.eg"/>
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="https" android:host="noon.com"/>
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="https" android:host="www.noon.com"/>
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="https" android:host="jumia.com.eg"/>
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="https" android:host="www.jumia.com.eg"/>
         </intent>
     </queries>
 </manifest>

@@ -13,7 +13,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import UUID as postgres_UUID
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, synonym
 from sqlalchemy.types import TypeDecorator
 
 Base = declarative_base()
@@ -164,7 +164,13 @@ class CreditTransaction(Base):
 
 
 class AffiliateClick(Base):
-    """A merchant click with enough context for deal attribution."""
+    """An attributed merchant click (Gate 3/4 — plans/p1).
+
+    A row answers "who left the app, from where, in which session, for which
+    product/category" — store_id is decided by the server from the URL, user_id
+    is nullable (unauthenticated web clicks are still clicks) and is never a
+    phone number.
+    """
 
     __tablename__ = "affiliate_clicks"
 
@@ -172,6 +178,19 @@ class AffiliateClick(Base):
     store_id = Column(String(32), nullable=False)
     sku = Column(String(255), nullable=True)
     deal_id = Column(String(255), nullable=True)
+    category = Column(String(100), nullable=True)
+    source = Column(String(32), nullable=False, default="unknown")
+    session_id = Column(String(128), nullable=True)
+    user_id = Column(
+        OperationalIdType(),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    event_id = Column(String(64), nullable=True)
     target_url = Column(Text, nullable=False)
     affiliate_url = Column(Text, nullable=False)
-    clicked_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    # Legacy name, kept as an attribute alias for one release (plan p1 MS1):
+    # deployed code that selects AffiliateClick.clicked_at keeps working while
+    # the physical column is created_at (migration 0012 renames it).
+    clicked_at = synonym("created_at")

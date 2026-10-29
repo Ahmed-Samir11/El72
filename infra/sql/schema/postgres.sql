@@ -310,15 +310,27 @@ CREATE TRIGGER payment_audit_log_append_only
     BEFORE UPDATE OR DELETE ON payment_audit_log
     FOR EACH ROW EXECUTE FUNCTION prevent_payment_audit_modification();
 
--- Affiliate clicks for merchant revenue attribution
+-- Affiliate clicks for merchant revenue attribution (Gate 3/4, plans/p1).
+-- A click row must answer the report's §11 affiliate questions: per user,
+-- per surface (source), per session, per category. user_id only — never a
+-- phone number (PII rule); nullable because unauthenticated web/landing
+-- clicks are still clicks. source is the app surface that opened the merchant
+-- (deal_feed | search_result | tracker_card | browse | web; 'unknown' for
+-- callers that do not declare one). created_at renames the legacy clicked_at
+-- (deployed trees are migrated by migrations/0012_affiliate_click_attribution.sql).
 CREATE TABLE IF NOT EXISTS affiliate_clicks (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     store_id VARCHAR(32) NOT NULL,
     sku VARCHAR(255),
     deal_id VARCHAR(255),
+    category VARCHAR(100),
+    source VARCHAR(32) NOT NULL DEFAULT 'unknown',
+    session_id VARCHAR(128),
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    event_id VARCHAR(64),
     target_url TEXT NOT NULL,
     affiliate_url TEXT NOT NULL,
-    clicked_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
 -- Retailer Analytics (Aggregated B2B metrics, no PII)
@@ -356,7 +368,12 @@ CREATE INDEX IF NOT EXISTS idx_credit_transactions_created_at ON credit_transact
 
 CREATE INDEX IF NOT EXISTS idx_affiliate_clicks_store_id ON affiliate_clicks(store_id);
 CREATE INDEX IF NOT EXISTS idx_affiliate_clicks_sku ON affiliate_clicks(sku);
-CREATE INDEX IF NOT EXISTS idx_affiliate_clicks_clicked_at ON affiliate_clicks(clicked_at);
+CREATE INDEX IF NOT EXISTS idx_affiliate_clicks_created_at ON affiliate_clicks(created_at);
+-- Affiliate CTR per user and per surface (§11 KPI family): the two reads the
+-- funnel needs are "clicks of this user over time" and "clicks per source over
+-- time"; both get a composite index here.
+CREATE INDEX IF NOT EXISTS idx_affiliate_clicks_user_time ON affiliate_clicks(user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_affiliate_clicks_source ON affiliate_clicks(source, created_at);
 
 CREATE INDEX IF NOT EXISTS idx_retailer_analytics_store_id ON retailer_analytics(store_id);
 CREATE INDEX IF NOT EXISTS idx_retailer_analytics_period ON retailer_analytics(period_start, period_end);

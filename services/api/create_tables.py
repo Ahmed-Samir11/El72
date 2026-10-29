@@ -30,13 +30,27 @@ _REQUIRED_COLUMNS = [
     ("tracked_item_stores", "last_fetch_error", "TEXT"),
     ("current_prices", "image_url", "TEXT"),
     ("lowest_prices", "image_url", "TEXT"),
+    # Affiliate click attribution (plans/p1): the click row gains who/where
+    # context so Gate 3/4 can be evaluated on upgraded databases too.
+    ("affiliate_clicks", "category", "TEXT"),
+    ("affiliate_clicks", "source", "TEXT"),
+    ("affiliate_clicks", "session_id", "TEXT"),
+    ("affiliate_clicks", "user_id", "INTEGER"),
+    ("affiliate_clicks", "event_id", "TEXT"),
 ]
+
+# (table, old_column, new_column) — renames applied only when the old name
+# is present and the new one is not (idempotent; the reverse of an already
+# renamed database is NOT attempted: created_at stays the canonical name).
+_RENAMED_COLUMNS = [("affiliate_clicks", "clicked_at", "created_at")]
 
 
 def _existing_columns(engine) -> dict:
     """{table: {column, ...}} for the tables we care about (missing = {})."""
     inspector = inspect(engine)
-    tables = {table for table, _, _ in _REQUIRED_COLUMNS}
+    tables = {table for table, _, _ in _REQUIRED_COLUMNS} | {
+        table for table, _, _ in _RENAMED_COLUMNS
+    }
     existing = {}
     for table in tables:
         try:
@@ -78,6 +92,26 @@ def ensure_columns(engine) -> None:
                 continue
             raise
         logger.info("Added missing column %s.%s", table, column)
+
+    for table, old_column, new_column in _RENAMED_COLUMNS:
+        columns = existing.get(table, set())
+        if new_column in columns or old_column not in columns:
+            continue  # already renamed (or a fresh DB that never had the old)
+        try:
+            with engine.begin() as conn:
+                conn.exec_driver_sql(
+                    f"ALTER TABLE {table} RENAME COLUMN {old_column} "
+                    f"TO {new_column}"
+                )
+        except Exception as exc:  # noqa: BLE001
+            # Lost a race with a concurrent startup (or the deployed-tree
+            # migration already renamed it): "no such column" means the
+            # rename is done; anything else must stay loud.
+            detail = str(exc).lower()
+            if "no such column" in detail or "already exists" in detail:
+                continue
+            raise
+        logger.info("Renamed legacy column %s.%s -> %s", table, old_column, new_column)
 
 
 if __name__ == "__main__":
