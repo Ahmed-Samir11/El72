@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -42,6 +44,19 @@ class AppConfig {
   static const String _demoModeKey = 'demo_mode';
   static late SharedPreferences _preferences;
   static bool demoMode = false;
+
+  /// A stable identifier for ONE launch of the app, sent as
+  /// `affiliate_clicks.session_id` (plan p1): affiliate CTR is measured
+  /// per session/per user, and web/landing clicks have no user at all but
+  /// still arrive from some session. Random per process — it is a metric
+  /// key, not a credential, and never identifies a person (user_id does).
+  static final String sessionId = _generateSessionId();
+
+  static String _generateSessionId() {
+    final stamp = DateTime.now().microsecondsSinceEpoch;
+    // Decimal pieces are enough: this is a metric key, not a credential.
+    return '$stamp-${math.Random().nextInt(0x7fffffff)}';
+  }
 
   /// True if [url] points at the dev-only emulator loopback host, regardless
   /// of scheme or port. Matching the host (not the exact string) catches both

@@ -6,6 +6,7 @@ import 'models/deal_model.dart';
 import 'models/platform_stats_model.dart';
 import 'models/price_point_model.dart';
 import 'models/tracked_item_model.dart';
+import 'repositories/affiliate_repository.dart';
 import 'repositories/auth_repository.dart';
 import 'repositories/credits_repository.dart';
 import 'repositories/chatbot_repository.dart';
@@ -24,6 +25,13 @@ final trackedItemsRepositoryProvider = Provider<TrackedItemsRepository>((ref) {
 
 final dealsRepositoryProvider = Provider<DealsRepository>((ref) {
   return DealsRepository();
+});
+
+/// Affiliate redirect client (plan p1): the shared surface behind every
+/// merchant tap (via `ui/common/merchant_link.dart`). Stateless over the
+/// shared ApiClient singleton, so one instance serves the whole app.
+final affiliateRepositoryProvider = Provider<AffiliateRepository>((ref) {
+  return AffiliateRepository();
 });
 
 final statsRepositoryProvider = Provider<StatsRepository>((ref) {
