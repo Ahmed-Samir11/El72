@@ -264,6 +264,19 @@ def test_unauthenticated_caller_is_still_logged(client, monkeypatch):
     assert row.affiliate_url == row.target_url
 
 
+def test_plain_http_merchant_link_is_refused(client):
+    # The tagged URL carries the store's monetization credential; a
+    # plaintext http hop could strip or intercept it, so attribution is
+    # https-only (the client's fallback still opens the original link).
+    resp = client.get(
+        "/affiliate/redirect",
+        params={"target_url": "http://www.amazon.eg/dp/ABC123", "source": "web"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 400
+    assert _rows(client) == []
+
+
 def test_unknown_host_is_rejected_and_not_logged(client):
     resp = client.get(
         "/affiliate/redirect",

@@ -159,10 +159,17 @@ def build_affiliate_url(store_id: str, target_url: str) -> str:
 
 
 def store_for_url(target_url: str) -> str:
-    """Return the supported store ID for a merchant URL."""
+    """Return the supported store ID for a merchant URL.
+
+    HTTPS only: the redirect hands the caller a tagged affiliate URL and a
+    store tag is the monetization credential — over a plaintext http hop it
+    could be stripped or intercepted, and every supported merchant serves
+    https. An http merchant link is refused (the client then opens the
+    ORIGINAL url unattributed; attribution is never a precondition).
+    """
     parsed = urlparse(target_url)
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-        raise ValueError("target_url must be an HTTP or HTTPS URL")
+    if parsed.scheme != "https" or not parsed.hostname:
+        raise ValueError("target_url must be an HTTPS URL")
     for store_id in STORE_HOSTS:
         if _host_allowed(store_id, parsed.hostname):
             return store_id

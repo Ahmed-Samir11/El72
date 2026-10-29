@@ -72,6 +72,8 @@ BEGIN
     FOR con IN
         SELECT c.conname
         FROM pg_constraint c
+        -- fkrelid links pg_foreign_key to its pg_constraint row — the
+        -- same join psql's own \\d uses to fetch referential actions.
         JOIN pg_foreign_key f ON f.fkrelid = c.oid
         WHERE c.conrelid = 'affiliate_clicks'::regclass
           AND c.contype = 'f'
