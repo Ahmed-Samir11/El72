@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import (
     Boolean,
@@ -87,6 +87,18 @@ def _new_alert_event_id(context):
             "SELECT COALESCE(MAX(id), 0) + 1 FROM alert_events"
         ).scalar_one()
     return uuid.uuid4()
+
+
+def _utc_naive_now() -> datetime:
+    """Naive UTC \"now\" — the timestamp kind this schema stores.
+
+    New tables written by services/api use this instead of the deprecated
+    ``datetime.utcnow()``: same naive-UTC kind (so window comparisons and the
+    ``TIMESTAMP WITHOUT TIME ZONE`` columns agree), without a call Python
+    schedules for removal. Existing tables keep their own defaults untouched —
+    changing those is a data-visible migration, not a formatting cleanup.
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def _new_affiliate_click_id(context):
@@ -265,15 +277,20 @@ class AlertEvent(Base):
     reference_price_egp = Column(Numeric(12, 2), nullable=True)
     discount_pct = Column(Numeric(6, 2), nullable=True)
     channel = Column(Text, nullable=False, default="in_app")
+    # Timestamps are naive UTC on purpose, matching the canonical schema's
+    # TIMESTAMP WITHOUT TIME ZONE columns (see that table's comment): the
+    # same-day dedupe compares a stored created_at against a computed window
+    # boundary, and an aware value would raise in production while the SQLite
+    # tests stayed green. test_alert_events_schema_sync.py pins both kinds.
     # Set by POST /alerts/{id}/open (in-app view) or by a push tap; the §23
     # alert_opened evidence. NULL = written but never seen.
     opened_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=_utc_naive_now)
     updated_at = Column(
         DateTime,
         nullable=False,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=_utc_naive_now,
+        onupdate=_utc_naive_now,
     )
 
     user = relationship("User", back_populates="alert_events")

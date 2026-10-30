@@ -33,22 +33,25 @@ import asyncio
 import json
 import logging
 import os
-from datetime import datetime
+import socket
+from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any, Callable, Mapping
 
-from redis.exceptions import ResponseError
 from sqlalchemy import select
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from services.api.affiliate import normalize_category
 from services.api.models import Alert, AlertEvent
 from services.api.monitoring.metrics import (
+    ALERT_EVENTS_ACK_ERRORS_TOTAL,
     ALERT_EVENTS_CONSUMER_UP,
+    ALERT_EVENTS_DISCARDED_TOTAL,
     ALERT_EVENTS_FAILED_TOTAL,
     ALERT_EVENTS_READ_ERRORS_TOTAL,
     ALERT_EVENTS_RECEIVED_TOTAL,
+    ALERT_EVENTS_REDRAWS_TOTAL,
     ALERT_EVENTS_SKIPPED_TOTAL,
     ALERT_EVENTS_STORED_TOTAL,
 )
@@ -61,7 +64,10 @@ logger = logging.getLogger(__name__)
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 ALERTS_STREAM = os.getenv("ALERTS_STREAM", "stream:alerts")
 CONSUMER_GROUP = os.getenv("ALERTS_CONSUMER_GROUP", "cg_alerts_api")
-CONSUMER_NAME = os.getenv("ALERTS_CONSUMER_NAME", "alerts_api_1")
+CONSUMER_NAME = (
+    os.getenv("ALERTS_CONSUMER_NAME")
+    or f"alerts_api_{socket.gethostname()}-{os.getpid()}"
+)
 
 # Batch size / block time are ops-tunable (same pattern as the affiliate
 # redirect rate cap: env overrides, built-in default when unset).
@@ -82,6 +88,11 @@ VALID_EVENT_TYPES = frozenset(
 # must not turn into a wall of identical cards. Implemented as a floor on the
 # UTC day (hour 0) in the dedupe query below, not a rolling 24 h window, so
 # "today" means the same thing to the consumer, the query and the ops dashboard.
+
+# A stream message is a durable fact, but a consumer that keeps failing on it
+# must not retry it forever: after this many deliveries the entry is acked and
+# counted as discarded, so lag is bounded and the loss is loud.
+MAX_DELIVERY_ATTEMPTS = 3
 
 # Outcome labels — also the Prometheus label values, so a review can read the
 # same set from the metrics as from the code.
@@ -110,6 +121,52 @@ def _decode(value: Any) -> str | None:
         except UnicodeDecodeError:
             return None
     return str(value)
+
+
+def _utc_now() -> datetime:
+    """Naive UTC \"now\".
+
+    Naive is deliberate and matches the column type: alert_events stores
+    TIMESTAMP WITHOUT TIME ZONE, so a window comparison (the same-day dedupe)
+    must be built from the same kind of timestamp as the value it compares
+    against. An aware value here would raise \"can't compare offset-naive and
+    offset-aware datetimes\" in production and not in the SQLite tests.
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _event_time(event: dict[str, Any]) -> datetime:
+    """When the event HAPPENED, not when this consumer got round to it.
+
+    The emitter stamps the payload; using processing time instead would make a
+    backlog rewrite history (an event that happened yesterday landing as
+    today's alert, and stealing today's dedupe slot). Falls back to now when
+    the stamp is missing or unparseable, and drops the offset so the value
+    matches the naive-UTC column (see _utc_now).
+    """
+    raw = _decode(event.get("timestamp"))
+    if raw:
+        try:
+            parsed = datetime.fromisoformat(raw)
+        except ValueError:
+            parsed = None
+        if parsed is not None:
+            if parsed.tzinfo is not None:
+                parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+            return parsed
+    return _utc_now()
+
+
+def _event_metadata(event: dict[str, Any]) -> dict[str, Any]:
+    """The payload's metadata as a dict — or an empty one.
+
+    A hostile or malformed payload can carry metadata as a list, a string or a
+    number; ``(event.get('metadata') or {}).get(...)`` would then raise,
+    which leaves the message pending forever. The metadata is display context,
+    never identity, so a value that is not an object yields nothing.
+    """
+    metadata = event.get("metadata")
+    return metadata if isinstance(metadata, dict) else {}
 
 
 def parse_event(fields: Mapping[Any, Any]) -> dict[str, Any] | None:
@@ -250,7 +307,8 @@ def _discount_pct(
     only when it is missing and both prices exist. Bounded to 0-100 — a "120%
     discount" is a data error, not a deal, and must not become a headline card.
     """
-    claimed = _clean_float((event.get("metadata") or {}).get("drop_percentage"))
+    claimed = _event_metadata(event).get("drop_percentage")
+    claimed = _clean_float(claimed)
     if claimed is not None:
         candidate = claimed
     elif reference_egp and price_egp is not None and reference_egp > price_egp:
@@ -283,7 +341,7 @@ def _fill_category(db: Session, sku: str | None, event: dict[str, Any]) -> str |
     scheme-shaped token, and the stored value stays length-bounded even when
     older rows predate today's rules.
     """
-    claimed = normalize_category(_decode((event.get("metadata") or {}).get("category")))
+    claimed = normalize_category(_decode(_event_metadata(event).get("category")))
     if claimed:
         return claimed
     if not sku:
@@ -326,7 +384,7 @@ def store_event(
         return OUTCOME_INVALID
     tracked_item_id = int(tracked_item_id)
 
-    now = now or datetime.utcnow()
+    now = now or _event_time(event)
     with session_factory() as db:
         owner_id = _resolve_owner(db, tracked_item_id)
         if owner_id is None:
@@ -338,8 +396,8 @@ def store_event(
         if claimed_user is not None and int(claimed_user) != int(owner_id):
             return OUTCOME_OWNER_MISMATCH
 
-        # created_at is stored as naive UTC (the repo-wide convention), so the
-        # same-day window is floored on the same kind of timestamp.
+        # Same-day rule, floored on the day the EVENT happened (see _event_time),
+        # in the naive-UTC kind the column stores.
         day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         exists = db.execute(
             select(AlertEvent.id)
@@ -390,7 +448,16 @@ def store_event(
                 created_at=now,
             )
         )
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            # The unique index on (tracked_item_id, event_type, day) is the
+            # backstop for the read-then-write window above: two consumers
+            # (or two replicas) that both see "no row today" cannot both
+            # create one. A violation means the same fact was written first,
+            # so this is a duplicate, not a failure.
+            db.rollback()
+            return OUTCOME_DUPLICATE
         return OUTCOME_STORED
 
 
@@ -437,10 +504,10 @@ async def process_message(
             extra={"message_id": _decode(message_id), "error": str(exc)},
         )
         return OUTCOME_FAILED
-    except Exception:  # noqa: BLE001 - poison-pill guard, logged loudly
+    except Exception:  # noqa: BLE001 - bug guard: counted, left pending, never fatal
         ALERT_EVENTS_FAILED_TOTAL.inc()
         logger.exception(
-            "Unexpected alert event error; message acked and counted as failed",
+            "Unexpected alert event error; message left pending for retry",
             extra={"message_id": _decode(message_id)},
         )
         return OUTCOME_FAILED
@@ -452,18 +519,124 @@ async def process_message(
 
     try:
         await redis.xack(stream, group, message_id)
-    except ResponseError as exc:
-        # Unknown group / stream: the loop re-asserts the consumer group on
-        # every iteration, so this is reported rather than fatal.
+    except Exception:
+        # ANY ack failure (connection gone, unknown group, timeout) is logged
+        # and counted, never propagated: an exception here would escape the
+        # consumer loop and leave the task dead while the gauge still reads 1.
+        # The entry stays pending, so the next pass re-claims and re-decides it.
+        ALERT_EVENTS_ACK_ERRORS_TOTAL.inc()
         logger.error(
             "XACK failed for an alert event message",
             extra={
                 "message_id": _decode(message_id),
                 "stream": stream,
                 "group": group,
-                "error": str(exc),
+                "outcome": outcome,
             },
         )
+    return outcome
+
+
+def _entries_of(messages: Any) -> list[tuple[Any, Any]]:
+    """Flatten an XREADGROUP reply into (message_id, fields) pairs.
+
+    A reply for a group with nothing to read is ``[[stream, []]]``, not
+    ``None``, so "did we get anything" has to look at the entries, not the
+    outer list — which is what decides whether the pending pass or the
+    new-messages pass is the one that produced work.
+    """
+    entries: list[tuple[Any, Any]] = []
+    if not messages:
+        return entries
+    for _, message_list in messages:
+        entries.extend((message_id, fields) for message_id, fields in message_list)
+    return entries
+
+
+async def _read_pass(
+    redis: RedisStreamClient,
+    stream: str,
+    group: str,
+    consumer: str,
+    read_id: str,
+    count: int,
+    block: int | None = None,
+) -> list[tuple[Any, Any]]:
+    """One XREADGROUP pass, flattened. ``read_id`` '>' = new, '0' = my pending."""
+    messages = await redis.xreadgroup(
+        group=group,
+        consumer=consumer,
+        streams={stream: read_id},
+        count=count,
+        block=block,
+    )
+    return _entries_of(messages)
+
+
+async def _process_with_retry(
+    redis: RedisStreamClient,
+    stream: str,
+    group: str,
+    message_id: Any,
+    fields: Any,
+    session_factory: Callable[[], Session],
+    attempts: dict[str, int],
+    discarded: set[str],
+) -> str:
+    """Decide one message, bounded so a failure cannot spin the consumer.
+
+    A message that FAILED keeps its entry pending, which is how a transient
+    database outage gets retried — but only up to MAX_DELIVERY_ATTEMPTS times.
+    Past that the entry is acked and counted as discarded: unbounded lag on one
+    poison pill is worse than a bounded, loud loss, and the counter means
+    "we measured nothing" can never silently mean "we gave up".
+
+    An entry already decided to be discarded is never reprocessed: if the
+    ack itself kept failing, the pending pass would hand the same entry back
+    forever, so it is acked again (best effort) and skipped.
+    """
+    key = _decode(message_id) or "?"
+    if key in discarded:
+        try:
+            await redis.xack(stream, group, message_id)
+        except Exception:  # noqa: BLE001
+            ALERT_EVENTS_ACK_ERRORS_TOTAL.inc()
+        ALERT_EVENTS_REDRAWS_TOTAL.inc()
+        return OUTCOME_FAILED
+
+    attempt = attempts.get(key, 0) + 1
+    attempts[key] = attempt
+    if attempt > 1:
+        ALERT_EVENTS_REDRAWS_TOTAL.inc()
+
+    try:
+        outcome = await process_message(
+            redis, stream, group, message_id, fields, session_factory
+        )
+    except Exception:  # noqa: BLE001 - the loop must never die on one message
+        ALERT_EVENTS_FAILED_TOTAL.inc()
+        logger.exception(
+            "Alert event processing raised unexpectedly", extra={"message_id": key}
+        )
+        outcome = OUTCOME_FAILED
+
+    if outcome != OUTCOME_FAILED:
+        attempts.pop(key, None)
+        return outcome
+
+    if attempt >= MAX_DELIVERY_ATTEMPTS:
+        try:
+            await redis.xack(stream, group, message_id)
+        except Exception:  # noqa: BLE001
+            ALERT_EVENTS_ACK_ERRORS_TOTAL.inc()
+            logger.error(
+                "XACK of a discarded message failed", extra={"message_id": key}
+            )
+        ALERT_EVENTS_DISCARDED_TOTAL.inc()
+        # Remembered, not forgotten: the entry must never be reprocessed or
+        # re-counted just because the ack that should have removed it failed.
+        discarded.add(key)
+        attempts.pop(key, None)
     return outcome
 
 
@@ -490,47 +663,78 @@ async def consume_loop(
     name = consumer_name or CONSUMER_NAME
 
     redis: RedisStreamClient | None = None
-    while True:
-        try:
-            if redis is None:
-                # Connected lazily, INSIDE the loop: a Redis outage at API
-                # startup must not take the API down — GET /alerts/recent still
-                # serves what is already durable — but it must be visible, which
-                # is what el72_alert_events_consumer_up = 0 is for.
-                redis = await RedisStreamClient.create(url)
-            # ALWAYS create the consumer group before reading. It is re-asserted
-            # every iteration: ensure_group swallows BUSYGROUP, and after a
-            # reconnect a dropped group must never strand the pipeline.
-            await redis.ensure_group(stream_name, group_name)
-            messages = await redis.xreadgroup(
-                group=group_name,
-                consumer=name,
-                streams={stream_name: ">"},
-                count=READ_COUNT,
-                block=READ_BLOCK_MS,
-            )
-            ALERT_EVENTS_CONSUMER_UP.set(1)
-        except asyncio.CancelledError:
-            ALERT_EVENTS_CONSUMER_UP.set(0)
-            raise
-        except Exception:
-            ALERT_EVENTS_READ_ERRORS_TOTAL.inc()
-            ALERT_EVENTS_CONSUMER_UP.set(0)
-            logger.exception(
-                "Alert events read failed; retrying after backoff",
-                extra={"stream": stream_name, "group": group_name},
-            )
-            # The client is kept, not closed: RedisStreamClient is a process
-            # singleton and redis.asyncio reconnects on the next command, while
-            # a failed create() leaves the singleton empty for a fresh attempt.
-            await asyncio.sleep(READ_BACKOFF_SECONDS)
-            continue
+    attempts: dict[str, int] = {}
+    discarded: set[str] = set()
+    try:
+        while True:
+            progressed = False
+            try:
+                if redis is None:
+                    # Connected lazily, INSIDE the loop: a Redis outage at API
+                    # startup must not take the API down — GET /alerts/recent still
+                    # serves what is already durable — but it must be visible,
+                    # which is what el72_alert_events_consumer_up = 0 is for.
+                    redis = await RedisStreamClient.create(url)
+                # ALWAYS create the consumer group before reading. Re-asserted
+                # every pass: ensure_group swallows BUSYGROUP, and after a
+                # reconnect a dropped group must never strand the pipeline.
+                await redis.ensure_group(stream_name, group_name)
 
-        if not messages:
-            continue
-
-        for _, entries in messages:
-            for message_id, fields in entries:
-                await process_message(
-                    redis, stream_name, group_name, message_id, fields, session_factory
+                # Pending entries are invisible to '>' forever, so the consumer
+                # re-claims its OWN pending list first; only when that is empty
+                # does it ask for new messages (which is where the blocking
+                # read belongs).
+                entries = await _read_pass(
+                    redis, stream_name, group_name, name, "0", READ_COUNT
                 )
+                if not entries:
+                    entries = await _read_pass(
+                        redis,
+                        stream_name,
+                        group_name,
+                        name,
+                        ">",
+                        READ_COUNT,
+                        READ_BLOCK_MS,
+                    )
+                ALERT_EVENTS_CONSUMER_UP.set(1)
+            except asyncio.CancelledError:
+                ALERT_EVENTS_CONSUMER_UP.set(0)
+                raise
+            except Exception:
+                ALERT_EVENTS_READ_ERRORS_TOTAL.inc()
+                ALERT_EVENTS_CONSUMER_UP.set(0)
+                logger.exception(
+                    "Alert events read failed; retrying after backoff",
+                    extra={"stream": stream_name, "group": group_name},
+                )
+                # The client is kept, not closed: RedisStreamClient is a process
+                # singleton and redis.asyncio reconnects on the next command, while
+                # a failed create() leaves the singleton empty for a fresh attempt.
+                await asyncio.sleep(READ_BACKOFF_SECONDS)
+                continue
+
+            for message_id, fields in entries:
+                outcome = await _process_with_retry(
+                    redis,
+                    stream_name,
+                    group_name,
+                    message_id,
+                    fields,
+                    session_factory,
+                    attempts,
+                    discarded,
+                )
+                if outcome != OUTCOME_FAILED:
+                    progressed = True
+
+            if entries and not progressed:
+                # The pending pass keeps handing back entries this consumer has
+                # already decided about (typically an XACK that keeps failing);
+                # pausing keeps that observable lag from becoming a hot spin.
+                await asyncio.sleep(READ_BACKOFF_SECONDS)
+    finally:
+        # Dead-person guard in the other direction: whatever ends this task
+        # (cancelled, or an error that escaped despite the guards above), the
+        # gauge must not be left at 1 for a consumer that is no longer running.
+        ALERT_EVENTS_CONSUMER_UP.set(0)

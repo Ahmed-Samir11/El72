@@ -235,3 +235,34 @@ def test_read_rate_limit_is_enforced(factory, monkeypatch):
 
     assert client.get("/alerts/recent").status_code == 200
     assert client.get("/alerts/recent").status_code == 429
+
+
+def test_open_rate_limit_is_enforced(factory, monkeypatch):
+    """The open endpoint is a write, so it carries its own cap."""
+    caller = _add_user(factory, "+201000000032")
+    event = _add_event(factory, caller, datetime(2026, 10, 29, 9, 0, 0))
+    monkeypatch.setattr(alerts_module, "ALERTS_OPEN_RATE_LIMIT", "1/minute")
+    client = _client(factory, caller)
+
+    assert client.post(f"/alerts/{event.id}/open").status_code == 200
+    assert client.post(f"/alerts/{event.id}/open").status_code == 429
+
+
+def test_since_normalizes_an_offset_to_utc(factory):
+    """A client in a non-UTC zone gets the same rows, not a broken comparison.
+
+    ``created_at`` is stored naive UTC, so an aware bound is converted to UTC and
+    its offset dropped; leaving it aware would compare two timestamp kinds.
+    """
+    caller = _add_user(factory, "+201000000031")
+    _add_event(factory, caller, datetime(2026, 10, 29, 8, 0, 0))
+    client = _client(factory, caller)
+
+    def recent(since):
+        return client.get("/alerts/recent", params={"since": since}).json()["alerts"]
+
+    # 10:00+02:00 is 08:00 UTC, so the 08:00 row sits on the boundary and is
+    # included; 12:00+02:00 (= 10:00 UTC) excludes it.
+    assert len(recent("2026-10-29T10:00:00+02:00")) == 1
+    assert len(recent("2026-10-29T12:00:00+02:00")) == 0
+    assert len(recent("2026-10-29T06:00:00Z")) == 1

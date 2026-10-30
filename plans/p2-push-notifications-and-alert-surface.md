@@ -2,9 +2,10 @@
 
 **Branch:** `feat/push-notifications-and-alert-surface` (off `main`)
 **Date:** 2026-10-29
-**Status:** In implementation — MS1 backend shipped on `feat/push-notifications-and-alert-surface`
-(`alert_events` + stream consumer + `GET /alerts/recent` + `POST /alerts/{id}/open`); MS2 blocked on
-owner-supplied Arabic copy, MS3 blocked on H2 + H3 (see §7 and the Implementation Record at §9).
+**Status:** In implementation — MS1 backend shipped on `feat/push-notifications-and-alert-surface` (PR #49,
+HGM round 1 findings addressed) — `alert_events` + stream consumer + `GET /alerts/recent` + `POST /alerts/{id}/open`
++ store-facing copy truth; MS2 (Alerts tab, app copy in both locales) blocked on owner-supplied Arabic, MS3 blocked
+on H2 + H3 (see §7 and the Implementation Record at §9).
 **Series:** 2 of 5 release-priority plans (P1 affiliate clicks → **P2** → P3 free-tracker model, P4 analytics, P5 activation/trust).
 
 ---
@@ -263,8 +264,28 @@ permission now") — but only **if** MS2 removes the false promise, which today 
 | drift guard: a comment noting model↔schema parity | `services/api/test_alert_events_schema_sync.py` | AGENTS: a pair that must stay in lockstep gets a test — it pins columns (schema ↔ migration ↔ ORM), the CHECK value sets (↔ the consumer's `VALID_EVENT_TYPES`), index names, the updated_at trigger, the CASCADE retention rule and the bootstrap reference |
 | Streams table gains a `cg_alerts_api` row | **not edited here** | rewriting `.agents/` rules is a maintainer-session act (§7 last risk row); this PR states the need, the edit belongs in its own PR |
 
+### Round 1 — HGM review findings on PR #49 (CRITICAL + every WARNING addressed)
+
+| Finding | Fix | Where |
+|---|---|---|
+| **CRITICAL** a payload with non-object `metadata` (list/string/number) raised inside the write, leaving the message pending forever | `_event_metadata()` yields `{}` unless metadata is an object — display context, never identity | `alert_events_consumer.py`, test `test_non_object_metadata_never_crashes_the_write` |
+| WARNING the ORM wrote naive values into `TIMESTAMP WITH TIME ZONE` columns: comparisons break once psycopg2 reads them back tz-aware, while SQLite tests stay green | `alert_events` timestamps are `TIMESTAMP WITHOUT TIME ZONE`, defaulted **and** triggered in UTC (`NOW() AT TIME ZONE 'UTC'` through a dedicated trigger function, so a naive column cannot inherit the session timezone); one timestamp kind from SQL default → trigger → Python | `schema/postgres.sql`, `0013_alert_events.sql`, `models.py::_utc_naive_now`, test `test_alert_events_timestamps_are_naive_utc_everywhere` |
+| WARNING `since` accepted offset-carrying bounds against naive rows | converted to UTC and stripped at one normalization point, so a client in another zone sees the same rows | `routers/alerts.py::_parse_since`, test `test_since_normalizes_an_offset_to_utc` |
+| WARNING messages left pending were never reclaimed by this consumer | the loop reads its **own pending list (`0`) before** asking for new messages (`>`), and bounds redelivery: after `MAX_DELIVERY_ATTEMPTS` = 3 failures the entry is acked into `el72_alert_events_discarded_total` | `consume_loop` / `_process_with_retry`, test `test_broken_write_is_reclaimed_then_discarded_and_the_gauge_drops` |
+| WARNING one fixed consumer name collides across API workers/replicas | default `alerts_api_<host>-<pid>` (env still overrides): a pending list belongs to the process that wrote it | `CONSUMER_NAME` |
+| WARNING same-day dedupe raced with no database guarantee | `CREATE UNIQUE INDEX uq_alert_events_item_type_day ON alert_events(tracked_item_id, event_type, (created_at::date))` in the canonical schema **and** the migration; the write catches `IntegrityError` and answers `duplicate`. SQLite keeps the read-then-write check (the expression index is not portable) | both SQL files + `store_event`, pinned by the drift test |
+| WARNING an `XACK` failure other than `ResponseError`, or any error while handling a message, could end the task while the gauge still read 1 | ack errors caught for **any** exception and counted (`el72_alert_events_ack_errors_total`); per-message handling is contained in `_process_with_retry`; the loop ends with `finally: consumer_up.set(0)` | `process_message` / `_process_with_retry` / `consume_loop` |
+| WARNING dedupe and `created_at` used processing time instead of event time | `_event_time()` reads the emitter's own stamp (converted to naive UTC), so a drained backlog cannot rewrite history or steal today's dedupe slot | `_event_time`, test `test_dedupe_uses_event_time_across_midnight` |
+| WARNING open-marking was not atomic under concurrency | the UPDATE carries `opened_at IS NULL` and `rowcount` decides `already_open` | `open_alert` |
+| WARNING the store copy still promised alerting the build cannot deliver | §2 short description and §3's alert bullet state what actually ships (a recorded price event, visible in-app, tap → merchant); the Arabic promise is replaced by an ASCII note pending the owner's wording — machine Arabic copy is forbidden under the active model | `flutter-app/docs/play-store/store-listing.md`, `privacy-policy.md` §1/§2/§3 |
+| INFO `datetime.utcnow()` deprecated | `_utc_naive_now()` for the new table only; existing tables keep their defaults (changing those is a data-visible migration, not a cleanup) | `models.py` |
+| INFO the startup hook could start a second consumer | a live task is never replaced, and the log says so | `main.py::_start_alert_events_consumer` |
+| INFO the dedupe index did not cover `event_type`; migration lacked a trailing newline | unique index above + plain item-time index kept for the item-history read; newline added | both SQL files, `0013_alert_events.sql` |
+
 Deferred here, not blocked: MS2 needs the owner's Arabic values for every new key (`navAlerts`, the
-alert-card lines, the channel picker, the truthful `trackerCreated`); MS3 needs H2 (Firebase project,
-`google-services.json`, service-account JSON) and H3 (is OS push in v1.0?). If H3 answers "no", MS2's
-copy fix stops being optional: today `app_en.arb` `trackerCreated` still promises a WhatsApp notification
-and `docs/play-store/store-listing.md` §3 still promises alerting.
+alert-card lines, the channel picker, and a truthful rewrite of `trackerCreated`); MS3 needs H2 (Firebase
+project, `google-services.json`, service-account JSON) and H3 (is OS push in v1.0?). If H3 answers "no", MS2's
+copy fix stops being optional. The **store-facing** promise was already corrected in this PR (`store-listing.md`
+§2/§3 and `privacy-policy.md` now describe an in-app alert history and state that no OS push/email/WhatsApp
+channel is used); the **in-app** promise (`app_en.arb` `trackerCreated`, which claims a WhatsApp notification)
+still needs the owner's Arabic to be rewritten, which is why it lands with MS2 rather than here.

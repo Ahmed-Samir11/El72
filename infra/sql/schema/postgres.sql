@@ -353,6 +353,11 @@ CREATE TABLE IF NOT EXISTS affiliate_clicks (
 -- send that did not happen; the CHECK widens when those senders ship.
 -- tracked_item_id keeps no FK: tracked_items is owned by services/scraper
 -- (service isolation) and is indexed for the item-time read instead.
+-- Timestamps are deliberately TIMESTAMP WITHOUT TIME ZONE, defaulted and
+-- triggered in UTC: the owning service writes naive UTC (like the rest of
+-- services/api) and the same-day dedupe compares a stored value against a
+-- computed window boundary — a WITH TIME ZONE column would read back tz-aware
+-- and break that comparison in production while the SQLite tests stayed green.
 CREATE TABLE IF NOT EXISTS alert_events (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     -- CASCADE: this history is the user's own view of the market, and it is
@@ -373,9 +378,9 @@ CREATE TABLE IF NOT EXISTS alert_events (
     discount_pct NUMERIC(6, 2),
     channel TEXT NOT NULL DEFAULT 'in_app'
         CHECK (channel IN ('in_app', 'push', 'whatsapp')),
-    opened_at TIMESTAMP WITH TIME ZONE,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    opened_at TIMESTAMP WITHOUT TIME ZONE,
+    created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT (NOW() AT TIME ZONE 'UTC'),
+    updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT (NOW() AT TIME ZONE 'UTC')
 );
 
 -- Retailer Analytics (Aggregated B2B metrics, no PII)
@@ -430,6 +435,11 @@ CREATE INDEX IF NOT EXISTS idx_alert_events_item_time
     ON alert_events(tracked_item_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_alert_events_user_opened
     ON alert_events(user_id, opened_at);
+-- The same-day rule as a UNIQUE promise, not only a read-then-write check: two
+-- consumers (or two replicas) that both see "no row today" cannot both create
+-- one. Keyed on the day the event happened, matching the consumer's dedupe.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_alert_events_item_type_day
+    ON alert_events(tracked_item_id, event_type, (created_at::date));
 
 CREATE INDEX IF NOT EXISTS idx_retailer_analytics_store_id ON retailer_analytics(store_id);
 CREATE INDEX IF NOT EXISTS idx_retailer_analytics_period ON retailer_analytics(period_start, period_end);
@@ -489,10 +499,21 @@ CREATE TRIGGER update_alerts_updated_at
     EXECUTE FUNCTION update_updated_at_column();
 
 DROP TRIGGER IF EXISTS update_alert_events_updated_at ON alert_events;
+-- alert_events.updated_at is naive UTC (see the table comment), so it cannot
+-- reuse the shared trigger: assigning NOW() into a timestamp-without-time-zone
+-- column converts through the SESSION timezone. This function pins UTC.
+CREATE OR REPLACE FUNCTION update_alert_events_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW() AT TIME ZONE 'UTC';
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
 CREATE TRIGGER update_alert_events_updated_at
     BEFORE UPDATE ON alert_events
     FOR EACH ROW
-    EXECUTE FUNCTION update_updated_at_column();
+    EXECUTE FUNCTION update_alert_events_updated_at_column();
 
 DROP TRIGGER IF EXISTS update_tracked_items_updated_at ON tracked_items;
 CREATE TRIGGER update_tracked_items_updated_at

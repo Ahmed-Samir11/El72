@@ -11,8 +11,8 @@ or analytics are added in a later release).**
 
 Elhaq (the "إلحق" price-tracking app) is a tool that helps you follow the prices
 of products you care about on Egyptian online stores (Amazon Egypt, Noon, Jumia)
-and notify you when a price drops. This policy explains what data we collect,
-how it is used, and your choices.
+and record a price event when one of your tracked products changes. This policy
+explains what data we collect, how it is used, and your choices.
 
 ## 1. What we collect
 
@@ -22,6 +22,9 @@ how it is used, and your choices.
   product/URL, and any associated image reference).
 - **Price data.** Current and historical prices for your tracked items, fetched
   from the stores you track.
+- **Price alerts.** When a price you track changes (a drop, a return to stock,
+  crossing your target), we record that event against your account, so the app
+  can show it to you later even if the app was closed when it happened.
 - **Device-local settings.** Your theme preference (light/dark), language
   (Arabic/English), and demo-mode setting are stored **only on your device** and
   are not sent to our servers.
@@ -35,13 +38,18 @@ how it is used, and your choices.
 - As of this version we do **not** send **crash reports** to any third party.
   _(If crash reporting is enabled in a future release, this section will be
   updated and users will be notified.)_
+- We do **not** request the Android notifications permission and do **not**
+  deliver OS push notifications, email or WhatsApp messages to you in this
+  version. Price events are shown inside the app; a delivery channel is only
+  described here once it actually ships.
 - We do not collect precise physical location, contacts, photos, or microphone
   data. The app requests only the `INTERNET` permission.
 
 ## 3. How we use your data
 
 - To provide the service: authenticate you, fetch prices for your tracked items,
-  and send you price-drop notifications.
+  and record price-change events for your account so the app can show them to
+  you (see §1: an event is stored and displayed in-app in this version).
 - To operate and improve the service (e.g., reliability of price fetching).
 - We do **not** sell your personal data, and we do **not** share it with third
   parties for advertising.

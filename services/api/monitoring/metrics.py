@@ -49,6 +49,21 @@ ALERT_EVENTS_READ_ERRORS_TOTAL = Counter(
     "from write failures so \"the pipeline is down\" can never be confused with "
     "\"the events were unreadable\".",
 )
+ALERT_EVENTS_ACK_ERRORS_TOTAL = Counter(
+    "el72_alert_events_ack_errors_total",
+    "Total XACK failures: the entry stays pending and is re-decided, so this is "
+    "the counter that explains growing consumer lag.",
+)
+ALERT_EVENTS_REDRAWS_TOTAL = Counter(
+    "el72_alert_events_redraws_total",
+    "Total deliveries of an entry that is still pending for this consumer "
+    "(a retried failure, not a new event).",  # pending-reclaim pass
+)
+ALERT_EVENTS_DISCARDED_TOTAL = Counter(
+    "el72_alert_events_discarded_total",
+    "Total entries acked after MAX_DELIVERY_ATTEMPTS failed deliveries: bounded "
+    "loss, made loud. \"No alerts\" must never silently mean \"we gave up\".",
+)
 ALERT_EVENTS_CONSUMER_UP = Gauge(
     "el72_alert_events_consumer_up",
     "1 while the alert-events consumer can read stream:alerts, 0 while it is "

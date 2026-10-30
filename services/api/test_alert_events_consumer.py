@@ -16,11 +16,13 @@ from unittest.mock import AsyncMock
 os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 
 import pytest
+from prometheus_client import REGISTRY
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from services.api.alert_events_consumer import (
+    MAX_DELIVERY_ATTEMPTS,
     OUTCOME_DUPLICATE,
     OUTCOME_FAILED,
     OUTCOME_INVALID,
@@ -460,4 +462,190 @@ def test_consumer_ensures_group_before_reading_then_acks_batch(db, monkeypatch):
     assert isinstance(results[0], asyncio.CancelledError)
     assert redis.ensure_group.await_count >= 1
     assert redis.xack.await_count == 1
+    assert len(db.read_rows()) == 1
+
+
+# --- hostile payload shapes -------------------------------------------------
+
+
+def test_non_object_metadata_never_crashes_the_write(db):
+    """metadata is display context; a hostile shape must not lose the event.
+
+    The old ``(event.get('metadata') or {}).get(...)`` raised AttributeError on
+    a list/string/number, which left the message pending forever.
+    """
+    user = db.add_user("+201000000021")
+    day = datetime(2026, 10, 29, 12, 0, 0)
+
+    for index, metadata in enumerate(
+        ([], "drop", 7, None, {"drop_percentage": "lots"})
+    ):
+        product = f"tee-{index}"
+        owned = db.add_item(user, product)
+        assert (
+            store_event(
+                db.factory,
+                _event(tracked_item_id=owned, metadata=metadata),
+                now=day,
+            )
+            == OUTCOME_STORED
+        ), f"metadata shape {type(metadata)} broke the write"
+    assert len(db.read_rows()) == 5
+
+
+def test_fractional_and_non_numeric_item_ids_are_invalid(db):
+    user = db.add_user("+201000000022")
+    db.add_item(user, "tee")
+    for bad in ("1.5", 1.5, "abc", [], True):
+        assert store_event(db.factory, _event(tracked_item_id=bad)) == OUTCOME_INVALID
+    assert db.read_rows() == []
+
+
+def test_oversized_url_is_dropped_but_the_event_lands(db):
+    user = db.add_user("+201000000023")
+    item = db.add_item(user, "tee")
+    store_event(
+        db.factory,
+        _event(tracked_item_id=item, url="https://x.example/" + "a" * 4096),
+        now=datetime(2026, 10, 29, 12, 0, 0),
+    )
+    (row,) = db.read_rows()
+    assert row.url is None
+
+
+def test_discount_stays_null_without_a_reference_price(db):
+    """ "The price changed" is a fact; "it fell N%" is not claimable then."""
+    user = db.add_user("+201000000024")
+    item = db.add_item(user, "tee")
+    store_event(
+        db.factory,
+        _event(
+            tracked_item_id=item,
+            old_price_usd=None,
+            target_price=None,
+            metadata={},
+        ),
+        now=datetime(2026, 10, 29, 12, 0, 0),
+    )
+    (row,) = db.read_rows()
+    assert row.price_egp is not None
+    assert row.reference_price_egp is None
+    assert row.discount_pct is None
+
+
+def test_payload_user_id_matching_the_owner_is_accepted(db):
+    """A truthful payload is not punished for naming the owner it agrees with."""
+    user = db.add_user("+201000000025")
+    item = db.add_item(user, "tee-r219636")
+    assert (
+        store_event(db.factory, _event(tracked_item_id=item, user_id=user))
+        == OUTCOME_STORED
+    )
+    (row,) = db.read_rows()
+    assert row.user_id == user
+
+
+def test_dedupe_uses_event_time_across_midnight(db):
+    """Two price drops either side of midnight are two days, not one.
+
+    Processing-time dedupe would fold them together whenever the backlog
+    drained after 00:00, rewriting what the user would have seen that day.
+    """
+    user = db.add_user("+201000000026")
+    item = db.add_item(user, "tee")
+    evening = _event(tracked_item_id=item, timestamp="2026-10-28T23:59:00")
+    morning = _event(tracked_item_id=item, timestamp="2026-10-29T00:01:00")
+
+    assert store_event(db.factory, evening) == OUTCOME_STORED
+    assert store_event(db.factory, morning) == OUTCOME_STORED
+    rows = db.read_rows()
+    assert len(rows) == 2
+    created = sorted(float(row.created_at.timestamp()) for row in rows)
+    assert created[0] < created[-1]
+
+
+# --- consumer reliability under failure --------------------------------------
+
+
+class _FailingRedis:
+    """A Redis whose pending list keeps handing back the same broken entry.
+
+    Mirrors what XREADGROUP really does: a message the consumer failed on stays
+    pending for this consumer and is re-delivered on the next '0' read, until
+    something acks it.
+    """
+
+    def __init__(self, entry):
+        self.entry = entry
+        self.acked = []
+        self.ensure_group_calls = 0
+        self.pending_reads = 0
+
+    async def ensure_group(self, stream, group, mkstream=True):
+        self.ensure_group_calls += 1
+
+    async def xreadgroup(self, *, group, consumer, streams, count, block=None):
+        (read_id,) = list(streams.values())
+        if read_id == "0":
+            self.pending_reads += 1
+            # A real pending list stops returning an entry once it is acked;
+            # modelling that is what keeps this test from spinning forever.
+            if self.acked:
+                return [[b"stream:alerts", []]]
+            return [[b"stream:alerts", [self.entry]]]
+        raise asyncio.CancelledError
+
+    async def xack(self, stream, group, message_id):
+        self.acked.append(message_id)
+        return 1
+
+
+def test_broken_write_is_reclaimed_then_discarded_and_the_gauge_drops(db, monkeypatch):
+    """A permanently failing write must not pin the feed, and the loop must end
+    with the gauge at 0 rather than a confident 1 for a dead consumer.
+    """
+    payload = json.dumps(_event(tracked_item_id=1)).encode()
+    redis = _FailingRedis(("1-0", {"payload": payload}))
+    monkeypatch.setattr(RedisStreamClient, "create", AsyncMock(return_value=redis))
+    # The retry backoff is real production behaviour (no hot spin on a poison
+    # pill); dialled to zero here so the bounded-retry contract is asserted in
+    # milliseconds instead of 15 seconds of sleep.
+    monkeypatch.setattr("services.api.alert_events_consumer.READ_BACKOFF_SECONDS", 0.0)
+
+    def broken_factory():
+        raise RuntimeError("database gone")
+
+    async def scenario():
+        return await asyncio.gather(
+            consume_loop(broken_factory, redis_url="redis://unused"),
+            return_exceptions=True,
+        )
+
+    results = asyncio.run(scenario())
+    assert isinstance(results[0], asyncio.CancelledError)
+    # Re-claimed exactly MAX_DELIVERY_ATTEMPTS times, acked as discarded, plus
+    # the one further pending read that then finds the list empty.
+    assert redis.pending_reads == MAX_DELIVERY_ATTEMPTS + 1
+    assert redis.acked == ["1-0"]
+    assert redis.ensure_group_calls >= 1
+    gauge = REGISTRY.get_sample_value("el72_alert_events_consumer_up")
+    assert gauge == 0, "a finished consumer task must not leave the gauge at 1"
+    assert db.read_rows() == []
+
+
+def test_ack_failure_does_not_kill_the_loop(db):
+    """An ack error leaves the entry pending; it must never end the task."""
+
+    async def scenario():
+        redis = AsyncMock()
+        redis.xack = AsyncMock(side_effect=ConnectionError("redis gone"))
+        user = db.add_user("+201000000027")
+        item = db.add_item(user, "rtx-5060-compumarts")
+        fields = {"payload": json.dumps(_event(tracked_item_id=item)).encode()}
+        outcome = await process_message(
+            redis, "stream:alerts", "cg_alerts_api", "1-0", fields, db.factory
+        )
+        return outcome
+
+    assert asyncio.run(scenario()) == OUTCOME_STORED
     assert len(db.read_rows()) == 1

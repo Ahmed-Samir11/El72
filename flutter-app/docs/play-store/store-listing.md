@@ -14,10 +14,10 @@ rendered from the current visual pass.**
 ## 2. Short description (80 chars max)
 
 **EN:**
-> Track prices on Amazon EG, Noon & Jumia and get alerted the moment a price drops.
+> Track prices on Amazon EG, Noon & Jumia; every drop stays visible in-app.
 
 **AR (needs native review):**
-> تابع الأسعار على أمازون مصر ونون وجوميا، وكن أول من يعلم عند انخفاض السعر.
+> <!-- Arabic copy pending owner review: the English line above states what this build actually does. The previous Arabic copy promised a notification channel that is not shipped; per plans/p2 the unshipped promise is removed, and replacement Arabic must come from the owner, not from machine copy. -->
 
 ## 3. Full description
 
@@ -28,8 +28,10 @@ rendered from the current visual pass.**
 > **Track what matters.** Add any product and Elhaq follows its price and
 > stock for you.
 >
-> **Get alerted on drops.** When a price falls below your target, Elhaq lets you
-> know — no noise, just the deals that matter.
+> **Every drop stays visible.** When a tracked price falls, the change is recorded
+> against your account and appears in the app's alert history — tap it to open
+> the product at the merchant. No channel is promised: this build does not use OS
+> push notifications, email or WhatsApp messages.
 >
 > **Arabic-first.** A fully Arabic experience with right-to-left layout, plus
 > English. Prices are formatted for your locale.
@@ -38,6 +40,7 @@ rendered from the current visual pass.**
 > up, and your data stays yours.
 
 **AR (needs native review):**
+> <!-- Arabic copy pending owner review: the English line above states what this build actually does. The previous Arabic copy promised a notification channel that is not shipped; per plans/p2 the unshipped promise is removed, and replacement Arabic must come from the owner, not from machine copy. -->
 > إلحق يتابع المنتجات التي تهتم بها على أمازون مصر ونون وجوميا — لتتوقف عن
 > تحديث الصفحة وأنت تنتظر الخصم.
 >

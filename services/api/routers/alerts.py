@@ -15,13 +15,13 @@ from __future__ import annotations
 import logging
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, status
 from slowapi import Limiter
 from slowapi.util import get_remote_address
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from services.api.dependencies import get_current_user, get_db
@@ -70,22 +70,27 @@ def _to_iso(value: datetime | None) -> str | None:
 def _parse_since(raw: str | None) -> datetime | None:
     """Parse the optional ``since`` filter, refusing anything unparseable.
 
-    Accepts ``YYYY-MM-DD`` and ISO timestamps (a trailing ``Z`` is normalized
-    away because ``created_at`` is stored as naive UTC; keeping the offset would
-    compare two different kinds of timestamp).
+    Accepts ``YYYY-MM-DD`` and ISO timestamps. A value that carries an offset
+    is converted to UTC and the offset dropped, because ``created_at`` is stored
+    as naive UTC (see the alert_events table comment in the canonical schema);
+    comparing an aware bound against naive rows would either raise or silently
+    filter nothing, which is worse than normalizing it once, here.
     """
     if not raw:
         return None
     text = raw.strip()
     if text.endswith("Z"):
-        text = text[:-1]
+        text = text[:-1] + "+00:00"
     try:
-        return datetime.fromisoformat(text)
+        parsed = datetime.fromisoformat(text)
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="since must be a calendar date or ISO timestamp",
         ) from None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed
 
 
 def _event_id_value(raw: str, dialect_name: str) -> int | uuid.UUID | None:
@@ -200,14 +205,21 @@ def open_alert(
             status_code=status.HTTP_404_NOT_FOUND, detail="Alert event not found"
         )
 
-    already_open = row.opened_at is not None
-    if not already_open:
-        # UTC naive, matching the column convention the rest of services/api
-        # uses; the schema's updated_at trigger handles updated_at itself.
-        row.opened_at = datetime.utcnow()
-        db.commit()
-    else:
-        db.commit()  # releases the read transaction; nothing was written
+    # Atomic mark-as-seen: the UPDATE carries "opened_at IS NULL", so two
+    # concurrent taps cannot both record an opening (and neither can move the
+    # first opened_at, which is what the opened/unopened ratio counts).
+    marked = db.execute(
+        update(AlertEvent)
+        .where(
+            AlertEvent.id == ident,
+            AlertEvent.user_id == current_user.id,
+            AlertEvent.opened_at.is_(None),
+        )
+        .values(opened_at=datetime.now(timezone.utc).replace(tzinfo=None))
+    )
+    already_open = marked.rowcount == 0
+    db.commit()
+    db.refresh(row)
 
     logger.info(
         "Alert event opened",

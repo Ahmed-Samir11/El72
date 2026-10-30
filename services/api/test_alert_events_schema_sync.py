@@ -9,9 +9,10 @@ four drifts.
 """
 
 import re
+from datetime import datetime
 from pathlib import Path
 
-from services.api.alert_events_consumer import VALID_EVENT_TYPES
+from services.api.alert_events_consumer import VALID_EVENT_TYPES, _event_time
 from services.api.models import AlertEvent
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -197,21 +198,50 @@ def test_alert_events_indexes_and_trigger_are_declared_everywhere():
         "idx_alert_events_item_time",
         "idx_alert_events_user_opened",
     }
+    expected_unique = {"uq_alert_events_item_type_day"}
     for path in (SCHEMA_SQL, MIGRATION_SQL):
         text = path.read_text(encoding="utf-8")
-        found = set(re.findall(r"CREATE INDEX IF NOT EXISTS (\w+)", text))
+        found = set(re.findall(r"CREATE (?:UNIQUE )?INDEX IF NOT EXISTS (\w+)", text))
         assert (
             expected_indexes <= found
         ), f"{path.name} misses {expected_indexes - found}"
+        assert expected_unique <= found, f"{path.name} misses the same-day UNIQUE index"
         assert (
-            "update_alert_events_updated_at" in text
-        ), f"{path.name} must attach the shared updated_at trigger"
+            "update_alert_events_updated_at_column" in text
+        ), f"{path.name} must attach a UTC-pinned updated_at trigger"
 
     orm_indexes = {index.name for index in AlertEvent.__table__.indexes}
-    assert expected_indexes <= orm_indexes
+    assert expected_indexes <= orm_indexes, "ORM is missing a canonical index"
+    # The UNIQUE index is PostgreSQL-only: an expression on created_at::date
+    # is not portable to the SQLite test engine, whose dedupe path is the
+    # consumer's own read-then-write check (asserted in the consumer tests).
+    assert "uq_alert_events_item_type_day" not in orm_indexes
 
 
 def test_bootstrap_applies_the_alert_events_migration():
     """A deployed tree gets the table only if the bootstrap runs the file."""
     text = BOOTSTRAP.read_text(encoding="utf-8")
     assert "infra/sql/migrations/0013_alert_events.sql" in text
+
+
+def test_alert_events_timestamps_are_naive_utc_everywhere():
+    """One timestamp kind from column default to trigger to Python's own value.
+
+    The dedupe decision compares a stored ``created_at`` against a computed day
+    boundary and the ``since`` filter compares rows against a client bound. A
+    WITH TIME ZONE column read back tz-aware against naive values raises in
+    production while the SQLite tests stay green — the drift this test prevents.
+    """
+    for path in (SCHEMA_SQL, MIGRATION_SQL):
+        text = _normalize(path.read_text(encoding="utf-8"))
+        assert "opened_at TIMESTAMP WITHOUT TIME ZONE" in text
+        assert "DEFAULT (NOW() AT TIME ZONE 'UTC')" in text
+        assert "NEW.updated_at = NOW() AT TIME ZONE 'UTC'" in text
+
+    for name in ("created_at", "updated_at", "opened_at"):
+        column_type = AlertEvent.__table__.columns[name].type
+        assert column_type.timezone is not True, f"{name} must not be tz-aware"
+
+    assert _event_time({"timestamp": "2026-10-29T09:00:00"}).tzinfo is None
+    aware = _event_time({"timestamp": "2026-10-29T09:00:00+02:00"})
+    assert aware.tzinfo is None and aware == datetime(2026, 10, 29, 7, 0, 0)

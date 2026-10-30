@@ -286,6 +286,13 @@ async def _start_alert_events_consumer() -> None:
             "stream:alerts will not be persisted, so the Alerts feed stays empty"
         )
         return
+    existing = getattr(app.state, "alert_events_task", None)
+    if existing is not None and not existing.done():
+        # A second startup in the same process (test harness, hot reload) must
+        # not replace the running consumer: two tasks, one stream group and
+        # one gauge, would make "the consumer is up" mean "one of them is".
+        logger.info("Alert events consumer already running; not starting a second")
+        return
     app.state.alert_events_task = asyncio.create_task(consume_loop(SessionLocal))
 
 
