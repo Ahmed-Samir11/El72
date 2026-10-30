@@ -5,11 +5,12 @@ os.environ["DATABASE_URL"] = "sqlite:///test.db"
 if os.path.exists("test.db"):
     os.remove("test.db")
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from services.api.main import app
+from services.api.main import app, mount_routers
 from services.api.main import engine as app_engine
 from services.api.models import Base
 
@@ -258,3 +259,40 @@ def test_cors_disallowed_origin_rejected():
 
     del os.environ["ALLOWED_ORIGINS"]
     importlib.reload(api_main)
+
+
+# --- the payment surface is a mount decision, not an assumption (plans/p3) ---
+
+
+def test_release_build_mounts_no_payment_surface():
+    """The shipped configuration registers no Paymob route at all.
+
+    This is what lets the store listing make no payment claim and keeps a
+    financial-transaction surface off the release backend: an endpoint nobody
+    advertises is still an endpoint somebody can find.
+    """
+    built = FastAPI()
+    mount_routers(built, payment_surface=False)
+
+    paths = {route.path for route in built.routes}
+    assert not [p for p in paths if p.startswith("/payment")]
+    assert not [p for p in paths if p.startswith("/subscription")]
+    assert not [p for p in paths if p.startswith("/admin")]
+
+    probe = TestClient(built)
+    assert probe.get("/payment/status/anything").status_code == 404
+    # The free-tracker surface is mounted, and it is auth-gated.
+    assert "/usage/limits" in paths
+    assert probe.get("/usage/limits").status_code == 401
+
+
+def test_payment_surface_mounts_when_it_is_asked_for():
+    """The rails are flagged out of the release, not deleted: asking for them
+    mounts the whole payment and subscription surface again."""
+    built = FastAPI()
+    mount_routers(built, payment_surface=True)
+
+    paths = {route.path for route in built.routes}
+    assert "/payment/start" in paths
+    assert "/payment/manual" in paths
+    assert "/subscription/status" in paths
