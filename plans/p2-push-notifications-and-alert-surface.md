@@ -3,7 +3,7 @@
 **Branch:** `feat/push-notifications-and-alert-surface` (off `main`)
 **Date:** 2026-10-29
 **Status:** In implementation — MS1 backend shipped on `feat/push-notifications-and-alert-surface` (PR #49,
-HGM rounds 1-4 findings addressed) — `alert_events` + stream consumer + `GET /alerts/recent` + `POST /alerts/{id}/open`
+HGM rounds 1-4 findings addressed); MS2 copy surface enumerated for translation (§7) — `alert_events` + stream consumer + `GET /alerts/recent` + `POST /alerts/{id}/open`
 + store-facing copy truth; MS2 (Alerts tab, app copy in both locales) blocked on owner-supplied Arabic, MS3 blocked
 on H2 + H3 (see §7 and the Implementation Record at §9).
 **Series:** 2 of 5 release-priority plans (P1 affiliate clicks → **P2** → P3 free-tracker model, P4 analytics, P5 activation/trust).
@@ -230,6 +230,37 @@ permission now") — but only **if** MS2 removes the false promise, which today 
 | H2 | Firebase project, `google-services.json`, service-account JSON (shared with P4 crash reporting) | external account creation |
 | H3 | Whether OS push ships in v1.0 or v1.1 | product decision; determines whether MS3 is release-blocking |
 | — | Arabic strings for every new/changed UI key | `PI_MODEL=qwen3.8-flash-next-coder-iq1_m`: per `.agents/AGENTS.md` + Skill 10 the Arabic locale is authored by the owner; land `app_en.arb` and `app_ar.arb` in the same commit, never English alone |
+
+### MS2 copy surface — ready to translate (Arabic column is the owner's)
+
+English values are decided here; the Arabic column is the owner's to fill. `flutter-app/test/l10n_coverage_test.dart` enforces four things, so a partial
+landing cannot slip through: every English key needs a non-empty Arabic value, no Arabic-only keys,
+placeholder declarations must match in both files, and no Arabic value may be a copy of the English
+one or lack Arabic script. Keys marked *rewrite* already exist in both files, so their Arabic changes too
+— `trackerCreated`'s current Arabic value promises a WhatsApp message this build does not send.
+
+| Key | English (final) | Where / constraint | Arabic |
+|---|---|---|---|
+| `navAlerts` | `Alerts` | bottom-nav label, 5th tab placed ahead of Deals; keep it as short as `navDeals`/`navChat` | |
+| `alertsTabTitle` | `Alerts` | tab header | |
+| `alertsTabHint` | `Price changes on the products you track. Tap one to open it at the store.` | sub-header under the tab; states the pull model, promises no channel | |
+| `alertsEmpty` | `No alerts yet.\nA price change on a tracked product appears here.` | empty state (mirrors `noTrackersEmpty` two-line style) | |
+| `alertsLoadFailed` | `Failed to load alerts.\n{error}` | mirrors `failedToLoadDeals`; `{error}` is a `String` placeholder | |
+| `alertsUnopenedBadge` | `{count} unread` | the `unopened_total` badge; every placeholder in this file is declared `String` and pre-formatted in Dart (see `targetLabel`), so keep that convention | |
+| `alertTypePriceDrop` | `Price dropped` | card label for `event_type = price_drop` | |
+| `alertTypeThresholdCrossed` | `Below your target` | `event_type = threshold_crossed` | |
+| `alertTypeLowestPriceChanged` | `New lowest price` | `event_type = lowest_price_changed` | |
+| `alertTypeBackInStock` | `Back in stock` | `event_type = back_in_stock` | |
+| `alertPriceFromTo` | `{from} → {to}` | card line; both placeholders are pre-formatted EGP strings (same pattern as `targetLabel`) | |
+| `alertDeltaDown` | `{percent}% lower` | shown when `discount_pct` is not null; `{percent}` is a pre-formatted `String` (no currency unit in the string itself) | |
+| `alertWhenToday` | `Today` | relative stamp for an event dated today | |
+| `alertWhenYesterday` | `Yesterday` | … yesterday | |
+| `alertWhenDaysAgo` | `{days} days ago` | … older; `{days}` is a pre-formatted `String` | |
+| `alertOpenHint` | `Tap to open at {store}` | affordance on the card; `{store}` is a `String` placeholder (server's `store_id` mapped to a label) | |
+| `trackerCreated` *(rewrite)* | `✅ Tracker created! Price changes for this product will appear in the Alerts tab.` | replaces the string that promises a WhatsApp notification; existing Arabic value promises it too, so both locales change in one commit | |
+
+Not included, deliberately: any OS-push or WhatsApp wording (channel picker, permission copy) — that copy belongs
+with MS3 and only exists once H3 answers that OS push ships in v1.0.
 
 ---
 
