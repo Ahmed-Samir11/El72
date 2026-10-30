@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:elhaq_tracker/l10n/app_localizations.dart';
 import 'package:elhaq_tracker/src/core/styles/app_theme.dart';
+import 'package:elhaq_tracker/src/ui/common/merchant_link.dart';
 import 'package:elhaq_tracker/src/ui/widgets/tracker_card.dart';
 
 Widget _wrap(TrackerCard card) {
@@ -33,6 +34,9 @@ TrackerCard _card({
   String? fetchStatus,
   VoidCallback? onTap,
   VoidCallback? onRetry,
+  String productUrl = '',
+  String sku = '',
+  MerchantLink? merchantLink,
 }) {
   return TrackerCard(
     imageUrl: '',
@@ -44,6 +48,9 @@ TrackerCard _card({
     fetchStatus: fetchStatus,
     onTap: onTap,
     onRetry: onRetry,
+    productUrl: productUrl,
+    sku: sku,
+    merchantLink: merchantLink,
   );
 }
 
@@ -167,4 +174,89 @@ void main() {
     expect(find.textContaining('1,250'), findsOneWidget);
     expect(find.text('Fetching live price...'), findsNothing);
   });
+
+  // --- "Open product" affordance (plan p1: the highest-intent object in
+  // the app must be able to generate attributed merchant clicks) ----------
+
+  testWidgets(
+    'a tracker with a product url offers Open product, routing the tap '
+    'through MerchantLink with tracker context',
+    (tester) async {
+      final link = _FakeLink(opened: true);
+      await _pumpCard(
+        tester,
+        _card(
+          productUrl: 'https://www.amazon.eg/dp/ABC123',
+          sku: 'iphone-15-pro-max-256',
+          merchantLink: link,
+        ),
+      );
+
+      expect(find.text('Open product'), findsOneWidget);
+      await tester.tap(find.byIcon(Icons.open_in_new));
+      await tester.pump();
+
+      expect(link.sources, hasLength(1));
+      expect(link.sources.single, 'tracker_card');
+      expect(link.targetUrls.single, 'https://www.amazon.eg/dp/ABC123');
+      expect(link.skus.single, 'iphone-15-pro-max-256');
+      expect(find.byType(SnackBar), findsNothing);
+    },
+  );
+
+  testWidgets('a tracker without a product url offers no action', (
+    tester,
+  ) async {
+    await _pumpCard(tester, _card());
+    expect(find.byIcon(Icons.open_in_new), findsNothing);
+    expect(find.text('Open product'), findsNothing);
+  });
+
+  testWidgets('a corrupt non-web product url renders no action either', (
+    tester,
+  ) async {
+    // A junk scheme from a corrupt store mapping must not render an affordance
+    // that could only fail into a snackbar; isHttpUrl gates the affordance.
+    await _pumpCard(tester, _card(productUrl: 'file:///etc/passwd'));
+    expect(find.byIcon(Icons.open_in_new), findsNothing);
+  });
+
+  testWidgets('a failed Open product tap shows the unableToOpen snackbar', (
+    tester,
+  ) async {
+    final link = _FakeLink(opened: false);
+    await _pumpCard(
+      tester,
+      _card(productUrl: 'https://www.amazon.eg/dp/ABC123', merchantLink: link),
+    );
+
+    await tester.tap(find.byIcon(Icons.open_in_new));
+    await tester.pump();
+
+    expect(find.text('Unable to open Test Product'), findsOneWidget);
+  });
+}
+
+/// Records the open call (surface + context) and answers with a canned
+/// success/failure, standing in for resolve+launch together.
+class _FakeLink extends MerchantLink {
+  _FakeLink({required this.opened});
+
+  final bool opened;
+  final List<String> sources = [];
+  final List<String> targetUrls = [];
+  final List<String?> skus = [];
+
+  @override
+  Future<bool> open({
+    required String targetUrl,
+    required String source,
+    String? sku,
+    String? dealId,
+  }) async {
+    sources.add(source);
+    targetUrls.add(targetUrl);
+    skus.add(sku);
+    return opened;
+  }
 }

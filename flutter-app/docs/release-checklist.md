@@ -64,6 +64,16 @@ classes and AR + EN locales):
 - [ ] Login with a real account (phone number + OTP).
 - [ ] Add a tracker → price fetch succeeds against the production endpoint.
 - [ ] A deal card renders with a correctly formatted, locale-aware price.
+- [ ] Tapping a deal card opens the merchant URL **with the store's affiliate
+      tag** (plan p1: `?tag=` on Amazon.eg, `utm_*` on noon/Jumia), and the
+      tap writes an `affiliate_clicks` row with `source=deal_feed`.
+- [ ] Tapping a chat search-result card opens a tagged URL
+      (`source=search_result`); a scraped non-web url is refused with the
+      unable-to-open toast instead of leaving the app.
+- [ ] Tapping a tracker card's "Open product" affordance works on a real
+      device for EVERY supported merchant (amazon.eg / noon.com /
+      jumia.com.eg) — this needs the host in the AndroidManifest allowlist;
+      the row records `source=tracker_card`.
 - [ ] Dark mode and RTL (Arabic) both render correctly.
 
 ## 7. Submission sign-off

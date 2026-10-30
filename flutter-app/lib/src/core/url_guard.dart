@@ -35,6 +35,32 @@ bool isHttpUrl(String url) {
   return uri.scheme == 'http' || uri.scheme == 'https';
 }
 
+/// The merchant domains the app may open, as registrable suffixes. Mirrors
+/// the server's merchant allowlist (`services/api/affiliate.py::STORE_HOSTS`)
+/// and the AndroidManifest app-launch allowlist; the drift test
+/// `services/api/test_affiliate_manifest_sync.py` pins all three lists
+/// together, so a new store lands here automatically or CI goes red.
+const List<String> merchantHostSuffixes = [
+  'amazon.eg',
+  'noon.com',
+  'jumia.com.eg',
+];
+
+/// True for an absolute http/https url whose host is one of the supported
+/// merchants (the merchant itself or any of its subdomains). Used by
+/// [MerchantLink] on the SERVER'S answer: the affiliate redirect is asked to
+/// return a tagged URL on a merchant host, and a misconfigured or hostile
+/// endpoint answering with anything else must not steer the OS launch —
+/// the link falls back to the url the user actually tapped.
+bool isMerchantUrl(String url) {
+  if (!isHttpUrl(url)) return false;
+  final host = Uri.parse(url).host.toLowerCase();
+  for (final suffix in merchantHostSuffixes) {
+    if (host == suffix || host.endsWith('.$suffix')) return true;
+  }
+  return false;
+}
+
 /// Characters no real url contains: ASCII control characters and space, the
 /// delete character, C1 separators, the whole U+2000-U+206F block (Unicode
 /// spaces, the line and paragraph separators, the bidi embedding/override controls

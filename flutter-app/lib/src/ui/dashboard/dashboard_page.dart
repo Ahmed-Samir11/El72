@@ -121,6 +121,8 @@ class _TrackersTab extends ConsumerWidget {
                       hasPrice: lowest != null && lowest.priceLocal > 0,
                       isActive: item.isActive,
                       fetchStatus: item.fetchStatus,
+                      productUrl: lowest?.url ?? '',
+                      sku: item.canonicalProductId,
                       onTap: () {
                         Navigator.push(
                           context,

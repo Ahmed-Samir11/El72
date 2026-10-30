@@ -257,4 +257,4 @@ English label in the card.
 
 The "Open product" label landed on owner authorization during implementation: the Arabic value (open + al_product, composed from the file's existing words to avoid invented wording) was supplied by the owner request, and both locales + generated getters landed in one commit; `l10n_coverage_test` guards the pair.
 
-Still open until owner input: MS4 device verification (H1 production `API_BASE_URL`, H5 per-store tag values).
+Still open until owner input: MS4 device verification (H1 production `API_BASE_URL`, H5 per-store tag values). Owner status 2026-10-30: no production URL or tag values available now — the owner typically runs production on this machine for demos and will supply these later; MS4 stays deferred, not blocked, the Gate 3/4 instrumentation itself (clicks + tagged redirects) is live in code and testable against the local backend end-to-end.

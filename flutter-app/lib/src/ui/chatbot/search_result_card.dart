@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../../../l10n/app_localizations.dart';
 import '../../core/format/price_format.dart';
 import '../../core/format/toast_title.dart';
 import '../../core/styles/app_colors.dart';
 import '../../data/models/chat_message_model.dart';
+import '../common/merchant_link.dart';
 import '../widgets/product_image.dart';
 
 /// A single product search result with an "Add to Feed" button.
@@ -14,16 +14,22 @@ import '../widgets/product_image.dart';
 /// cards. Tapping the card opens the product page; tapping "Add to Feed"
 /// creates a tracked item (price monitor) via the chatbot service.
 class SearchResultCard extends StatelessWidget {
-  const SearchResultCard({
+  SearchResultCard({
     super.key,
     required this.result,
     required this.onAddToFeed,
     this.isEnabled = true,
-  });
+    MerchantLink? merchantLink,
+  }) : merchantLink = merchantLink ?? MerchantLink.shared;
 
   final SearchResultModel result;
   final VoidCallback onAddToFeed;
   final bool isEnabled;
+
+  /// The component that resolves the tap through the affiliate redirect
+  /// before opening it (plan p1). Injected in tests; the default performs
+  /// the real resolve + external-browser launch.
+  final MerchantLink merchantLink;
 
   @override
   Widget build(BuildContext context) {
@@ -59,17 +65,21 @@ class SearchResultCard extends StatelessWidget {
             unableToOpen(messenger);
             return;
           }
-          final uri = Uri.parse(result.url);
-          try {
-            if (!await launchUrl(uri) && context.mounted) {
-              unableToOpen(messenger);
-            }
-          } catch (error) {
-            debugPrint('Could not open product page: $error');
-            // The await above can outlive the card; a snackbar aimed at a
-            // disposed subtree is not worth the risk, so the message is only
-            // shown while this context is still in the tree.
-            if (context.mounted) unableToOpen(messenger);
+          // Resolve through GET /affiliate/redirect first: the opened URL
+          // carries the store's affiliate tag and the tap writes an
+          // attributable affiliate_clicks row (plan p1, Gate 3). On any
+          // resolve failure MerchantLink falls back to the original URL,
+          // so attribution can never block the user's tap; it returns false
+          // only for a URL that must not be handed to a browser at all.
+          final opened = await merchantLink.open(
+            targetUrl: result.url,
+            source: sourceSearchResult,
+          );
+          // The resolve request can outlive the card: if the chat page was
+          // disposed while it was in flight, the captured messenger belongs
+          // to a disposed ScaffoldMessenger and showSnackBar would throw.
+          if (!opened && context.mounted) {
+            unableToOpen(messenger);
           }
         },
         child: Padding(

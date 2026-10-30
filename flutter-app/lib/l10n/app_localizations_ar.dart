@@ -372,6 +372,9 @@ class AppLocalizationsAr extends AppLocalizations {
   }
 
   @override
+  String get openProduct => 'فتح المنتج';
+
+  @override
   String currentLabel(String price) {
     return 'الحالي: $price';
   }
