@@ -189,7 +189,7 @@ def parse_arabic_intent(message: str) -> Dict[str, Any]:
         )
         if standalone:
             max_price = _parse_number(standalone.group(1))
-            query = msg[:standalone.start()]
+            query = msg[: standalone.start()]
 
     query = re.sub(r"\s+", " ", query).strip()
     query = re.sub(r"^(?:عايز|عايزة|محتاج|محتاجة|هات|اديني|ممكن)\s+", "", query)

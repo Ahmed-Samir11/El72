@@ -289,9 +289,7 @@ async def send_message(
         plural = (
             "s"
             if language == "en" and count != 1
-            else "ات"
-            if language == "ar" and count > 2
-            else ""
+            else "ات" if language == "ar" and count > 2 else ""
         )
         bot_message = format_message(
             "found_results",
@@ -583,9 +581,7 @@ async def _handle_add_to_feed(
                 message = format_message(
                     "insufficient_credits", language, detail=detail
                 )
-                _save_message(
-                    db, request.session_id, "bot", message
-                )
+                _save_message(db, request.session_id, "bot", message)
                 return ChatResponse(
                     message=message,
                     session_id=request.session_id,

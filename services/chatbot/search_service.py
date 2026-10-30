@@ -52,9 +52,7 @@ _llm_semaphore = asyncio.Semaphore(LLM_MAX_CONCURRENCY)
 # via the chat template (understood by llama-server; ignored elsewhere).
 LLM_DISABLE_THINKING = os.getenv("LLM_DISABLE_THINKING", "true").lower() == "true"
 LLM_EXTRA_BODY: Dict[str, Any] = (
-    {"chat_template_kwargs": {"enable_thinking": False}}
-    if LLM_DISABLE_THINKING
-    else {}
+    {"chat_template_kwargs": {"enable_thinking": False}} if LLM_DISABLE_THINKING else {}
 )
 
 # Crawl4AI Configuration

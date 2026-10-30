@@ -92,8 +92,12 @@ def test_commit_on_main_is_denied(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
     # init -b main keeps the branch name the guard looks for on older gits too.
-    subprocess.run(["git", "init", "-b", "main", str(repo)], check=True,
-                   capture_output=True, text=True)
+    subprocess.run(
+        ["git", "init", "-b", "main", str(repo)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
 
     result = _run("check_branch", _payload("git commit -m 'x'"), repo)
 
@@ -106,18 +110,45 @@ def test_commit_on_main_is_denied(tmp_path):
 def test_commit_on_a_feature_branch_is_allowed(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
-    subprocess.run(["git", "init", "-b", "main", str(repo)], check=True,
-                   capture_output=True, text=True)
+    subprocess.run(
+        ["git", "init", "-b", "main", str(repo)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
     # An initial commit is required: with an unborn HEAD, rev-parse cannot name
     # a branch and the guard correctly fails closed.
     (repo / "seed.txt").write_text("seed\n", encoding="utf-8")
-    subprocess.run(["git", "add", "seed.txt"], cwd=str(repo), check=True,
-                   capture_output=True, text=True)
-    subprocess.run(["git", "-c", "user.email=ci@example.com", "-c", "user.name=ci",
-                    "commit", "-m", "seed"], cwd=str(repo), check=True,
-                   capture_output=True, text=True)
-    subprocess.run(["git", "checkout", "-b", "feat/guard"], cwd=str(repo),
-                   check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "add", "seed.txt"],
+        cwd=str(repo),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.email=ci@example.com",
+            "-c",
+            "user.name=ci",
+            "commit",
+            "-m",
+            "seed",
+        ],
+        cwd=str(repo),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        ["git", "checkout", "-b", "feat/guard"],
+        cwd=str(repo),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
 
     result = _run("check_branch", _payload("git commit -m 'x'"), repo)
 
@@ -129,8 +160,12 @@ def test_guard_fails_closed_on_an_unborn_branch(tmp_path):
     # A brand-new repo has no commit yet, so rev-parse cannot name a branch.
     # A git write op there must be blocked rather than waved through.
     repo = tmp_path / "repo"
-    subprocess.run(["git", "init", "-b", "feat/unborn", str(repo)], check=True,
-                   capture_output=True, text=True)
+    subprocess.run(
+        ["git", "init", "-b", "feat/unborn", str(repo)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
 
     result = _run("check_branch", _payload("git push origin feat/unborn"), repo)
 

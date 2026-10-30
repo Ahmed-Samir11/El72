@@ -16,10 +16,13 @@ def _reset_rate_limiter():
     # services.api.dependencies at collection time would create its
     # engine before test modules finalize DATABASE_URL.
     from services.api.payment_security import security_monitor
+    from services.api.routers.affiliate import limiter as affiliate_limiter
     from services.api.routers.payment import limiter
 
     limiter.reset()
+    affiliate_limiter.reset()
     security_monitor.reset()
     yield
     limiter.reset()
+    affiliate_limiter.reset()
     security_monitor.reset()

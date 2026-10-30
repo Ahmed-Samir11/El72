@@ -327,6 +327,7 @@ def test_create_tracked_item_from_url(client, monkeypatch):
     assert data["price_status"] == "fetching"
     assert "id" in data
 
+
 # The API visits whatever url it is given, so a client that names an internal
 # host would get the server to fetch it. These are the shapes used to reach
 # those hosts; each must end in a refusal before anything is written.
