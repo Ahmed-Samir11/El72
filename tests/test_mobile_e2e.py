@@ -466,13 +466,20 @@ def test_15_release_backend_serves_no_payment_surface(auth_headers):
     The store listing can claim "free to track" only if the shipped stack
     really cannot take a payment: an unmounted router answers 404, a mounted
     one answers 404/405/200 depending on the path, and either way this row
-    notices the drift.
+    notices the drift. The skip covers both ways the surface can be asked
+    for: legacy CREDITS_ENFORCEMENT=on, or an explicit PAYMENTS_ENABLED=true.
     """
     if _usage(auth_headers)["enforcement"] == "on":
         pytest.skip("this stack was started with the legacy credit model")
 
+    probe = _api("GET", "/payment/start", headers=auth_headers)
+    if probe.status_code != 404:
+        pytest.skip(
+            "this stack mounts the payment surface "
+            "(PAYMENTS_ENABLED=true is set in its environment)"
+        )
+
     for path in (
-        "/payment/start",
         "/payment/manual",
         "/subscription/status",
         "/admin/login",

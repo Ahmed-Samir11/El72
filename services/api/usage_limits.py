@@ -99,11 +99,13 @@ def _retry_pair(wait: float) -> tuple:
 
     A client may count down from either, so the two must never disagree: the
     body never rounds a real wait down to 0.0 while the header still says 1,
-    and the header is never shorter than the body.
+    the header is never shorter than the body, and the body never rounds *below*
+    the wait the server will enforce (a client that trusts it must get through),
+    hence the upward 0.01 rounding.
     """
     if wait <= 0:
         return 0.0, "0"
-    seconds = max(0.01, round(wait, 2))
+    seconds = max(0.01, math.ceil(wait * 100) / 100)
     return seconds, str(max(1, math.ceil(seconds)))
 
 
@@ -304,7 +306,9 @@ def usage_payload(db: Session, user: User) -> dict:
     state, and is what P4's rollups read for trackers-per-user. ``cap`` and
     ``retry_after_seconds`` are reported only when fair use is the mode, so
     the client can neither render a ceiling nor count down a window that the
-    server is not enforcing.
+    server is not enforcing. ``created_last`` covers the same set as
+    ``active_trackers`` — a paused tracker is not counted and does not date the
+    chip.
     """
     mode = enforcement_mode()
     fair_use = mode == FAIR_USE

@@ -340,3 +340,23 @@ Round 2 came back **APPROVE** (5 WARNING, 4 INFO). Handled:
 | E2E rate row could be flaky | Its premise is now stated in the test: it is honest under the documented single-API deployment (compose runs one uvicorn worker, no `--workers`), and it is exactly what a Redis-window follow-up would have to preserve. |
 | Two queries for the Profile chip numbers | Fixed: `usage_payload` reads `COUNT(*)` and `MAX(created_at)` in one query; the unused `last_created_at` helper is gone rather than left as dead code. |
 | Env parsed per call; deprecated `on_event` startup | Kept as-is, deliberately: per-call parsing is what lets a test (and a config reload) change the mode without re-importing, and `on_event` is the pattern this module already uses everywhere — changing it here would be an unrelated refactor. |
+
+### Review round 3 (HGM on PR #50) — verdicts
+
+Round 3 returned REQUEST_CHANGES with 5 WARNING / 4 INFO. Three were restatements
+of trade-offs already recorded above (cap atomicity, the process-local window,
+`/credits/balance` mounted while payments are off) and one is a documented
+consequence of the ordering decision: a duplicate URL **at the cap** answers the
+cap 409 because enforcement runs first, and the detail shape (dict vs string) is
+the discriminator the client branches on — pinned in tests. Two were substantive
+and are fixed:
+
+- `retry_after_seconds` rounded to nearest, which could shave a millisecond off
+  the wait actually enforced — enough to leave a trusting client refused again. It
+  now rounds **up** to 0.01 s (`_retry_pair`), with
+  `test_the_reported_wait_is_never_rounded_below_the_real_wait` pinning it.
+- The payment-surface E2E row skipped only for `CREDITS_ENFORCEMENT=on`; a stack
+  that explicitly sets `PAYMENTS_ENABLED=true` is legitimate, not broken, so the
+  row now detects a mounted surface and skips.
+- Also documented: `created_last` covers exactly the same set as
+  `active_trackers` — a paused tracker neither counts nor dates the chip.

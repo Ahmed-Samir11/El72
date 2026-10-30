@@ -264,6 +264,20 @@ def test_header_and_body_never_disagree_on_a_tiny_window(db_session, monkeypatch
     )
 
 
+def test_the_reported_wait_is_never_rounded_below_the_real_wait():
+    """The countdown a client trusts must be at least the wait enforced.
+
+    Rounding to nearest can shave a millisecond off the real wait, which is
+    enough to leave the client refused again after obeying the answer.
+    """
+    for raw in (2.991, 0.004, 1.5, 3.0, 0.0):
+        seconds, header = usage_limits._retry_pair(raw)
+        assert seconds >= raw - 1e-9, raw
+        assert float(header) >= seconds - 1e-9, raw
+        if raw > 0:
+            assert seconds > 0, raw
+
+
 def test_the_throttle_map_is_bounded_and_prunes_stale_entries(monkeypatch):
     """A long-running process must not grow the window with its user count.
 
