@@ -47,6 +47,8 @@ from services.api.affiliate import normalize_category
 from services.api.models import Alert, AlertEvent
 from services.api.monitoring.metrics import (
     ALERT_EVENTS_ACK_ERRORS_TOTAL,
+    ALERT_EVENTS_CLAIM_ERRORS_TOTAL,
+    ALERT_EVENTS_CLAIMED_TOTAL,
     ALERT_EVENTS_CONSUMER_UP,
     ALERT_EVENTS_DISCARDED_TOTAL,
     ALERT_EVENTS_FAILED_TOTAL,
@@ -99,6 +101,12 @@ def _env_int(name: str, default: int, *, minimum: int) -> int:
 READ_COUNT = _env_int("ALERTS_CONSUMER_READ_COUNT", 10, minimum=1)
 READ_BLOCK_MS = _env_int("ALERTS_CONSUMER_BLOCK_MS", 5000, minimum=100)
 READ_BACKOFF_SECONDS = 5.0
+# Entries idle in the group longer than this are claimed from WHATEVER consumer
+# name owns them (default 15 minutes). A restarted replica used to strand its
+# delivered-but-unacked entries in the group's pending list forever: invisible
+# to '>' (they are not new), invisible to this consumer's '0' read (they belong
+# to a dead name). Set it below the longest legitimate write outage you expect.
+CLAIM_MIN_IDLE_MS = _env_int("ALERTS_CLAIM_IDLE_MS", 900_000, minimum=1000)
 
 # The four event types the alert emitter produces (services/scraper/alert_emitter.py
 # AlertType) and the only values the canonical CHECK allows. Anything else —
@@ -175,6 +183,20 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+def _as_naive_utc(value: datetime) -> datetime:
+    """One timestamp kind, whatever the caller handed over.
+
+    alert_events stores TIMESTAMP WITHOUT TIME ZONE, so an aware value (a caller
+    building a fixture with timezone.utc, a datetime that came from a Postgres
+    row in another service) has to be converted to UTC and stripped BEFORE it
+    is compared or inserted: an aware/naive comparison raises in production and
+    never in the SQLite tests.
+    """
+    if value.tzinfo is not None:
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value
+
+
 def _event_time(event: dict[str, Any]) -> datetime:
     """When the event HAPPENED, not when this consumer got round to it.
 
@@ -195,9 +217,7 @@ def _event_time(event: dict[str, Any]) -> datetime:
         except ValueError:
             parsed = None
         if parsed is not None:
-            if parsed.tzinfo is not None:
-                parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
-            return parsed
+            return _as_naive_utc(parsed)
     return _utc_now()
 
 
@@ -282,6 +302,17 @@ def _bounded_decimal(
     return number if abs(number) < limit else None
 
 
+def _positive(value: float | None) -> float | None:
+    """A price is positive or it is not a price.
+
+    A 0 or negative reading is a scrape artifact, and storing it would put "EGP
+    0" on a card and turn a comparison into a 100% discount. The event still
+    lands — the price change happened — with the unusable value left NULL, so
+    the row never claims a deal that was never measured.
+    """
+    return value if value is not None and value > 0 else None
+
+
 def _to_egp(local: float | None, usd: float | None, currency: Any) -> float | None:
     """Express an event price in EGP — the unit the app displays.
 
@@ -292,6 +323,8 @@ def _to_egp(local: float | None, usd: float | None, currency: Any) -> float | No
     is exactly why the column is named ``*_egp`` and not quoted as a market fact.
     """
     code = (_decode(currency) or "").strip().upper()
+    local = _positive(local)
+    usd = _positive(usd)
     if local is not None and code == "EGP":
         return local
     if local is not None and code in EXCHANGE_RATES:
@@ -319,15 +352,13 @@ def _clean_url(value: Any) -> str | None:
 def _usd_to_egp(value: float | None) -> float | None:
     """Convert an emitter reading expressed in USD to EGP.
 
-    The emitter prices threshold/target/old values in USD (``target_price",
-    "old_price_usd``), while the card and the column are EGP; without this step
-    a 30 (USD) target would be displayed as EGP 30. Approximation constants only
-    (services/common/currency) — hence a comparison in one unit, never a claim
-    of a market-accurate rate.
+    The emitter prices its threshold and previous readings in USD, while the
+    card and the column are EGP; without this step a 30 (USD) target would be
+    displayed as EGP 30. Approximation constants only (services/common/currency),
+    hence a comparison in one unit, never a claim of a market-accurate rate.
     """
-    if value is None:
-        return None
-    return value / EGP_TO_USD
+    value = _positive(value)
+    return value / EGP_TO_USD if value is not None else None
 
 
 def _reference_price_egp(event: dict[str, Any], event_type: str) -> float | None:
@@ -437,7 +468,7 @@ def store_event(
         return OUTCOME_INVALID
     tracked_item_id = int(tracked_item_id)
 
-    now = now or _event_time(event)
+    now = _as_naive_utc(now) if now is not None else _event_time(event)
     with session_factory() as db:
         owner_id = _resolve_owner(db, tracked_item_id)
         if owner_id is None:
@@ -661,6 +692,36 @@ async def _read_pass(
     return _entries_of(messages)
 
 
+async def _claim_stale(
+    redis: RedisStreamClient,
+    stream: str,
+    group: str,
+    consumer: str,
+    count: int,
+) -> list[tuple[Any, Any]]:
+    """Re-own entries stranded under another consumer name (see CLAIM_MIN_IDLE_MS).
+
+    A claim failure is logged and counted, not fatal: the '>' pass still reads
+    new messages, and the stranded entries stay visible as pending lag rather
+    than quietly counting as "no alerts".
+    """
+    try:
+        claimed = await redis.xautoclaim(
+            stream, group, consumer, CLAIM_MIN_IDLE_MS, count=count
+        )
+    except Exception:  # noqa: BLE001 - claim must never strand the loop
+        ALERT_EVENTS_CLAIM_ERRORS_TOTAL.inc()
+        logger.exception(
+            "XAUTOCLAIM failed; stranded entries left in the group",
+            extra={"stream": stream, "group": group},
+        )
+        return []
+    entries = list(claimed or [])
+    if entries:
+        ALERT_EVENTS_CLAIMED_TOTAL.inc(len(entries))
+    return entries
+
+
 def _remember(keys: set[str], order: deque[str], key: str, limit: int) -> None:
     """Remember a message id with a bound, so a long-lived consumer cannot
     accumulate ids forever. Redis's pending list is the source of truth; this
@@ -809,6 +870,15 @@ async def consume_loop(
                 entries = await _read_pass(
                     redis, stream_name, group_name, name, "0", READ_COUNT
                 )
+                if not entries:
+                    # Entries delivered to a consumer name that no longer exists
+                    # (restarted replica, renamed deployment) can never be read
+                    # by '>' and never by this name's own pending pass: they sit
+                    # in the group forever. XAUTOCLAIM moves them here, where they
+                    # are decided and acked like any other entry.
+                    entries = await _claim_stale(
+                        redis, stream_name, group_name, name, READ_COUNT
+                    )
                 if not entries:
                     entries = await _read_pass(
                         redis,

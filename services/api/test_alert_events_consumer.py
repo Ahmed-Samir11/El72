@@ -11,7 +11,7 @@ import asyncio
 import json
 import os
 from collections import deque
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock
 
 os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
@@ -935,3 +935,157 @@ def test_remembered_ids_are_bounded():
     assert len(order) == DELIVERY_MEMORY
     assert "1-0" not in keys, "the oldest entry is evicted first"
     assert f"1-{DELIVERY_MEMORY + 49}" in keys
+
+
+def test_store_event_normalizes_an_aware_now(db):
+    """A timezone-aware ``now`` must not survive into a naive-UTC column.
+
+    The tests build fixtures in naive UTC, production hands over psycopg2 values
+    that come back tz-aware: an aware/naive comparison raises only in
+    production, which is the bug class this guard exists for.
+    """
+    user = db.add_user("+201000000044")
+    item = db.add_item(user, "tee-r219636")
+    aware = datetime(2026, 10, 29, 12, 0, 0, tzinfo=timezone(timedelta(hours=3)))
+    assert (
+        store_event(db.factory, _event(tracked_item_id=item), now=aware)
+        == OUTCOME_STORED
+    )
+    (row,) = db.read_rows()
+    assert row.created_at.tzinfo is None
+    assert row.created_at == datetime(2026, 10, 29, 9, 0, 0), "shifted to UTC"
+
+    # And the day rule still works from that normalized value.
+    assert (
+        store_event(db.factory, _event(tracked_item_id=item), now=aware)
+        == OUTCOME_DUPLICATE
+    )
+
+
+def test_non_positive_prices_land_as_null_not_as_a_deal(db):
+    """A zero or negative price is a scrape artifact, not a market fact.
+
+    The event (\"this product's price changed\") is still true and still stored,
+    but a card must not read \"EGP 0\" or inherit a 100% discount from a value
+    that was never measured.
+    """
+    user = db.add_user("+201000000045")
+    item = db.add_item(user, "42409865")
+
+    assert (
+        store_event(
+            db.factory,
+            _event(
+                tracked_item_id=item,
+                new_price_local=0,
+                new_price_usd=None,
+                currency="EGP",
+                metadata={},
+            ),
+            now=datetime(2026, 10, 29, 9, 0, 0),
+        )
+        == OUTCOME_STORED
+    )
+    assert (
+        store_event(
+            db.factory,
+            _event(
+                tracked_item_id=item,
+                alert_type="back_in_stock",
+                new_price_local=-350,
+                new_price_usd=None,
+                currency="EGP",
+                old_price_usd=12.5,
+                metadata={},
+            ),
+            now=datetime(2026, 10, 29, 10, 0, 0),
+        )
+        == OUTCOME_STORED
+    )
+    rows = db.read_rows()
+    assert len(rows) == 2
+    assert all(row.price_egp is None for row in rows), "no zero/negative price stored"
+    assert all(
+        row.discount_pct is None for row in rows
+    ), "no deal invented from an unmeasured price"
+
+    # A usable reading still works, and the emitter's OWN drop_percentage is
+    # kept when it sends one: the guard is about inventing numbers, not about
+    # discarding a measurement the scraper already made.
+    assert (
+        store_event(
+            db.factory,
+            _event(
+                tracked_item_id=item,
+                alert_type="lowest_price_changed",
+                new_price_local=None,
+                new_price_usd=260.0,
+                metadata={"drop_percentage": 13.33},
+            ),
+            now=datetime(2026, 10, 29, 11, 0, 0),
+        )
+        == OUTCOME_STORED
+    )
+    third = [row for row in db.read_rows() if row.event_type == "lowest_price_changed"]
+    assert len(third) == 1
+    assert third[0].price_egp is not None
+    assert float(third[0].discount_pct) == 13.33
+
+
+class _StrandedRedis:
+    """An entry left pending under a consumer name that no longer exists.
+
+    '>' never returns it (it is not new) and this consumer's own pending read
+    never sees it (it belongs to a dead name), so only XAUTOCLAIM can re-own it.
+    """
+
+    def __init__(self, entry):
+        self.entry = entry
+        self.claimed = False
+        self.acked = []
+
+    async def ensure_group(self, stream, group):
+        pass
+
+    async def xreadgroup(self, *, group, consumer, streams, count, block=None):
+        (read_id,) = list(streams.values())
+        if read_id == ">":
+            raise asyncio.CancelledError
+        return [[b"stream:alerts", []]]
+
+    async def xautoclaim(self, stream, group, consumer, min_idle_ms, count=None):
+        # The client wrapper's contract: a list of (id, fields) pairs.
+        if self.claimed:
+            return []
+        self.claimed = True
+        return [self.entry]
+
+    async def xack(self, stream, group, message_id):
+        self.acked.append(message_id)
+
+
+def test_stranded_entries_are_claimed_and_not_lost(db, monkeypatch):
+    """A restarted replica must not strand the alerts it had already delivered.
+
+    The claim pass is what turns \"pending forever under a dead name\" into a
+    decided, acked row; the counter means the reclaim is visible to ops rather
+    than inferred from a feed that looks quiet.
+    """
+    user = db.add_user("+201000000046")
+    item = db.add_item(user, "rtx-5060-compumarts")
+    payload = json.dumps(_event(tracked_item_id=item)).encode()
+    redis = _StrandedRedis(("9-0", {"payload": payload}))
+    monkeypatch.setattr(RedisStreamClient, "create", AsyncMock(return_value=redis))
+    claimed_before = _count("el72_alert_events_claimed_total")
+
+    async def scenario():
+        return await asyncio.gather(
+            consume_loop(db.factory, redis_url="redis://unused"),
+            return_exceptions=True,
+        )
+
+    results = asyncio.run(scenario())
+    assert isinstance(results[0], asyncio.CancelledError)
+    assert len(db.read_rows()) == 1, "the stranded alert was stored"
+    assert redis.acked == ["9-0"]
+    assert _count("el72_alert_events_claimed_total") - claimed_before == 1

@@ -3,7 +3,7 @@
 **Branch:** `feat/push-notifications-and-alert-surface` (off `main`)
 **Date:** 2026-10-29
 **Status:** In implementation — MS1 backend shipped on `feat/push-notifications-and-alert-surface` (PR #49,
-HGM rounds 1-2 findings addressed) — `alert_events` + stream consumer + `GET /alerts/recent` + `POST /alerts/{id}/open`
+HGM rounds 1-3 findings addressed) — `alert_events` + stream consumer + `GET /alerts/recent` + `POST /alerts/{id}/open`
 + store-facing copy truth; MS2 (Alerts tab, app copy in both locales) blocked on owner-supplied Arabic, MS3 blocked
 on H2 + H3 (see §7 and the Implementation Record at §9).
 **Series:** 2 of 5 release-priority plans (P1 affiliate clicks → **P2** → P3 free-tracker model, P4 analytics, P5 activation/trust).
@@ -299,6 +299,20 @@ permission now") — but only **if** MS2 removes the false promise, which today 
 | INFO the discarded-id set grew without bound | bounded FIFO memory (`DELIVERY_MEMORY`) for both the decided and given-up sets | `_remember`, test `test_remembered_ids_are_bounded` |
 | INFO `_event_time` relied on the interpreter for a trailing `Z` | normalized explicitly, the same way the router normalizes `since` | `_event_time` |
 | Tests the review said were missing | startup guards (disabled → no task and the log names the reason; second startup never replaces a live consumer) land in `test_alert_events_startup.py`, alongside the six consumer tests above | services/api |
+
+### Round 3 — HGM review findings on PR #49 (CRITICAL: a broken migration)
+
+| Finding | Fix | Where |
+|---|---|---|
+| **CRITICAL** `0013_alert_events.sql` ended with a stray closing markup tag: the bootstrap would have failed on the last statement of a migration that otherwise applied cleanly — a broken deploy | tag removed, and a structural guard added: every SQL file in `infra/sql` is scanned for a closing markup tag or a model special-token artifact, and every non-legacy migration plus the canonical schema must end with a newline (which is what let the artifact hide on an unterminated last line) | `infra/sql/migrations/0013_alert_events.sql`, `services/common/test_migration_files.py` |
+| WARNING entries delivered under a consumer name that no longer exists (restarted replica, renamed deployment) were stranded in the group forever: `'>'` never returns them, `'0'` only returns entries this name owns | a claim pass between the pending read and the new-message read — `XAUTOCLAIM` with `ALERTS_CLAIM_IDLE_MS` (default 15 min), added as `RedisStreamClient.xautoclaim` (reply parsed by SHAPE, not position, so a server-version change cannot drop alerts); reclaimed entries are counted in `el72_alert_events_claimed_total`, claim failures in `el72_alert_events_claim_errors_total` | `services/common/redis_client.py`, `_claim_stale`, test `test_stranded_entries_are_claimed_and_not_lost` |
+| WARNING `store_event` accepted a tz-aware `now` against naive-UTC columns — raises only in production, never under the SQLite fixtures | `_as_naive_utc()` normalizes whatever the caller hands over, and `_event_time` reuses it | consumer, test `test_store_event_normalizes_an_aware_now` |
+| WARNING `open_alert` refreshed the ORM object after the commit: a row deleted between the read and the write made a user-visible tap a 500 | the values are read ONCE before the write and the response is built from them; when the UPDATE matches nothing, existence is re-checked in the same transaction → already-open answers with the FIRST stamp, a vanished row answers 404 and is counted in `el72_alert_events_event_deleted_total` | `routers/alerts.py`, test `test_open_answers_404_when_the_row_vanishes_mid_request` |
+| WARNING a zero or negative price was stored as a price, which reads as "EGP 0" on a card and can yield a 100% discount | `_positive()` — an unusable reading is stored NULL while the event still lands; the emitter's own `drop_percentage` is still trusted when it sends one | `_to_egp`, `_usd_to_egp`, test `test_non_positive_prices_land_as_null_not_as_a_deal` |
+| INFO no Prometheus counter for opens, so Gate 2's ratio was DB-only | `el72_alert_events_opened_total`, `el72_alert_events_already_open_total` (re-taps kept separate so refreshes cannot inflate the ratio) and `el72_alert_events_event_deleted_total` | `monitoring/metrics.py`, test `test_open_reports_the_stamp_it_wrote_and_counts_the_open` |
+| WARNING a `[PENDING COPY]` marker sits in submitted copy, which conflicts with the release gate | the gate is now stated in the document itself: `grep -rn "PENDING COPY" flutter-app/docs` must come back empty at submission, and the marker's presence is the reason **this branch is not publishable before MS2** | `store-listing.md` header + §2/§3 |
+| WARNING the in-app false promise stays live until MS2 | unchanged BY CONSTRAINT (owner-supplied Arabic, `l10n_coverage_test`); stated as a release gate rather than a TODO | §7 risks |
+| Not done, and why | a migration apply against a live Postgres is not a unit-test concern: `scripts/audit-db-and-bootstrap.sh` applies the migration chain on deploy; the structural guard covers the class of artifact this CRITICAL belonged to. The in-app string awaits MS2 (owner copy) |
 
 Deferred here, not blocked: MS2 needs the owner's Arabic values for every new key (`navAlerts`, the
 alert-card lines, the channel picker, and a truthful rewrite of `trackerCreated`); MS3 needs H2 (Firebase

@@ -26,6 +26,11 @@ from sqlalchemy.orm import Session
 
 from services.api.dependencies import get_current_user, get_db
 from services.api.models import AlertEvent, User
+from services.api.monitoring.metrics import (
+    ALERT_EVENTS_ALREADY_OPEN_TOTAL,
+    ALERT_EVENTS_EVENT_DELETED_TOTAL,
+    ALERT_EVENTS_OPENED_TOTAL,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -212,6 +217,12 @@ def open_alert(
             status_code=status.HTTP_404_NOT_FOUND, detail="Alert event not found"
         )
 
+    # Read ONCE what the row carries, before any write: the response is built
+    # from these values rather than refreshed after the commit.
+    row_id = str(row.id)
+    previously_opened = row.opened_at
+    opened_at_value = _utc_naive_now()
+
     # Atomic mark-as-seen: the UPDATE carries "opened_at IS NULL", so two
     # concurrent taps cannot both record an opening (and neither can move the
     # first opened_at, which is what the opened/unopened ratio counts).
@@ -222,26 +233,63 @@ def open_alert(
             AlertEvent.user_id == current_user.id,
             AlertEvent.opened_at.is_(None),
         )
-        .values(opened_at=datetime.now(timezone.utc).replace(tzinfo=None))
+        .values(opened_at=opened_at_value)
     )
-    already_open = marked.rowcount == 0
-    db.commit()
-    db.refresh(row)
 
+    if marked.rowcount == 0:
+        # Either the event was already open (an idempotent re-tap) or it stopped
+        # existing between this read and this write. The two are NOT the same
+        # answer, and neither is allowed to re-read the ORM object: after a
+        # commit it can be expired or gone, which is how a user-visible tap
+        # used to reach a 500. Existence is re-checked in the same transaction.
+        still_there = db.execute(
+            select(AlertEvent.id)
+            .where(AlertEvent.id == ident, AlertEvent.user_id == current_user.id)
+            .limit(1)
+        ).scalar_one_or_none()
+        if still_there is None:
+            db.rollback()
+            ALERT_EVENTS_EVENT_DELETED_TOTAL.inc()
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Alert event not found"
+            )
+        db.commit()
+        ALERT_EVENTS_ALREADY_OPEN_TOTAL.inc()
+        logger.info(
+            "Alert event already open",
+            extra={"user_id": current_user.id, "event_id": row_id},
+        )
+        return {
+            "id": row_id,
+            "opened_at": _to_iso(previously_opened),
+            "already_open": True,
+        }
+
+    db.commit()
+    ALERT_EVENTS_OPENED_TOTAL.inc()
     logger.info(
         "Alert event opened",
-        extra={
-            "user_id": current_user.id,
-            "event_id": str(row.id),
-            "already_open": already_open,
-        },
+        extra={"user_id": current_user.id, "event_id": row_id},
     )
 
     return {
-        "id": str(row.id),
-        "opened_at": _to_iso(row.opened_at),
-        "already_open": already_open,
+        "id": row_id,
+        # The value this call WROTE, not one re-read after the commit: the row
+        # may be gone or expired by then, and a first open must report the stamp
+        # that was actually stored.
+        "opened_at": _to_iso(opened_at_value),
+        "already_open": False,
     }
+
+
+def _utc_naive_now() -> datetime:
+    """Naive UTC now, the kind the naive-UTC ``opened_at`` column stores.
+
+    Same rule as the consumer and the ORM default: one timestamp kind per
+    column, so a comparison against ``opened_at`` cannot raise on tz-aware vs
+    naive in production while staying green under SQLite.
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def _number(value: Any) -> float | None:

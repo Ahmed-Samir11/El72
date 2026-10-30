@@ -16,9 +16,11 @@ from datetime import datetime
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
+from prometheus_client import REGISTRY
+from sqlalchemy import create_engine, delete, select, update
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
+from sqlalchemy.sql.dml import Update as _UPDATE_CONSTRUCT
 
 from services.api.dependencies import get_current_user, get_db
 from services.api.models import AlertEvent, User
@@ -295,3 +297,83 @@ def test_unopened_total_counts_the_account_not_the_window(factory):
     _client(factory, caller).post(f"/alerts/{event_id}/open")
     body = _client(factory, caller).get("/alerts/recent").json()
     assert body["unopened_total"] == 1
+
+
+def _count(name: str) -> float:
+    """Current value of a Prometheus counter (0.0 when never incremented)."""
+    return REGISTRY.get_sample_value(name) or 0.0
+
+
+def test_open_reports_the_stamp_it_wrote_and_counts_the_open(factory, monkeypatch):
+    """An opening is observable without a database query of its own.
+
+    Gate 2's opened/unopened ratio is the KPI this endpoint exists for, so the
+    opened counter and the already-open counter must move: re-taps inflate one
+    number, fresh opens another, and ops can tell them apart. The returned
+    ``opened_at`` is the value this call WROTE rather than a value re-read after
+    the commit (the row may be expired or gone by then).
+    """
+    user = _add_user(factory, "+201000000047")
+    event = _add_event(factory, user, datetime(2026, 10, 29, 9, 0, 0))
+
+    before_opened = _count("el72_alert_events_opened_total")
+    body = _client(factory, user).post(f"/alerts/{event.id}/open").json()
+    assert body["already_open"] is False
+    assert body["opened_at"] is not None
+    assert _count("el72_alert_events_opened_total") - before_opened == 1
+
+    before_reopen = _count("el72_alert_events_already_open_total")
+    second = _client(factory, user).post(f"/alerts/{event.id}/open").json()
+    assert second["already_open"] is True
+    assert second["opened_at"] == body["opened_at"], "the FIRST opening wins"
+    assert _count("el72_alert_events_already_open_total") - before_reopen == 1
+
+
+def test_open_answers_404_when_the_row_vanishes_mid_request(factory):
+    """The race between reading an event and marking it seen is not a 500.
+
+    An account or alert deleted a moment after the read means the UPDATE matches
+    nothing and the loaded row no longer exists. Refreshing that row was the bug;
+    the honest answer is "this event is not here" — not a success carrying an
+    opening that was never recorded.
+    """
+
+    class _VanishingRow:
+        """SELECT finds the row; the UPDATE then matches nothing, as after a
+        concurrent delete."""
+
+        def __init__(self, session):
+            self._session = session
+
+        def get_bind(self):
+            return self._session.get_bind()
+
+        def execute(self, statement, *args, **kwargs):
+            if isinstance(statement, _UPDATE_CONSTRUCT):
+                # Row gone: zero rows matched, and the loaded object is stale.
+                self._session.execute(delete(AlertEvent))
+                return self._session.execute(
+                    update(AlertEvent).where(AlertEvent.id == -1)
+                )
+            return self._session.execute(statement, *args, **kwargs)
+
+        def commit(self):
+            self._session.commit()
+
+        def rollback(self):
+            self._session.rollback()
+
+    user = _add_user(factory, "+201000000048")
+    event = _add_event(factory, user, datetime(2026, 10, 29, 9, 0, 0))
+    session = factory()
+
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_db] = lambda: _VanishingRow(session)
+    app.dependency_overrides[get_current_user] = lambda: user
+    client = TestClient(app, headers={"Authorization": "Bearer token-for-override"})
+
+    deleted_before = _count("el72_alert_events_event_deleted_total")
+    response = client.post(f"/alerts/{event.id}/open")
+    assert response.status_code == 404
+    assert _count("el72_alert_events_event_deleted_total") - deleted_before == 1

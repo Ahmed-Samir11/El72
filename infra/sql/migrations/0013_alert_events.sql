@@ -92,5 +92,3 @@ CREATE TRIGGER update_alert_events_updated_at
 -- invent events that never occurred and would inflate exactly the opened/un
 -- opened ratio Gate 2 is measured on. The history starts empty and fills from
 -- stream:alerts; "no alerts yet" is the honest first state.
-
-</parameter>
