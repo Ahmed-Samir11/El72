@@ -359,15 +359,23 @@ def test_usage_limits_reports_the_fair_use_state(db_session, monkeypatch):
     assert 0 < body["retry_after_seconds"] <= 3.0
 
 
-def test_usage_limits_reports_no_cap_when_fair_use_is_off(db_session, monkeypatch):
-    """The client must not render a ceiling the server is not enforcing."""
+def test_usage_limits_reports_no_cap_or_countdown_when_fair_use_is_off(
+    db_session, monkeypatch
+):
+    """The client must not render a ceiling, or count down a window, that the
+    server is not enforcing.
+    """
     session, user, _ = db_session
     monkeypatch.setenv(CREDITS_ENFORCEMENT_ENV, usage_limits.DISABLED)
     monkeypatch.delenv(usage_limits.MAX_TRACKERS_ENV, raising=False)
+    # A timestamp left over from an earlier fair-use period (mode switched on a
+    # running process) must not surface as a countdown.
+    usage_limits._record_attempt(user)
 
     body = _client(session, user).get("/usage/limits").json()
     assert body["enforcement"] == "off"
     assert body["cap"] is None
+    assert body["retry_after_seconds"] == 0.0
     assert body["active_trackers"] == 0
     assert body["created_last"] is None
 

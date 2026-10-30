@@ -125,15 +125,17 @@ def _record_attempt(user: User) -> None:
     """Charge this attempt against the user's creation window.
 
     Every fair-use attempt is charged — allowed or refused — so an at-cap or
-    over-eager client cannot probe the limiter for free. The map is kept
-    bounded as it fills.
+    over-eager client cannot probe the limiter for free. When the map is full
+    the entry whose attempt is **oldest** is evicted (insertion order is first-
+    seen, not last-attempted, so it cannot be trusted for this), and attempts
+    older than the window are dropped first: they can never answer 429 again.
     """
     key = str(user.id)
     if key not in _last_creation_at and len(_last_creation_at) >= _THROTTLE_MAX_ENTRIES:
         _prune_stale(_now())
         while len(_last_creation_at) >= _THROTTLE_MAX_ENTRIES and _last_creation_at:
-            # Insertion order is oldest attempt first: evict rather than grow.
-            _last_creation_at.pop(next(iter(_last_creation_at)))
+            oldest = min(_last_creation_at, key=_last_creation_at.get)
+            _last_creation_at.pop(oldest)
     _last_creation_at[key] = _now()
 
 
@@ -217,20 +219,6 @@ def active_tracker_count(db: Session, user: User) -> int:
     )
 
 
-def last_created_at(db: Session, user: User) -> Optional[datetime]:
-    """Naive-UTC ``created_at`` of the user's most recent active tracker.
-
-    Stored naive because that is what the column is (TIMESTAMP WITHOUT
-    TIME ZONE); :func:`_iso_utc` is the only place that adds the marker.
-    """
-    value = (
-        db.query(func.max(TrackedItem.created_at))
-        .filter(TrackedItem.user_id == user.id, TrackedItem.is_active.is_(True))
-        .scalar()
-    )
-    return value if value else None
-
-
 def seconds_until_next_creation(user: User) -> float:
     """Seconds still to wait before the next tracker creation is allowed.
 
@@ -264,6 +252,13 @@ def enforce_tracker_creation(db: Session, user: User) -> None:
     therefore also spends the window: deleting a tracker and retrying inside
     the same three seconds answers 429 before it answers 201, which is the
     honest reading of "creations are rate limited".
+
+    The cap is a fair-use bound, not a transactional invariant: two creations
+    racing for the same user are already limited to one per
+    ``MIN_CREATION_INTERVAL_SECONDS`` by the window checked first, so the
+    worst case overshoot is one tracker. Making the cap exact would need an
+    atomic per-user counter (Redis), which is named as a follow-up rather than
+    paid for in v1.
     """
     mode = enforcement_mode()
     if mode == DISABLED:
@@ -306,18 +301,27 @@ def usage_payload(db: Session, user: User) -> dict:
     """Build the ``GET /usage/limits`` payload.
 
     This replaces "credits remaining" wherever the app shows an account
-    state, and is what P4's rollups read for trackers-per-user. ``cap`` is
-    ``null`` when fair use is not the mode, so the client cannot render a
-    ceiling that the server is not enforcing.
+    state, and is what P4's rollups read for trackers-per-user. ``cap`` and
+    ``retry_after_seconds`` are reported only when fair use is the mode, so
+    the client can neither render a ceiling nor count down a window that the
+    server is not enforcing.
     """
     mode = enforcement_mode()
-    created = last_created_at(db, user)
+    fair_use = mode == FAIR_USE
+    # One query for both numbers the Profile chip shows.
+    active, created = (
+        db.query(func.count(TrackedItem.id), func.max(TrackedItem.created_at))
+        .filter(TrackedItem.user_id == user.id, TrackedItem.is_active.is_(True))
+        .one()
+    )
     return {
         "enforcement": mode,
-        "active_trackers": active_tracker_count(db, user),
-        "cap": max_trackers() if mode == FAIR_USE else None,
+        "active_trackers": int(active or 0),
+        "cap": max_trackers() if fair_use else None,
         "created_last": _iso_utc(created),
-        "retry_after_seconds": _retry_pair(seconds_until_next_creation(user))[0],
+        "retry_after_seconds": (
+            _retry_pair(seconds_until_next_creation(user))[0] if fair_use else 0.0
+        ),
     }
 
 

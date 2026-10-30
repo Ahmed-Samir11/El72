@@ -360,11 +360,15 @@ def test_09_creation_cost_matches_the_enforcement_mode(auth_headers):
     after = _api("GET", "/credits/balance", headers=auth_headers).json()
     balance_after = int(after.get("balance", after))
 
-    if usage["enforcement"] == "fair_use":
-        assert balance_after == balance_before, (balance_before, balance_after)
-        assert _usage(auth_headers)["active_trackers"] == trackers_before + 1
-    else:
+    if usage["enforcement"] == "on":
+        # Legacy ledger: one credit per tracker, exactly.
         assert balance_after == balance_before - 1, (balance_before, balance_after)
+    else:
+        # fair_use and off both spend no credit; the release default is fair_use.
+        assert balance_after == balance_before, (balance_before, balance_after)
+
+    if usage["enforcement"] == "fair_use":
+        assert _usage(auth_headers)["active_trackers"] == trackers_before + 1
 
 
 def test_10_tracker_appears_in_list(auth_headers):
@@ -434,9 +438,9 @@ def test_14_creation_rate_window_is_enforced(auth_headers):
 
     Before plans/p3 the client only had 429 in a comment; the live stack has
     to send the header for the retry affordance to exist. The window is
-    process-local and this deployment is a single API instance (the same
-    assumption tracked_items_api's refresh throttle documents), so the
-    strict assertion is the honest one.
+    process-local, so this row is honest only under the documented single-API
+    deployment (compose starts one uvicorn worker, no --workers); a multi-worker
+    stack needs the window in Redis, which is the named follow-up.
     """
     if _usage(auth_headers)["enforcement"] != "fair_use":
         pytest.skip("the creation rate window belongs to the fair-use mode")
