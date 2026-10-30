@@ -1,0 +1,536 @@
+"""Alert-event consumer: ``stream:alerts`` -> ``alert_events`` (plans/p2 WS1).
+
+The scraper's alert emitter has always published price events to
+``stream:alerts``; nothing on the API side ever persisted them, so the client
+alert path was write-only and a price drop was gone by the next app open
+(plan p2, finding N2). This module owns the missing leg: it turns one event
+into a row that belongs to the OWNING user, which ``GET /alerts/recent``
+then reads back.
+
+Business contract (report §26 Gate 2 "do users return?", §23 ``price_change``
+/ ``alert_sent`` / ``alert_opened``): every event becomes attributable, per-user,
+deduped history, so "an alert the user actually saw" can later be counted
+against "an alert that was only written".
+
+Service isolation (AGENTS): this consumer reads Redis Streams only — never
+another service's code or database — and writes only ``services/api``'s own
+``alert_events`` table.
+
+Reliability rules this file exists to enforce:
+* ``ensure_group`` runs before the first read, and is re-asserted after any
+  reconnect, so a dropped group can never strand the pipeline;
+* every message the consumer DECIDES about — stored, duplicate, unknown item,
+  owner mismatch, unsupported type, undecodable payload — is ``XACK``ed exactly
+  once, because an undecided message would be re-read forever;
+* a FAILURE (transient database error or an unexpected bug) is NOT acked: the
+  entry stays in the group's pending list, where XPENDING/XAUTOCLAIM and
+  ``el72_alert_events_failed_total`` make it visible instead of silently lost.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import os
+from datetime import datetime
+from decimal import Decimal, InvalidOperation
+from typing import Any, Callable, Mapping
+
+from redis.exceptions import ResponseError
+from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
+
+from services.api.affiliate import normalize_category
+from services.api.models import Alert, AlertEvent
+from services.api.monitoring.metrics import (
+    ALERT_EVENTS_CONSUMER_UP,
+    ALERT_EVENTS_FAILED_TOTAL,
+    ALERT_EVENTS_READ_ERRORS_TOTAL,
+    ALERT_EVENTS_RECEIVED_TOTAL,
+    ALERT_EVENTS_SKIPPED_TOTAL,
+    ALERT_EVENTS_STORED_TOTAL,
+)
+from services.api.tracked_items_models import TrackedItem
+from services.common.currency import EGP_TO_USD, EXCHANGE_RATES
+from services.common.redis_client import RedisStreamClient
+
+logger = logging.getLogger(__name__)
+
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
+ALERTS_STREAM = os.getenv("ALERTS_STREAM", "stream:alerts")
+CONSUMER_GROUP = os.getenv("ALERTS_CONSUMER_GROUP", "cg_alerts_api")
+CONSUMER_NAME = os.getenv("ALERTS_CONSUMER_NAME", "alerts_api_1")
+
+# Batch size / block time are ops-tunable (same pattern as the affiliate
+# redirect rate cap: env overrides, built-in default when unset).
+READ_COUNT = int(os.getenv("ALERTS_CONSUMER_READ_COUNT") or 10)
+READ_BLOCK_MS = int(os.getenv("ALERTS_CONSUMER_BLOCK_MS") or 5000)
+READ_BACKOFF_SECONDS = 5.0
+
+# The four event types the alert emitter produces (services/scraper/alert_emitter.py
+# AlertType) and the only values the canonical CHECK allows. Anything else —
+# including a scrape_failure record sent to the wrong stream — is unsupported
+# here, logged and counted, never guessed at.
+VALID_EVENT_TYPES = frozenset(
+    {"price_drop", "threshold_crossed", "lowest_price_changed", "back_in_stock"}
+)
+
+# One alert per item per event type PER CALENDAR DAY (the fair-use rate rule
+# the free tracker model is built on): a market that jitters its price all day
+# must not turn into a wall of identical cards. Implemented as a floor on the
+# UTC day (hour 0) in the dedupe query below, not a rolling 24 h window, so
+# "today" means the same thing to the consumer, the query and the ops dashboard.
+
+# Outcome labels — also the Prometheus label values, so a review can read the
+# same set from the metrics as from the code.
+OUTCOME_STORED = "stored"
+OUTCOME_DUPLICATE = "duplicate"
+OUTCOME_UNKNOWN_ITEM = "unknown_item"
+OUTCOME_OWNER_MISMATCH = "owner_mismatch"
+OUTCOME_INVALID = "invalid"
+OUTCOME_UNSUPPORTED = "unsupported_event_type"
+OUTCOME_FAILED = "failed"
+
+# Cap for a stored url: the Alerts card later taps it through merchant_link
+# -> /affiliate/redirect, whose real guard is the merchant host allowlist
+# (affiliate.STORE_HOSTS). This bound only keeps an oversized/garbage value out
+# of a column that feeds that tap.
+MAX_URL_LENGTH = 2048
+
+
+def _decode(value: Any) -> str | None:
+    """Decode a Redis field name or value (the client uses bytes responses)."""
+    if value is None:
+        return None
+    if isinstance(value, bytes):
+        try:
+            return value.decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+    return str(value)
+
+
+def parse_event(fields: Mapping[Any, Any]) -> dict[str, Any] | None:
+    """Decode one stream message's ``payload`` JSON into a dict.
+
+    Returns ``None`` for anything the consumer can never make a row from: a
+    message without a payload field, non-JSON, a JSON non-object, or undecodable
+    bytes. The caller acks and counts that message; it is not retried forever.
+    """
+    raw = None
+    for key, value in fields.items():
+        if _decode(key) == "payload":
+            raw = value
+            break
+    if raw is None:
+        return None
+    text = _decode(raw)
+    if text is None:
+        return None
+    try:
+        data = json.loads(text)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    return data
+
+
+def _clean_str(value: Any, max_length: int) -> str | None:
+    """Trim a payload string and drop anything empty or oversized."""
+    text = _decode(value)
+    if text is None:
+        return None
+    text = text.strip()
+    return text[:max_length] if 0 < len(text) <= max_length else None
+
+
+def _clean_float(value: Any) -> float | None:
+    """Coerce a payload number, refusing bools, strings-with-junk and NaN."""
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        number = float(value) if not isinstance(value, str) else float(value.strip())
+    except (TypeError, ValueError):
+        return None
+    if number != number or number in (float("inf"), float("-inf")):
+        return None
+    return number
+
+
+def _bounded_decimal(
+    value: float | None, max_digits: int, scale: int = 2
+) -> Decimal | None:
+    """Round a price to the column's scale, or NULL if it does not fit.
+
+    ``NUMERIC(12,2)``/``NUMERIC(6,2)`` raise on an out-of-range value at insert
+    time. A wild price from a bad scrape must not kill the row (the event still
+    happened) nor the consumer, so an unrepresentable value degrades to NULL
+    and the event lands without a bogus delta.
+    """
+    if value is None:
+        return None
+    try:
+        quantum = Decimal(1).scaleb(-scale)
+        number = Decimal(str(value)).quantize(quantum)
+    except (InvalidOperation, ValueError):
+        return None
+    limit = Decimal(10) ** (max_digits - scale)
+    return number if abs(number) < limit else None
+
+
+def _to_egp(local: float | None, usd: float | None, currency: Any) -> float | None:
+    """Express an event price in EGP — the unit the app displays.
+
+    Preference order is honesty first: a store's own local reading when it is
+    already EGP, then a local reading converted with the shared approximation
+    constants (services/common/currency), then the USD reading converted the
+    same way. These are documented approximations, not a live rate feed, which
+    is exactly why the column is named ``*_egp`` and not quoted as a market fact.
+    """
+    code = (_decode(currency) or "").strip().upper()
+    if local is not None and code == "EGP":
+        return local
+    if local is not None and code in EXCHANGE_RATES:
+        # price_local is expressed in `currency`; EXCHANGE_RATES maps a unit to
+        # USD, and EGP_TO_USD is its inverse.
+        return local * EXCHANGE_RATES[code] / EGP_TO_USD
+    if usd is not None:
+        return usd / EGP_TO_USD
+    return None
+
+
+def _clean_url(value: Any) -> str | None:
+    """Keep a plausible http/https product url out of the tap target.
+
+    Not the security boundary — /affiliate/redirect re-checks the merchant host
+    allowlist at tap time — just a guard against storing markup or a 10 KB blob
+    in a column the client renders as a link.
+    """
+    url = _clean_str(value, MAX_URL_LENGTH)
+    if url is None:
+        return None
+    return url if url.startswith(("http://", "https://")) else None
+
+
+def _usd_to_egp(value: float | None) -> float | None:
+    """Convert an emitter reading expressed in USD to EGP.
+
+    The emitter prices threshold/target/old values in USD (``target_price",
+    "old_price_usd``), while the card and the column are EGP; without this step
+    a 30 (USD) target would be displayed as EGP 30. Approximation constants only
+    (services/common/currency) — hence a comparison in one unit, never a claim
+    of a market-accurate rate.
+    """
+    if value is None:
+        return None
+    return value / EGP_TO_USD
+
+
+def _reference_price_egp(event: dict[str, Any], event_type: str) -> float | None:
+    """The price the event is measured AGAINST, expressed in EGP.
+
+    A threshold crossing is measured against the user's own target; every other
+    event type against the previous reading. Either can be absent — "the price
+    changed" is still a fact, "it fell 12%" is not claimable then.
+    """
+    if event_type == "threshold_crossed":
+        return _usd_to_egp(_clean_float(event.get("target_price")))
+    return _usd_to_egp(_clean_float(event.get("old_price_usd")))
+
+
+def _discount_pct(
+    event: dict[str, Any], price_egp: float | None, reference_egp: float | None
+) -> Decimal | None:
+    """Percent under the reference price, from the emitter's own metadata first.
+
+    The emitter already computed ``drop_percentage`` for a price drop; recompute
+    only when it is missing and both prices exist. Bounded to 0-100 — a "120%
+    discount" is a data error, not a deal, and must not become a headline card.
+    """
+    claimed = _clean_float((event.get("metadata") or {}).get("drop_percentage"))
+    if claimed is not None:
+        candidate = claimed
+    elif reference_egp and price_egp is not None and reference_egp > price_egp:
+        candidate = (reference_egp - price_egp) / reference_egp * 100
+    else:
+        return None
+    candidate = min(max(candidate, 0.0), 100.0)
+    return _bounded_decimal(candidate, max_digits=6, scale=2)
+
+
+def _resolve_owner(db: Session, tracked_item_id: int) -> int | None:
+    """Return the user who OWNS the tracked item the event is about.
+
+    The event's own ``user_id`` field is NOT trusted as identity: tracked_items
+    is the scraper-owned source of truth for who a product belongs to, so a
+    payload naming a different user is hostile or stale, and its row would leak
+    one user's market data into another user's feed.
+    """
+    return db.execute(
+        select(TrackedItem.user_id).where(TrackedItem.id == tracked_item_id)
+    ).scalar_one_or_none()
+
+
+def _fill_category(db: Session, sku: str | None, event: dict[str, Any]) -> str | None:
+    """Category for the event: the emitter's own value if it sent a safe one,
+    otherwise the server's product context from the user's tracker row.
+
+    Reuses affiliate.normalize_category — the same clamp the affiliate click
+    uses — so one metric dimension cannot be polluted by markup or a
+    scheme-shaped token, and the stored value stays length-bounded even when
+    older rows predate today's rules.
+    """
+    claimed = normalize_category(_decode((event.get("metadata") or {}).get("category")))
+    if claimed:
+        return claimed
+    if not sku:
+        return None
+    return normalize_category(
+        db.execute(
+            select(Alert.category)
+            .where(Alert.sku == sku, Alert.category.isnot(None))
+            .order_by(Alert.id)
+            .limit(1)
+        )
+        .scalars()
+        .first()
+    )
+
+
+def store_event(
+    session_factory: Callable[[], Session],
+    event: dict[str, Any] | None,
+    *,
+    now: datetime | None = None,
+) -> str:
+    """Persist one decoded alert event as ``alert_events`` rows.
+
+    Returns an outcome label. All decisions are terminal: a row is written, or
+    the event is skipped for a named, counted reason. Unknown item, owner
+    mismatch and unsupported type are permanent conditions (acking them is
+    correct); only a database failure is treated as transient, and it is
+    raised so the caller can leave the message unacknowledged.
+    """
+    if not event:
+        return OUTCOME_INVALID
+
+    event_type = (_decode(event.get("alert_type")) or "").strip()
+    if event_type not in VALID_EVENT_TYPES:
+        return OUTCOME_UNSUPPORTED
+
+    tracked_item_id = _clean_float(event.get("tracked_item_id"))
+    if tracked_item_id is None or tracked_item_id != int(tracked_item_id):
+        return OUTCOME_INVALID
+    tracked_item_id = int(tracked_item_id)
+
+    now = now or datetime.utcnow()
+    with session_factory() as db:
+        owner_id = _resolve_owner(db, tracked_item_id)
+        if owner_id is None:
+            # A price event for a product nobody tracks (deleted tracker, or a
+            # probe with an invented id): skipped and counted, never crashed.
+            return OUTCOME_UNKNOWN_ITEM
+
+        claimed_user = _clean_float(event.get("user_id"))
+        if claimed_user is not None and int(claimed_user) != int(owner_id):
+            return OUTCOME_OWNER_MISMATCH
+
+        # created_at is stored as naive UTC (the repo-wide convention), so the
+        # same-day window is floored on the same kind of timestamp.
+        day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        exists = db.execute(
+            select(AlertEvent.id)
+            .where(
+                AlertEvent.tracked_item_id == tracked_item_id,
+                AlertEvent.event_type == event_type,
+                AlertEvent.created_at >= day_start,
+            )
+            .limit(1)
+        ).first()
+        if exists is not None:
+            return OUTCOME_DUPLICATE
+
+        raw_sku = event.get("canonical_product_id")
+        sku = _clean_str(raw_sku, 255)
+        price_egp = _to_egp(
+            _clean_float(event.get("new_price_local")),
+            _clean_float(event.get("new_price_usd")),
+            event.get("currency"),
+        )
+        reference_egp = _reference_price_egp(event, event_type)
+
+        db.add(
+            AlertEvent(
+                user_id=owner_id,
+                tracked_item_id=tracked_item_id,
+                sku=sku,
+                store_id=_clean_str(event.get("store_id"), 32),
+                category=_fill_category(db, sku, event),
+                url=_clean_url(event.get("url")),
+                event_type=event_type,
+                price_egp=(
+                    _bounded_decimal(price_egp, max_digits=12)
+                    if price_egp is not None
+                    else None
+                ),
+                reference_price_egp=(
+                    _bounded_decimal(reference_egp, max_digits=12)
+                    if reference_egp is not None
+                    else None
+                ),
+                discount_pct=_discount_pct(event, price_egp, reference_egp),
+                # 'in_app' is the only channel this build delivers; a row
+                # claiming 'push'/'whatsapp' would promise a send that did not
+                # happen (plan p2 WS3 truth rule). The channel widens with the
+                # sender that ships it.
+                channel="in_app",
+                created_at=now,
+            )
+        )
+        db.commit()
+        return OUTCOME_STORED
+
+
+async def _store_event_off_loop(
+    session_factory: Callable[[], Session],
+    event: dict[str, Any] | None,
+) -> str:
+    """Run the synchronous SQLAlchemy write, keeping the event loop free.
+
+    AGENTS forbids blocking I/O on an async service's event loop, so the
+    psycopg2-backed production write goes to a worker thread. SQLite stays inline:
+    its engine is one shared connection with a thread guard, so threading it
+    would turn a legitimate dev run into an OperationalError for no benefit (the
+    write itself is microseconds against a local file).
+    """
+    if os.getenv("DATABASE_URL", "").strip().lower().startswith("sqlite"):
+        return store_event(session_factory, event)
+    return await asyncio.to_thread(store_event, session_factory, event)
+
+
+async def process_message(
+    redis: RedisStreamClient,
+    stream: str,
+    group: str,
+    message_id: str,
+    fields: Mapping[Any, Any],
+    session_factory: Callable[[], Session],
+) -> str:
+    """Persist one message and acknowledge it. Returns the outcome label.
+
+    Ack policy (see the module docstring): everything the consumer can decide
+    about is acked; a transient database failure is the one case left pending.
+    """
+    ALERT_EVENTS_RECEIVED_TOTAL.inc()
+    event = parse_event(fields)
+    try:
+        outcome = await _store_event_off_loop(session_factory, event)
+    except SQLAlchemyError as exc:
+        # Transient: leave acked-to-nobody so the entry stays in the group's
+        # pending list (observable as consumer lag), rather than losing an event.
+        ALERT_EVENTS_FAILED_TOTAL.inc()
+        logger.error(
+            "Alert event write failed; message left pending",
+            extra={"message_id": _decode(message_id), "error": str(exc)},
+        )
+        return OUTCOME_FAILED
+    except Exception:  # noqa: BLE001 - poison-pill guard, logged loudly
+        ALERT_EVENTS_FAILED_TOTAL.inc()
+        logger.exception(
+            "Unexpected alert event error; message acked and counted as failed",
+            extra={"message_id": _decode(message_id)},
+        )
+        return OUTCOME_FAILED
+
+    if outcome == OUTCOME_STORED:
+        ALERT_EVENTS_STORED_TOTAL.inc()
+    else:
+        ALERT_EVENTS_SKIPPED_TOTAL.labels(reason=outcome).inc()
+
+    try:
+        await redis.xack(stream, group, message_id)
+    except ResponseError as exc:
+        # Unknown group / stream: the loop re-asserts the consumer group on
+        # every iteration, so this is reported rather than fatal.
+        logger.error(
+            "XACK failed for an alert event message",
+            extra={
+                "message_id": _decode(message_id),
+                "stream": stream,
+                "group": group,
+                "error": str(exc),
+            },
+        )
+    return outcome
+
+
+async def consume_loop(
+    session_factory: Callable[[], Session],
+    *,
+    redis_url: str | None = None,
+    stream: str | None = None,
+    group: str | None = None,
+    consumer_name: str | None = None,
+) -> None:
+    """Consume ``stream:alerts`` forever.
+
+    Started from the API's startup hook (``main.py``). A Redis outage does NOT
+    take the API down: the read fails, is logged and counted, and the loop
+    retries after a backoff. That is a deliberate, observable trade — ``GET
+    /alerts/recent`` keeps serving what is already durable, ``el72_alert_events_
+    consumer_up`` goes to 0, and the entries stay pending, so "no new alerts"
+    can never be read as "nothing happened" while the pipeline is down.
+    """
+    url = redis_url or os.getenv("REDIS_URL", REDIS_URL)
+    stream_name = stream or ALERTS_STREAM
+    group_name = group or CONSUMER_GROUP
+    name = consumer_name or CONSUMER_NAME
+
+    redis: RedisStreamClient | None = None
+    while True:
+        try:
+            if redis is None:
+                # Connected lazily, INSIDE the loop: a Redis outage at API
+                # startup must not take the API down — GET /alerts/recent still
+                # serves what is already durable — but it must be visible, which
+                # is what el72_alert_events_consumer_up = 0 is for.
+                redis = await RedisStreamClient.create(url)
+            # ALWAYS create the consumer group before reading. It is re-asserted
+            # every iteration: ensure_group swallows BUSYGROUP, and after a
+            # reconnect a dropped group must never strand the pipeline.
+            await redis.ensure_group(stream_name, group_name)
+            messages = await redis.xreadgroup(
+                group=group_name,
+                consumer=name,
+                streams={stream_name: ">"},
+                count=READ_COUNT,
+                block=READ_BLOCK_MS,
+            )
+            ALERT_EVENTS_CONSUMER_UP.set(1)
+        except asyncio.CancelledError:
+            ALERT_EVENTS_CONSUMER_UP.set(0)
+            raise
+        except Exception:
+            ALERT_EVENTS_READ_ERRORS_TOTAL.inc()
+            ALERT_EVENTS_CONSUMER_UP.set(0)
+            logger.exception(
+                "Alert events read failed; retrying after backoff",
+                extra={"stream": stream_name, "group": group_name},
+            )
+            # The client is kept, not closed: RedisStreamClient is a process
+            # singleton and redis.asyncio reconnects on the next command, while
+            # a failed create() leaves the singleton empty for a fresh attempt.
+            await asyncio.sleep(READ_BACKOFF_SECONDS)
+            continue
+
+        if not messages:
+            continue
+
+        for _, entries in messages:
+            for message_id, fields in entries:
+                await process_message(
+                    redis, stream_name, group_name, message_id, fields, session_factory
+                )

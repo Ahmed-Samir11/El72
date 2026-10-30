@@ -3,9 +3,11 @@ from datetime import datetime
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     Column,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,
@@ -74,6 +76,19 @@ def _new_credit_tx_id(context):
     return uuid.uuid4()
 
 
+def _new_alert_event_id(context):
+    """SQLite-safe auto-increment id for alert_events; UUID on Postgres.
+
+    Same dialect split as affiliate_clicks: the canonical schema issues
+    ``gen_random_uuid()``, an SQLite dev/test database cannot.
+    """
+    if context.dialect.name == "sqlite":
+        return context.connection.exec_driver_sql(
+            "SELECT COALESCE(MAX(id), 0) + 1 FROM alert_events"
+        ).scalar_one()
+    return uuid.uuid4()
+
+
 def _new_affiliate_click_id(context):
     """SQLite-safe auto-increment id for affiliate_clicks; UUID on Postgres."""
     if context.dialect.name == "sqlite":
@@ -98,6 +113,13 @@ class User(Base):
     deleted_at = Column(DateTime, nullable=True)
 
     alerts = relationship("Alert", back_populates="user", cascade="all, delete-orphan")
+    # The user's alert EVENT history (plans/p2). Derived data: cascade with
+    # the account, matching the schema's ON DELETE CASCADE.
+    alert_events = relationship(
+        "AlertEvent",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
     credits = relationship(
         "UserCredit", back_populates="user", uselist=False, cascade="all, delete-orphan"
     )
@@ -200,3 +222,77 @@ class AffiliateClick(Base):
     # deployed code that selects AffiliateClick.clicked_at keeps working while
     # the physical column is created_at (migration 0012 renames it).
     clicked_at = synonym("created_at")
+
+
+class AlertEvent(Base):
+    """One durable price event that belongs to a user (plans/p2 WS1, Gate 2).
+
+    Before this table an "alert" was only the user's tracker row, so the
+    client's alert path was write-only: a price drop was invisible the next
+    time the app opened. A row states what the market did, and ``opened_at``
+    states whether the user saw it — that difference is the whole of "do
+    alerts bring users back?". ``channel`` records how the user was TOLD
+    ('in_app' is the only channel this build can deliver; a row must never
+    claim a push/WhatsApp send that did not happen) and mirrors the CHECK
+    lists in infra/sql/schema/postgres.sql — keep both in step, the sync
+    test in services/api/test_alert_events_schema_sync.py enforces it.
+    """
+
+    __tablename__ = "alert_events"
+
+    id = Column(DialectIdType(), primary_key=True, default=_new_alert_event_id)
+    # CASCADE, not SET NULL: this is the user's own derived view of the market,
+    # so deleting the account must delete its alert feed (unlike affiliate
+    # clicks, which are market KPI data and stay anonymous).
+    user_id = Column(
+        OperationalIdType(),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # No FK: tracked_items is owned by services/scraper (service isolation)
+    # and the consumer resolves the OWNING user through it.
+    tracked_item_id = Column(OperationalIdType(), nullable=False)
+    sku = Column(Text, nullable=True)
+    store_id = Column(Text, nullable=True)
+    category = Column(Text, nullable=True)
+    # Product page as observed at event time: the Alerts card taps it through
+    # merchant_link -> /affiliate/redirect (plans/p1 attribution).
+    url = Column(Text, nullable=True)
+    event_type = Column(Text, nullable=False)
+    price_egp = Column(Numeric(12, 2), nullable=True)
+    # The reference the price is compared against: previous price for a drop,
+    # the user's target for threshold_crossed.
+    reference_price_egp = Column(Numeric(12, 2), nullable=True)
+    discount_pct = Column(Numeric(6, 2), nullable=True)
+    channel = Column(Text, nullable=False, default="in_app")
+    # Set by POST /alerts/{id}/open (in-app view) or by a push tap; the §23
+    # alert_opened evidence. NULL = written but never seen.
+    opened_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
+    user = relationship("User", back_populates="alert_events")
+
+    __table_args__ = (
+        # Same names and columns as infra/sql/schema/postgres.sql; the canonical
+        # schema orders created_at DESC for the feed read, which the ORM cannot
+        # express in a portable way across dialects — the drift test pins the
+        # names, and the direction stays the schema's decision.
+        Index("idx_alert_events_user_time", "user_id", "created_at"),
+        Index("idx_alert_events_item_time", "tracked_item_id", "created_at"),
+        Index("idx_alert_events_user_opened", "user_id", "opened_at"),
+        CheckConstraint(
+            "event_type IN ('price_drop', 'threshold_crossed', "
+            "'lowest_price_changed', 'back_in_stock')",
+            name="ck_alert_events_event_type",
+        ),
+        CheckConstraint(
+            "channel IN ('in_app', 'push', 'whatsapp')",
+            name="ck_alert_events_channel",
+        ),
+    )

@@ -17,12 +17,15 @@ def _reset_rate_limiter():
     # engine before test modules finalize DATABASE_URL.
     from services.api.payment_security import security_monitor
     from services.api.routers.affiliate import limiter as affiliate_limiter
+    from services.api.routers.alerts import limiter as alerts_limiter
     from services.api.routers.payment import limiter
 
     limiter.reset()
     affiliate_limiter.reset()
+    alerts_limiter.reset()
     security_monitor.reset()
     yield
     limiter.reset()
     affiliate_limiter.reset()
+    alerts_limiter.reset()
     security_monitor.reset()

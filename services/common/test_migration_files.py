@@ -39,6 +39,7 @@ POSTGRES_MIGRATIONS = [
     "migrations/0009_admin_dispute_refunds.sql",
     "migrations/0010_subscriptions.sql",
     "migrations/0012_affiliate_click_attribution.sql",
+    "migrations/0013_alert_events.sql",
 ]
 TIMESCALE_MIGRATIONS = [
     "migrations/timescaledb/0000_baseline.sql",

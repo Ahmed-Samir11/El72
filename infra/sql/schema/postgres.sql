@@ -336,6 +336,48 @@ CREATE TABLE IF NOT EXISTS affiliate_clicks (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+-- Alert EVENT history — the durable record that "a price event happened for
+-- this user" (plans/p2 WS1; Gate 2 "do alerts bring users back?").
+-- Before this table an "alert" only meant the user's tracker row (alerts =
+-- the target), so a price event was invisible the next time the app opened:
+-- the alert path was write-only. Written by services/api's alert_events
+-- consumer from stream:alerts (fan-out to the OWNING user via
+-- tracked_items.user_id, never via whatever user_id the event happens to
+-- carry), deduped to max one row per (tracked_item_id, event_type) per day
+-- (fair-use rule: 1 alert per item per day).
+--
+-- opened_at is the whole point of the table: Gate 2 is unreadable unless we
+-- can tell "an alert the user actually saw" from "an alert that was only
+-- written". channel records how the user was TOLD — 'in_app' is the only
+-- channel this build can deliver, so a row never claims a push/WhatsApp
+-- send that did not happen; the CHECK widens when those senders ship.
+-- tracked_item_id keeps no FK: tracked_items is owned by services/scraper
+-- (service isolation) and is indexed for the item-time read instead.
+CREATE TABLE IF NOT EXISTS alert_events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    -- CASCADE: this history is the user's own view of the market, and it is
+    -- derived data — deleting the account must delete its alert feed.
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    tracked_item_id INTEGER NOT NULL,
+    sku TEXT,
+    store_id TEXT,
+    category TEXT,
+    -- The product page as it was at event time: the Alerts card taps it
+    -- through merchant_link -> /affiliate/redirect (plans/p1 attribution).
+    url TEXT,
+    event_type TEXT NOT NULL
+        CHECK (event_type IN ('price_drop', 'threshold_crossed',
+            'lowest_price_changed', 'back_in_stock')),
+    price_egp NUMERIC(12, 2),
+    reference_price_egp NUMERIC(12, 2),
+    discount_pct NUMERIC(6, 2),
+    channel TEXT NOT NULL DEFAULT 'in_app'
+        CHECK (channel IN ('in_app', 'push', 'whatsapp')),
+    opened_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
 -- Retailer Analytics (Aggregated B2B metrics, no PII)
 CREATE TABLE IF NOT EXISTS retailer_analytics (
     id SERIAL PRIMARY KEY,
@@ -377,6 +419,17 @@ CREATE INDEX IF NOT EXISTS idx_affiliate_clicks_created_at ON affiliate_clicks(c
 -- time"; both get a composite index here.
 CREATE INDEX IF NOT EXISTS idx_affiliate_clicks_user_time ON affiliate_clicks(user_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_affiliate_clicks_source ON affiliate_clicks(source, created_at);
+
+-- Alert feed reads: "this user's events, newest first" (the Alerts tab),
+-- "has this item+event_type already fired today?" (the consumer's dedupe)
+-- and "how many of this user's alerts are still unopened" (the N-newer badge
+-- and Gate 2's opened/unopened ratio).
+CREATE INDEX IF NOT EXISTS idx_alert_events_user_time
+    ON alert_events(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_alert_events_item_time
+    ON alert_events(tracked_item_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_alert_events_user_opened
+    ON alert_events(user_id, opened_at);
 
 CREATE INDEX IF NOT EXISTS idx_retailer_analytics_store_id ON retailer_analytics(store_id);
 CREATE INDEX IF NOT EXISTS idx_retailer_analytics_period ON retailer_analytics(period_start, period_end);
@@ -432,6 +485,12 @@ CREATE TRIGGER update_users_updated_at
 DROP TRIGGER IF EXISTS update_alerts_updated_at ON alerts;
 CREATE TRIGGER update_alerts_updated_at
     BEFORE UPDATE ON alerts
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_alert_events_updated_at ON alert_events;
+CREATE TRIGGER update_alert_events_updated_at
+    BEFORE UPDATE ON alert_events
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 

@@ -75,6 +75,12 @@ services:
       REDIS_URL: "redis://redis:6379"
       DATABASE_URL: "${DATABASE_URL_DOCKER:?Set DATABASE_URL_DOCKER in .env}"
       TIMESCALE_URL: "${TIMESCALE_URL_DOCKER:?Set TIMESCALE_URL_DOCKER in .env}"
+      # Alert-events consumer (plans/p2 MS1) runs inside this container:
+      # stream:alerts -> alert_events, so the alert history survives a closed
+      # app. Written explicitly rather than left to the code default so the
+      # pipeline is visible in the stack description; its counters ride api's
+      # /metrics (el72_alert_events_*).
+      ALERT_EVENTS_CONSUMER: "true"
     ports:
       - "8000:8000"
 

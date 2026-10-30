@@ -67,6 +67,11 @@ apply_file "$DATABASE_URL" \
 apply_file "$DATABASE_URL" \
     infra/sql/migrations/0012_affiliate_click_attribution.sql
 
+# Alert event history (plans/p2 MS1): per-user alert_events rows so a price
+# event is still visible the next time the app opens.
+apply_file "$DATABASE_URL" \
+    infra/sql/migrations/0013_alert_events.sql
+
 # Same sequence for the independent TimescaleDB instance.
 apply_file "$TIMESCALE_URL" \
     infra/sql/schema/timescaledb.sql
