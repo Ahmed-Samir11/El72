@@ -4,7 +4,7 @@
 must be reviewed by a native Arabic speaker before submission. Screenshots must be
 rendered from the current visual pass.**
 
-**Release gate (plans/p2 truth rule):** `grep -rn "PENDING COPY" flutter-app/docs` must return nothing at submission, and no copy may promise a delivery channel this build does not have: it records price events and shows them in-app, and sends no OS push notification, email or WhatsApp message.
+**Release gate (plans/p2 truth rule):** `grep -rn "PENDING COPY" flutter-app/docs` must return nothing at submission, and no copy may promise a delivery channel the shipped deployment does not have. The app itself uses no OS push notification and no email; whether a WhatsApp deal alert reaches you is a server configuration (`MOCK_WHATSAPP` plus Meta credentials) and belongs in `privacy-policy.md`, so listing copy states only what is always true: the alert is visible in-app.
 
 ---
 
@@ -32,8 +32,8 @@ rendered from the current visual pass.**
 >
 > **Every drop stays visible.** When a tracked price falls, the change is recorded
 > against your account and appears in the app's alert history — tap it to open
-> the product at the merchant. No channel is promised: this build does not use OS
-> push notifications, email or WhatsApp messages.
+> the product at the merchant. Nothing about this needs a notifications permission:
+> what you see, you see in-app.
 >
 > **Arabic-first.** A fully Arabic experience with right-to-left layout, plus
 > English. Prices are formatted for your locale.

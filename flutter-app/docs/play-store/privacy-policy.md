@@ -41,10 +41,17 @@ explains what data we collect, how it is used, and your choices.
 - As of this version we do **not** send **crash reports** to any third party.
   _(If crash reporting is enabled in a future release, this section will be
   updated and users will be notified.)_
-- We do **not** request the Android notifications permission and do **not**
-  deliver OS push notifications, email or WhatsApp messages to you in this
-  version. Price events are shown inside the app; a delivery channel is only
-  described here once it actually ships.
+- The **app** requests only the `INTERNET` permission: it does not request the
+  Android notifications permission, sends you no OS push notification, and sends
+  you no email. Nothing in this version delivers an alert through your device.
+- **WhatsApp deal alerts are a server-side channel, and it is disclosed here.**
+  When that channel is enabled for a deployment (a configured Meta Business API
+  credential with mock mode off), our server sends you a WhatsApp message about a
+  confirmed deal on a product you track, through Meta's WhatsApp Business API. In
+  that case your phone number and the product details in the message are processed
+  by that third-party service. In this project's default configuration the channel
+  runs in mock mode and sends nothing; nothing is disclosed as a send that did not
+  happen, and no channel is promised here that the deployment does not have.
 - We do not collect precise physical location, contacts, photos, or microphone
   data. The app requests only the `INTERNET` permission.
 
@@ -53,6 +60,8 @@ explains what data we collect, how it is used, and your choices.
 - To provide the service: authenticate you, fetch prices for your tracked items,
   and record price-change events for your account so the app can show them to
   you (see §1: an event is stored and displayed in-app in this version).
+- Where the WhatsApp deal-alert channel is enabled (see §2), also to deliver that
+  message about a confirmed deal to the phone number associated with your account.
 - To operate and improve the service (e.g., reliability of price fetching).
 - We do **not** sell your personal data, and we do **not** share it with third
   parties for advertising.
