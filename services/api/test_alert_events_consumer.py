@@ -10,7 +10,8 @@ crashing the feed.
 import asyncio
 import json
 import os
-from datetime import datetime
+from collections import deque
+from datetime import datetime, timedelta
 from unittest.mock import AsyncMock
 
 os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
@@ -18,11 +19,14 @@ os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 import pytest
 from prometheus_client import REGISTRY
 from sqlalchemy import create_engine, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from services.api.alert_events_consumer import (
+    DELIVERY_MEMORY,
     MAX_DELIVERY_ATTEMPTS,
+    OUTCOME_ACK_FAILED,
     OUTCOME_DUPLICATE,
     OUTCOME_FAILED,
     OUTCOME_INVALID,
@@ -31,6 +35,10 @@ from services.api.alert_events_consumer import (
     OUTCOME_UNKNOWN_ITEM,
     OUTCOME_UNSUPPORTED,
     RedisStreamClient,
+    _env_int,
+    _event_time,
+    _is_same_day_unique,
+    _remember,
     consume_loop,
     parse_event,
     process_message,
@@ -38,6 +46,11 @@ from services.api.alert_events_consumer import (
 )
 from services.api.models import Alert, AlertEvent, User
 from services.api.tracked_items_models import TrackedItem
+
+
+def _count(name: str) -> float:
+    """Current value of a Prometheus counter (0.0 when never incremented)."""
+    return REGISTRY.get_sample_value(name) or 0.0
 
 
 class _Bundle:
@@ -634,7 +647,13 @@ def test_broken_write_is_reclaimed_then_discarded_and_the_gauge_drops(db, monkey
 
 
 def test_ack_failure_does_not_kill_the_loop(db):
-    """An ack error leaves the entry pending; it must never end the task."""
+    """An ack error leaves the entry pending and reports a RETRYABLE outcome.
+
+    The verdict is stored, but reporting success while the entry is still in the
+    group's pending list would make the pending pass hand it back with no backoff
+    — a hot spin that starves new messages. ACK_FAILED is the label that keeps
+    the retry bounded, the counters honest and the task alive.
+    """
 
     async def scenario():
         redis = AsyncMock()
@@ -642,10 +661,277 @@ def test_ack_failure_does_not_kill_the_loop(db):
         user = db.add_user("+201000000027")
         item = db.add_item(user, "rtx-5060-compumarts")
         fields = {"payload": json.dumps(_event(tracked_item_id=item)).encode()}
+        before = _count("el72_alert_events_ack_errors_total")
         outcome = await process_message(
             redis, "stream:alerts", "cg_alerts_api", "1-0", fields, db.factory
         )
-        return outcome
+        return outcome, _count("el72_alert_events_ack_errors_total") - before
 
-    assert asyncio.run(scenario()) == OUTCOME_STORED
-    assert len(db.read_rows()) == 1
+    outcome, ack_errors = asyncio.run(scenario())
+    assert outcome == OUTCOME_ACK_FAILED
+    assert ack_errors == 1, "the ack error is counted, not swallowed"
+    assert len(db.read_rows()) == 1, "the event is stored; only the ack is missing"
+
+
+# --- round 2: the paths a review must not be able to talk itself out of -----
+
+
+class _RefusingAckRedis:
+    """A Redis whose XACK never succeeds, still handing the entry back.
+
+    The shape of the hot-spin bug: an entry the consumer has decided about stays
+    pending forever. The fake stops returning it once the consumer acks it, which
+    is what a real pending list does.
+    """
+
+    def __init__(self, entry):
+        self.entry = entry
+        self.pending_reads = 0
+        self.new_reads = 0
+        self.ack_attempts = 0
+        self.ensure_group_calls = 0
+
+    async def ensure_group(self, stream, group):
+        self.ensure_group_calls += 1
+
+    async def xack(self, stream, group, message_id):
+        self.ack_attempts += 1
+        raise RuntimeError("ack refused")
+
+    async def xreadgroup(self, *, group, consumer, streams, count, block=None):
+        (read_id,) = list(streams.values())
+        if read_id == "0":
+            self.pending_reads += 1
+            if self.pending_reads > MAX_DELIVERY_ATTEMPTS:
+                return [[b"stream:alerts", []]]
+            return [[b"stream:alerts", [self.entry]]]
+        self.new_reads += 1
+        raise asyncio.CancelledError
+
+
+def test_refusing_ack_is_bounded_and_never_double_counts(db, monkeypatch):
+    """An entry this consumer can never ack must not starve the feed.
+
+    Three things are pinned at once: the retry is BOUNDED, the event is written
+    and counted exactly ONCE (re-deciding would inflate stored/duplicate), and
+    the new-messages pass is REACHED rather than starved by a pending hot spin.
+    """
+    user = db.add_user("+201000000028")
+    item = db.add_item(user, "tee-r219636")
+    payload = json.dumps(_event(tracked_item_id=item)).encode()
+    redis = _RefusingAckRedis(("1-0", {"payload": payload}))
+    monkeypatch.setattr(RedisStreamClient, "create", AsyncMock(return_value=redis))
+    # The backoff is production behaviour (no hot spin); zero here keeps the
+    # contract cheap to assert.
+    monkeypatch.setattr("services.api.alert_events_consumer.READ_BACKOFF_SECONDS", 0.0)
+    stored_before = _count("el72_alert_events_stored_total")
+    discarded_before = _count("el72_alert_events_discarded_total")
+
+    async def scenario():
+        return await asyncio.gather(
+            consume_loop(db.factory, redis_url="redis://unused"),
+            return_exceptions=True,
+        )
+
+    results = asyncio.run(scenario())
+    assert isinstance(results[0], asyncio.CancelledError)
+    assert redis.pending_reads == MAX_DELIVERY_ATTEMPTS + 1
+    assert redis.new_reads == 1, "new messages are not starved by one bad entry"
+    assert len(db.read_rows()) == 1, "written once despite repeated deliveries"
+    assert _count("el72_alert_events_stored_total") - stored_before == 1
+    assert _count("el72_alert_events_discarded_total") - discarded_before == 1
+    assert redis.ack_attempts >= MAX_DELIVERY_ATTEMPTS
+    assert _count("el72_alert_events_ack_errors_total") >= MAX_DELIVERY_ATTEMPTS
+    assert _count("el72_alert_events_consumer_up") == 0
+
+
+def test_dedupe_only_covers_the_same_calendar_day(db):
+    """A row dated another day must not suppress today's alert.
+
+    The read-then-write check has to match uq_alert_events_item_type_day, which
+    keys on the calendar day: an open-ended >= plus a clock-skewed stamp would
+    drop today's event while the index would have allowed it — two definitions
+    of "same day" is exactly the drift this suite exists to prevent.
+    """
+    user = db.add_user("+201000000029")
+    item = db.add_item(user, "42409865")
+    today = datetime(2026, 10, 29, 12, 0, 0)
+    assert (
+        store_event(
+            db.factory,
+            _event(tracked_item_id=item, timestamp="2026-10-29T12:00:00Z"),
+            now=today,
+        )
+        == OUTCOME_STORED
+    )
+    with db.factory() as session:
+        row = session.execute(select(AlertEvent)).scalars().first()
+        row.created_at = today + timedelta(days=1, hours=3)
+        session.commit()
+
+    assert (
+        store_event(
+            db.factory,
+            _event(tracked_item_id=item, timestamp="2026-10-29T18:00:00Z"),
+            now=today,
+        )
+        == OUTCOME_STORED
+    )
+    assert len(db.read_rows()) == 2
+    assert _event_time(_event(timestamp="2026-10-29T18:00:00Z")) == datetime(
+        2026, 10, 29, 18, 0, 0
+    ), "a Z-suffixed stamp is naive UTC, like the API router's since bound"
+
+
+def test_category_fallback_is_scoped_to_the_owner(db):
+    """Product context comes from the owner's tracker row, never a stranger's.
+
+    The stored category labels a card and feeds a metric dimension; borrowing it
+    from another user's alert would make one user's feed depend on another's
+    data — the same ownership rule the event itself follows.
+    """
+    owner = db.add_user("+201000000030")
+    item = db.add_item(owner, "tee-r219636")
+    stranger = db.add_user("+201000000031")
+
+    def add_alert(user, sku, category):
+        with db.factory() as session:
+            session.add(
+                Alert(
+                    user_id=user,
+                    sku=sku,
+                    category=category,
+                    target_url="https://www.jumia.com.eg/tee/",
+                    active_status=True,
+                )
+            )
+            session.commit()
+
+    add_alert(stranger, "tee-r219636", "Stranger-Category")
+    store_event(
+        db.factory,
+        _event(tracked_item_id=item, canonical_product_id="tee-r219636", metadata={}),
+    )
+    (row,) = db.read_rows()
+    assert row.category is None, "a stranger's category must not be borrowed"
+
+    add_alert(owner, "tee-r219636", "Apparel")
+    store_event(
+        db.factory,
+        _event(
+            tracked_item_id=item,
+            alert_type="back_in_stock",
+            canonical_product_id="tee-r219636",
+            metadata={},
+        ),
+    )
+    categories = {row.category for row in db.read_rows()}
+    assert "Apparel" in categories
+    assert "Stranger-Category" not in categories
+
+
+class _CommitFails:
+    """Wraps a real session so only commit() explodes, with a FOREIGN-KEY error."""
+
+    def __init__(self, session):
+        self._session = session
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def execute(self, *args, **kwargs):
+        return self._session.execute(*args, **kwargs)
+
+    def add(self, obj):
+        self._session.add(obj)
+
+    def commit(self):
+        raise IntegrityError(
+            "INSERT INTO alert_events ...",
+            {},
+            Exception('violates foreign key "alert_events_users"'),
+        )
+
+    def rollback(self):
+        self._session.rollback()
+
+
+def test_only_the_same_day_index_may_be_called_a_duplicate(db):
+    """A different integrity error is a FAILURE, never a silent duplicate.
+
+    Calling every IntegrityError a duplicate would ack the message and hide
+    breakage behind a counter ops reads as normal dedupe.
+    """
+    assert not _is_same_day_unique(
+        IntegrityError("INSERT ...", {}, Exception('fk "alert_events_users"'))
+    )
+    assert _is_same_day_unique(
+        IntegrityError(
+            "UNIQUE constraint failed",
+            {},
+            Exception("uq_alert_events_item_type_day"),
+        )
+    )
+
+    user = db.add_user("+201000000033")
+    item = db.add_item(user, "tee-r219636")
+
+    def exploding_factory():
+        return _CommitFails(db.factory())
+
+    with pytest.raises(IntegrityError):
+        store_event(exploding_factory, _event(tracked_item_id=item))
+    assert db.read_rows() == [], "nothing half-written is left behind"
+
+
+def test_env_int_falls_back_on_a_typo():
+    """A malformed ops override uses the default and says so; it never boot-fails.
+
+    A ValueError at import time would take the whole API down over one typo in
+    .env, which is the opposite of the plan's "observable, not fatal" stance.
+    """
+    for bad in ("", "   ", "abc", "10.5", "0"):
+        os.environ["ALERTS_CONSUMER_READ_COUNT"] = bad
+        assert _env_int("ALERTS_CONSUMER_READ_COUNT", 10, minimum=1) == 10
+    os.environ["ALERTS_CONSUMER_READ_COUNT"] = "25"
+    assert _env_int("ALERTS_CONSUMER_READ_COUNT", 10, minimum=1) == 25
+    del os.environ["ALERTS_CONSUMER_READ_COUNT"]
+
+
+def test_payload_user_id_must_be_an_integer_to_agree(db):
+    """A fractional payload user id is not agreement with the owner.
+
+    Ownership still comes from tracked_items, so this is validation hygiene, not
+    a security boundary — but a value that cannot be an id must never match one.
+    """
+    user = db.add_user("+201000000034")
+    item = db.add_item(user, "tee-r219636")
+    fractional = f"{user}.5"
+    assert (
+        store_event(db.factory, _event(tracked_item_id=item, user_id=fractional))
+        == OUTCOME_OWNER_MISMATCH
+    )
+    assert db.read_rows() == []
+    assert (
+        store_event(db.factory, _event(tracked_item_id=item, user_id=user))
+        == OUTCOME_STORED
+    )
+
+
+def test_remembered_ids_are_bounded():
+    """The retry memory must not grow forever in a long-lived process.
+
+    Redis's pending list is the source of truth; this memory only has to survive
+    recent redelivery, so the oldest ids are evicted first.
+    """
+    keys: set[str] = set()
+    order: deque[str] = deque()
+    for index in range(DELIVERY_MEMORY + 50):
+        _remember(keys, order, f"1-{index}", DELIVERY_MEMORY)
+    assert len(keys) == DELIVERY_MEMORY
+    assert len(order) == DELIVERY_MEMORY
+    assert "1-0" not in keys, "the oldest entry is evicted first"
+    assert f"1-{DELIVERY_MEMORY + 49}" in keys

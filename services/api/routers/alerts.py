@@ -124,6 +124,13 @@ def alerts_recent(
     ``user_id`` rather than trusting the client to ask politely. ``unopened_total``
     travels with the feed so the \"N newer alerts\" badge needs no second round
     trip, and it counts unopened events for THIS user only.
+
+    The badge deliberately IGNORES the ``since`` window: ``since`` bounds what this
+    call RETURNS (a paginated history read), while the badge answers "how many of
+    my alerts have I not opened yet", which is the opened/unopened ratio Gate 2
+    measures. A client filtering the list must not read a smaller array as "fewer
+    unread alerts"; ``test_unopened_total_counts_the_account_not_the_window`` pins
+    that split.
     """
     since_value = _parse_since(since)
 

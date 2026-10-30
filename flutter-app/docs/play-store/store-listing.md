@@ -4,6 +4,8 @@
 must be reviewed by a native Arabic speaker before submission. Screenshots must be
 rendered from the current visual pass.**
 
+**Release gate (plans/p2 truth rule):** `grep -rn "PENDING COPY" flutter-app/docs` must return nothing at submission, and no copy may promise a delivery channel this build does not have: it records price events and shows them in-app, and sends no OS push notification, email or WhatsApp message.
+
 ---
 
 ## 1. App name & brand
@@ -17,7 +19,7 @@ rendered from the current visual pass.**
 > Track prices on Amazon EG, Noon & Jumia; every drop stays visible in-app.
 
 **AR (needs native review):**
-> <!-- Arabic copy pending owner review: the English line above states what this build actually does. The previous Arabic copy promised a notification channel that is not shipped; per plans/p2 the unshipped promise is removed, and replacement Arabic must come from the owner, not from machine copy. -->
+> [PENDING COPY - owner supplies the Arabic short line; the previous copy promised a notification channel this build does not deliver]
 
 ## 3. Full description
 
@@ -39,8 +41,8 @@ rendered from the current visual pass.**
 > **Yours to control.** Light or dark theme, demo mode to explore before you sign
 > up, and your data stays yours.
 
-**AR (needs native review):**
-> <!-- Arabic copy pending owner review: the English line above states what this build actually does. The previous Arabic copy promised a notification channel that is not shipped; per plans/p2 the unshipped promise is removed, and replacement Arabic must come from the owner, not from machine copy. -->
+**AR (needs native review - [PENDING COPY] for the alerting paragraph):**
+
 > إلحق يتابع المنتجات التي تهتم بها على أمازون مصر ونون وجوميا — لتتوقف عن
 > تحديث الصفحة وأنت تنتظر الخصم.
 >
@@ -59,7 +61,7 @@ rendered from the current visual pass.**
 
 | Question | Answer |
 |----------|--------|
-| Do you collect any user data? | **Yes** — phone number (account/OTP), tracked items, and price data for those items. |
+| Do you collect any user data? | **Yes** — phone number (account/OTP), tracked items, price data for those items, and price-change events recorded against the account (see `privacy-policy.md` §1). |
 | Is any data collected that could identify an individual? | **Yes** — the phone number identifies the account holder. |
 | Is any data collected from children < 13? | **No.** |
 | Is any data used for advertising? | **No.** No ad SDKs are present. |
@@ -79,15 +81,16 @@ rendered from the current visual pass.**
 1. Splash / brand
 2. Dashboard — tracked items list
 3. A tracker card showing a live price
-4. A deal / price-drop notification card
+4. A deal / price-drop alert card (shown in-app)
 5. Create-tracker flow
 6. Settings (theme + demo mode) — include one **dark-mode** and one **Arabic/RTL**
    screen to demonstrate both.
 
 ## 7. Feature highlights (Play "What's new" per release)
 
-- v1.0: Initial release — price tracking across Amazon EG, Noon & Jumia;
-  price-drop alerts; Arabic-first with RTL; light/dark theme; demo mode.
+- v1.0: Initial release — price tracking across Amazon EG, Noon & Jumia; price
+  drops recorded and shown to you in-app (no OS push, email or WhatsApp delivery
+  in this version); Arabic-first with RTL; light/dark theme; demo mode.
 
 ---
 _Submit the hosted privacy-policy URL and the data-safety answers above in the

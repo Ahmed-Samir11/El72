@@ -3,7 +3,7 @@
 **Branch:** `feat/push-notifications-and-alert-surface` (off `main`)
 **Date:** 2026-10-29
 **Status:** In implementation — MS1 backend shipped on `feat/push-notifications-and-alert-surface` (PR #49,
-HGM round 1 findings addressed) — `alert_events` + stream consumer + `GET /alerts/recent` + `POST /alerts/{id}/open`
+HGM rounds 1-2 findings addressed) — `alert_events` + stream consumer + `GET /alerts/recent` + `POST /alerts/{id}/open`
 + store-facing copy truth; MS2 (Alerts tab, app copy in both locales) blocked on owner-supplied Arabic, MS3 blocked
 on H2 + H3 (see §7 and the Implementation Record at §9).
 **Series:** 2 of 5 release-priority plans (P1 affiliate clicks → **P2** → P3 free-tracker model, P4 analytics, P5 activation/trust).
@@ -282,6 +282,24 @@ permission now") — but only **if** MS2 removes the false promise, which today 
 | INFO the startup hook could start a second consumer | a live task is never replaced, and the log says so | `main.py::_start_alert_events_consumer` |
 | INFO the dedupe index did not cover `event_type`; migration lacked a trailing newline | unique index above + plain item-time index kept for the item-history read; newline added | both SQL files, `0013_alert_events.sql` |
 
+### Round 2 — HGM review findings on PR #49 (CRITICAL + WARNING findings addressed)
+
+| Finding | Fix | Where |
+|---|---|---|
+| **CRITICAL** an `XACK` failure was reported as a successful decision: the entry stayed pending, the next pass re-read it with no backoff, and the pending pass could hot-spin while new messages starved | `process_message` returns a distinct `ack_failed` outcome, which the retry layer treats as RETRYABLE (bounded by `MAX_DELIVERY_ATTEMPTS`); an entry already decided is re-acked but never re-decided, so `stored`/`skipped` cannot double-count one stream entry; the loop only counts progress for terminal outcomes | `alert_events_consumer.py`, test `test_refusing_ack_is_bounded_and_never_double_counts` (asserts bounded reads, one row, one `stored`, one `discarded`, and that the new-messages pass IS reached) |
+| WARNING the same-day read had no upper bound, so a future-dated row suppressed today's alert while the UNIQUE index would have allowed it | `created_at >= day_start AND < day_start + 1 day` — one definition of "same day" shared with `uq_alert_events_item_type_day` | `store_event`, test `test_dedupe_only_covers_the_same_calendar_day` |
+| WARNING the category fallback read another user's tracker row | the query is scoped to the alert's owner; no owner row means no category rather than a stranger's label | `_fill_category(db, sku, event, owner_id)`, test `test_category_fallback_is_scoped_to_the_owner` |
+| WARNING every `IntegrityError` was classified as a duplicate, hiding an FK race or a future constraint | `_is_same_day_unique()` matches only `uq_alert_events_item_type_day`; anything else re-raises into the transient-failure path (left pending, counted, bounded) | `store_event`, test `test_only_the_same_day_index_may_be_called_a_duplicate` |
+| WARNING pending-review notes were HTML comments inside copy that gets submitted | notes moved out of the copy: the §2 line is a `[PENDING COPY]` placeholder, §3's header (never submitted) carries the flag, and the DRAFT banner gained the release gate `grep -rn "PENDING COPY" flutter-app/docs` → empty at submission | `store-listing.md` |
+| WARNING the consumer started by default in every process, including tests | the API test suite pins `ALERT_EVENTS_CONSUMER=false` in `conftest.py`; multi-worker behaviour (N processes = N consumers on one group, each with its own pending list, duplicates prevented by the UNIQUE index, overlap visible in REDRAWS/DISCARDED) documented in `.env.example` | `services/api/conftest.py`, `.env.example` |
+| WARNING the in-app promise (`app_en.arb` `trackerCreated`) is still false in this branch | unchanged BY CONSTRAINT — rewriting it needs the owner's Arabic and `l10n_coverage_test` forbids landing English alone; promoted from "nice-to-have" to an explicit RELEASE GATE: no build ships to users with this string live | §7 risks (below) |
+| INFO a malformed `ALERTS_CONSUMER_*` value raised at import and took the API down | `_env_int()` falls back to the default and logs the typo | consumer module, test `test_env_int_falls_back_on_a_typo` |
+| INFO `unopened_total` ignored `since` without saying so | documented in the endpoint docstring and pinned by a test: the window filters the list, the badge counts the account (that split is the Gate-2 ratio) | `routers/alerts.py`, `test_unopened_total_counts_the_account_not_the_window` |
+| INFO a fractional payload `user_id` ("1.9") could agree with id 1 | integer-valued check before comparison | `store_event`, test `test_payload_user_id_must_be_an_integer_to_agree` |
+| INFO the discarded-id set grew without bound | bounded FIFO memory (`DELIVERY_MEMORY`) for both the decided and given-up sets | `_remember`, test `test_remembered_ids_are_bounded` |
+| INFO `_event_time` relied on the interpreter for a trailing `Z` | normalized explicitly, the same way the router normalizes `since` | `_event_time` |
+| Tests the review said were missing | startup guards (disabled → no task and the log names the reason; second startup never replaces a live consumer) land in `test_alert_events_startup.py`, alongside the six consumer tests above | services/api |
+
 Deferred here, not blocked: MS2 needs the owner's Arabic values for every new key (`navAlerts`, the
 alert-card lines, the channel picker, and a truthful rewrite of `trackerCreated`); MS3 needs H2 (Firebase
 project, `google-services.json`, service-account JSON) and H3 (is OS push in v1.0?). If H3 answers "no", MS2's
@@ -289,3 +307,8 @@ copy fix stops being optional. The **store-facing** promise was already correcte
 §2/§3 and `privacy-policy.md` now describe an in-app alert history and state that no OS push/email/WhatsApp
 channel is used); the **in-app** promise (`app_en.arb` `trackerCreated`, which claims a WhatsApp notification)
 still needs the owner's Arabic to be rewritten, which is why it lands with MS2 rather than here.
+
+**Release gate, stated once and loudly (round-2 review):** the in-app string is a
+false promise until MS2, so no build derived from this branch may be published to
+users before MS2 lands. The store-facing side is already truthful; the app-facing
+side is the one remaining copy debt, and it is owner-blocked, not engineer-blocked.

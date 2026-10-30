@@ -24,7 +24,10 @@ explains what data we collect, how it is used, and your choices.
   from the stores you track.
 - **Price alerts.** When a price you track changes (a drop, a return to stock,
   crossing your target), we record that event against your account, so the app
-  can show it to you later even if the app was closed when it happened.
+  can show it to you later even if the app was closed when it happened. When you
+  open one of those alerts in the app, we record that you have seen it, so unseen
+  alerts can be counted. This stays tied to your account: we do not track who
+  else might want to know.
 - **Device-local settings.** Your theme preference (light/dark), language
   (Arabic/English), and demo-mode setting are stored **only on your device** and
   are not sent to our servers.
@@ -57,12 +60,14 @@ explains what data we collect, how it is used, and your choices.
 ## 4. How long we keep your data
 
 We keep your account and tracked items while your account is active. When you
-delete your account, we delete the associated personal data.
+delete your account, we delete the associated personal data — including the price
+events and alert history recorded for that account, which are removed with it.
 
 ## 5. Your choices
 
 - **Access.** You can view your tracked items and account details in the app.
-- **Deletion.** You can delete your account; this removes your personal data.
+- **Deletion.** You can delete your account; this removes your personal data,
+  tracked items, and the price events and alert history tied to the account.
 - **Contact.** For privacy questions or a data-deletion request, contact:
   **[SUPPORT EMAIL / ADDRESS — fill in before publishing]**.
 

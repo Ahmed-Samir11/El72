@@ -34,7 +34,8 @@ import json
 import logging
 import os
 import socket
-from datetime import datetime, timezone
+from collections import deque
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any, Callable, Mapping
 
@@ -69,10 +70,34 @@ CONSUMER_NAME = (
     or f"alerts_api_{socket.gethostname()}-{os.getpid()}"
 )
 
+
 # Batch size / block time are ops-tunable (same pattern as the affiliate
-# redirect rate cap: env overrides, built-in default when unset).
-READ_COUNT = int(os.getenv("ALERTS_CONSUMER_READ_COUNT") or 10)
-READ_BLOCK_MS = int(os.getenv("ALERTS_CONSUMER_BLOCK_MS") or 5000)
+# redirect rate cap: env overrides, built-in default when unset). A malformed
+# value must not be a boot failure: the default is used and the mistake is
+# logged, so a typo in .env cannot take the alert feed down silently or loudly.
+def _env_int(name: str, default: int, *, minimum: int) -> int:
+    raw = os.getenv(name)
+    if raw is None or not str(raw).strip():
+        return default
+    try:
+        value = int(str(raw).strip())
+    except ValueError:
+        logger.warning(
+            "Invalid %s; using default", name, extra={"value": raw, "default": default}
+        )
+        return default
+    if value < minimum:
+        logger.warning(
+            "%s below minimum; using default",
+            name,
+            extra={"value": raw, "default": default},
+        )
+        return default
+    return value
+
+
+READ_COUNT = _env_int("ALERTS_CONSUMER_READ_COUNT", 10, minimum=1)
+READ_BLOCK_MS = _env_int("ALERTS_CONSUMER_BLOCK_MS", 5000, minimum=100)
 READ_BACKOFF_SECONDS = 5.0
 
 # The four event types the alert emitter produces (services/scraper/alert_emitter.py
@@ -103,6 +128,21 @@ OUTCOME_OWNER_MISMATCH = "owner_mismatch"
 OUTCOME_INVALID = "invalid"
 OUTCOME_UNSUPPORTED = "unsupported_event_type"
 OUTCOME_FAILED = "failed"
+# Not a decision about the EVENT: the decision was made, but XACK did not take.
+# It must count as retryable — an entry that stays pending while the consumer
+# reports success would be re-read without backoff, hot-spinning the pending
+# pass and starving new messages.
+OUTCOME_ACK_FAILED = "ack_failed"
+# Poison pills remembered so a failed XACK cannot make the same entry loop
+# forever; bounded because a long-lived process must not accumulate ids.
+DISCARDED_MEMORY = 1024
+# Alias used by the retry bookkeeping (both memories are bounded the same way).
+DELIVERY_MEMORY = DISCARDED_MEMORY
+# The name of the same-day UNIQUE index created by infra/sql/schema/postgres.sql
+# and migration 0013 (pinned there by test_alert_events_schema_sync). Kept here
+# as a string only, so an unrelated IntegrityError can be told apart from this
+# dedupe violation (see _is_same_day_unique).
+SAME_DAY_UNIQUE_INDEX = "uq_alert_events_item_type_day"
 
 # Cap for a stored url: the Alerts card later taps it through merchant_link
 # -> /affiliate/redirect, whose real guard is the merchant host allowlist
@@ -147,7 +187,11 @@ def _event_time(event: dict[str, Any]) -> datetime:
     raw = _decode(event.get("timestamp"))
     if raw:
         try:
-            parsed = datetime.fromisoformat(raw)
+            # "Z" is what the emitter writes; normalize rather than rely on the
+            # interpreter's ISO support (same normalization the API router does).
+            parsed = datetime.fromisoformat(
+                raw[:-1] + "+00:00" if raw.endswith("Z") else raw
+            )
         except ValueError:
             parsed = None
         if parsed is not None:
@@ -332,14 +376,19 @@ def _resolve_owner(db: Session, tracked_item_id: int) -> int | None:
     ).scalar_one_or_none()
 
 
-def _fill_category(db: Session, sku: str | None, event: dict[str, Any]) -> str | None:
+def _fill_category(
+    db: Session, sku: str | None, event: dict[str, Any], owner_id: int
+) -> str | None:
     """Category for the event: the emitter's own value if it sent a safe one,
-    otherwise the server's product context from the user's tracker row.
+    otherwise the server's product context from the OWNER's tracker row.
 
     Reuses affiliate.normalize_category — the same clamp the affiliate click
     uses — so one metric dimension cannot be polluted by markup or a
     scheme-shaped token, and the stored value stays length-bounded even when
-    older rows predate today's rules.
+    older rows predate today's rules. The lookup is scoped to the alert's
+    owner: another user's category for the same SKU is not this user's product
+    context, and guessing it would make one user's card depend on another's
+    data. No owner-scoped row means no category, not a stranger's.
     """
     claimed = normalize_category(_decode(_event_metadata(event).get("category")))
     if claimed:
@@ -349,7 +398,11 @@ def _fill_category(db: Session, sku: str | None, event: dict[str, Any]) -> str |
     return normalize_category(
         db.execute(
             select(Alert.category)
-            .where(Alert.sku == sku, Alert.category.isnot(None))
+            .where(
+                Alert.sku == sku,
+                Alert.user_id == owner_id,
+                Alert.category.isnot(None),
+            )
             .order_by(Alert.id)
             .limit(1)
         )
@@ -393,11 +446,21 @@ def store_event(
             return OUTCOME_UNKNOWN_ITEM
 
         claimed_user = _clean_float(event.get("user_id"))
-        if claimed_user is not None and int(claimed_user) != int(owner_id):
+        if claimed_user is not None and (
+            claimed_user != int(claimed_user) or int(claimed_user) != int(owner_id)
+        ):
+            # Fractional or disagreeing: the payload is not trusted either way,
+            # but a value that cannot be an id is not treated as agreement with
+            # one ("1.9" must never match user 1).
             return OUTCOME_OWNER_MISMATCH
 
         # Same-day rule, floored on the day the EVENT happened (see _event_time),
-        # in the naive-UTC kind the column stores.
+        # in the naive-UTC kind the column stores. The upper bound is what
+        # keeps this read aligned with uq_alert_events_item_type_day: an open-
+        # ended >= would also match a row dated in a LATER day (a clock-skewed
+        # or out-of-order stamp) and suppress today's alert, while the unique
+        # index would happily allow that second row — two definitions of "same
+        # day" is exactly the drift this test suite exists to prevent.
         day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         exists = db.execute(
             select(AlertEvent.id)
@@ -405,6 +468,7 @@ def store_event(
                 AlertEvent.tracked_item_id == tracked_item_id,
                 AlertEvent.event_type == event_type,
                 AlertEvent.created_at >= day_start,
+                AlertEvent.created_at < day_start + timedelta(days=1),
             )
             .limit(1)
         ).first()
@@ -426,7 +490,7 @@ def store_event(
                 tracked_item_id=tracked_item_id,
                 sku=sku,
                 store_id=_clean_str(event.get("store_id"), 32),
-                category=_fill_category(db, sku, event),
+                category=_fill_category(db, sku, event, owner_id),
                 url=_clean_url(event.get("url")),
                 event_type=event_type,
                 price_egp=(
@@ -450,15 +514,35 @@ def store_event(
         )
         try:
             db.commit()
-        except IntegrityError:
-            # The unique index on (tracked_item_id, event_type, day) is the
-            # backstop for the read-then-write window above: two consumers
-            # (or two replicas) that both see "no row today" cannot both
-            # create one. A violation means the same fact was written first,
-            # so this is a duplicate, not a failure.
+        except IntegrityError as exc:
+            if not _is_same_day_unique(exc):
+                # Not our dedupe index: a user FK racing an account deletion,
+                # or a constraint a later migration adds. Calling every
+                # integrity error a "duplicate" would ack the message and make
+                # the breakage invisible, so this re-raises into the caller's
+                # transient-failure path (left pending, counted, bounded retries).
+                raise
             db.rollback()
             return OUTCOME_DUPLICATE
         return OUTCOME_STORED
+
+
+def _is_same_day_unique(exc: IntegrityError) -> bool:
+    """True only when the violated constraint is alert_events' same-day index.
+
+    The name is read from the driver when it exposes it (psycopg2 diagnostics)
+    and from the message otherwise — SQLite names it
+    ``uq_alert_events_item_type_day`` in the IntegrityError text, the same name
+    the canonical schema and migration 0013 create.
+    """
+    orig = getattr(exc, "orig", None)
+    diag = getattr(orig, "diag", None)
+    haystacks = (
+        getattr(diag, "constraint", None),
+        str(orig or ""),
+        str(exc),
+    )
+    return any(text and SAME_DAY_UNIQUE_INDEX in text for text in haystacks if text)
 
 
 async def _store_event_off_loop(
@@ -523,7 +607,10 @@ async def process_message(
         # ANY ack failure (connection gone, unknown group, timeout) is logged
         # and counted, never propagated: an exception here would escape the
         # consumer loop and leave the task dead while the gauge still reads 1.
-        # The entry stays pending, so the next pass re-claims and re-decides it.
+        # The decision is already durable, but the entry is STILL pending, so
+        # the outcome must be retryable: reporting success here would let the
+        # pending pass re-read the same entry with no backoff (hot spin) while
+        # new messages starve.
         ALERT_EVENTS_ACK_ERRORS_TOTAL.inc()
         logger.error(
             "XACK failed for an alert event message",
@@ -534,6 +621,7 @@ async def process_message(
                 "outcome": outcome,
             },
         )
+        return OUTCOME_ACK_FAILED
     return outcome
 
 
@@ -573,6 +661,19 @@ async def _read_pass(
     return _entries_of(messages)
 
 
+def _remember(keys: set[str], order: deque[str], key: str, limit: int) -> None:
+    """Remember a message id with a bound, so a long-lived consumer cannot
+    accumulate ids forever. Redis's pending list is the source of truth; this
+    in-process memory only has to survive recent redelivery (FIFO eviction).
+    """
+    if key in keys:
+        return
+    keys.add(key)
+    order.append(key)
+    while len(keys) > limit:
+        keys.discard(order.popleft())
+
+
 async def _process_with_retry(
     redis: RedisStreamClient,
     stream: str,
@@ -581,7 +682,10 @@ async def _process_with_retry(
     fields: Any,
     session_factory: Callable[[], Session],
     attempts: dict[str, int],
-    discarded: set[str],
+    given_up: set[str],
+    given_up_order: deque[str],
+    decided: set[str],
+    decided_order: deque[str],
 ) -> str:
     """Decide one message, bounded so a failure cannot spin the consumer.
 
@@ -591,12 +695,15 @@ async def _process_with_retry(
     poison pill is worse than a bounded, loud loss, and the counter means
     "we measured nothing" can never silently mean "we gave up".
 
-    An entry already decided to be discarded is never reprocessed: if the
-    ack itself kept failing, the pending pass would hand the same entry back
-    forever, so it is acked again (best effort) and skipped.
+    ACK_FAILED is also retryable: the event already has a verdict, but the entry
+    is STILL in the group's pending list. Treating it as success would have the
+    pending pass hand the same entry back with no backoff — a hot spin that
+    starves new messages. Such an entry is re-acked and never re-decided (re-
+    deciding would double-count stored/skipped), and after MAX_DELIVERY_ATTEMPTS
+    it joins ``given_up`` so the loop moves on.
     """
     key = _decode(message_id) or "?"
-    if key in discarded:
+    if key in given_up:
         try:
             await redis.xack(stream, group, message_id)
         except Exception:  # noqa: BLE001
@@ -609,18 +716,30 @@ async def _process_with_retry(
     if attempt > 1:
         ALERT_EVENTS_REDRAWS_TOTAL.inc()
 
-    try:
-        outcome = await process_message(
-            redis, stream, group, message_id, fields, session_factory
-        )
-    except Exception:  # noqa: BLE001 - the loop must never die on one message
-        ALERT_EVENTS_FAILED_TOTAL.inc()
-        logger.exception(
-            "Alert event processing raised unexpectedly", extra={"message_id": key}
-        )
-        outcome = OUTCOME_FAILED
+    if key in decided:
+        # Decided earlier, ack never took: retry the ack alone.
+        try:
+            await redis.xack(stream, group, message_id)
+        except Exception:  # noqa: BLE001
+            ALERT_EVENTS_ACK_ERRORS_TOTAL.inc()
+        outcome = OUTCOME_ACK_FAILED
+    else:
+        try:
+            outcome = await process_message(
+                redis, stream, group, message_id, fields, session_factory
+            )
+        except Exception:  # noqa: BLE001 - the loop must never die on one message
+            ALERT_EVENTS_FAILED_TOTAL.inc()
+            logger.exception(
+                "Alert event processing raised unexpectedly",
+                extra={"message_id": key},
+            )
+            outcome = OUTCOME_FAILED
+        if outcome != OUTCOME_FAILED:
+            # The EVENT now has a verdict; only the ack may still be missing.
+            _remember(decided, decided_order, key, DELIVERY_MEMORY)
 
-    if outcome != OUTCOME_FAILED:
+    if outcome not in (OUTCOME_FAILED, OUTCOME_ACK_FAILED):
         attempts.pop(key, None)
         return outcome
 
@@ -635,7 +754,7 @@ async def _process_with_retry(
         ALERT_EVENTS_DISCARDED_TOTAL.inc()
         # Remembered, not forgotten: the entry must never be reprocessed or
         # re-counted just because the ack that should have removed it failed.
-        discarded.add(key)
+        _remember(given_up, given_up_order, key, DELIVERY_MEMORY)
         attempts.pop(key, None)
     return outcome
 
@@ -664,7 +783,10 @@ async def consume_loop(
 
     redis: RedisStreamClient | None = None
     attempts: dict[str, int] = {}
-    discarded: set[str] = set()
+    given_up: set[str] = set()
+    given_up_order: deque[str] = deque()
+    decided: set[str] = set()
+    decided_order: deque[str] = deque()
     try:
         while True:
             progressed = False
@@ -723,9 +845,12 @@ async def consume_loop(
                     fields,
                     session_factory,
                     attempts,
-                    discarded,
+                    given_up,
+                    given_up_order,
+                    decided,
+                    decided_order,
                 )
-                if outcome != OUTCOME_FAILED:
+                if outcome not in (OUTCOME_FAILED, OUTCOME_ACK_FAILED):
                     progressed = True
 
             if entries and not progressed:

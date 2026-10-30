@@ -266,3 +266,32 @@ def test_since_normalizes_an_offset_to_utc(factory):
     assert len(recent("2026-10-29T10:00:00+02:00")) == 1
     assert len(recent("2026-10-29T12:00:00+02:00")) == 0
     assert len(recent("2026-10-29T06:00:00Z")) == 1
+
+
+def test_unopened_total_counts_the_account_not_the_window(factory):
+    """The badge is per-account; the list is what the window filters.
+
+    ``since`` bounds what the call RETURNS. ``unopened_total`` answers "how many
+    of my alerts have I not opened yet" — the opened/unopened ratio Gate 2
+    measures — so a client that paginates its history must not read a shorter
+    array as a smaller unread count. Pinning this here is cheaper than a
+    later "the badge is wrong" bug report about the split.
+    """
+    caller = _add_user(factory, "+201000000041")
+    _add_event(factory, caller, datetime(2026, 10, 20, 9, 0, 0))
+    _add_event(factory, caller, datetime(2026, 10, 29, 9, 0, 0))
+
+    body = (
+        _client(factory, caller)
+        .get("/alerts/recent", params={"since": "2026-10-25T00:00:00"})
+        .json()
+    )
+
+    assert len(body["alerts"]) == 1, "the window filters the list"
+    assert body["unopened_total"] == 2, "the badge counts the whole account"
+
+    # Opening the visible one moves the badge, which is the ratio Gate 2 reads.
+    event_id = body["alerts"][0]["id"]
+    _client(factory, caller).post(f"/alerts/{event_id}/open")
+    body = _client(factory, caller).get("/alerts/recent").json()
+    assert body["unopened_total"] == 1
