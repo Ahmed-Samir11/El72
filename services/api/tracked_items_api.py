@@ -14,7 +14,6 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from services.api.credits import deduct
 from services.api.dependencies import SessionLocal, get_current_user, get_db
 from services.api.models import User
 from services.api.price_fetcher import (
@@ -33,6 +32,7 @@ from services.api.tracked_items_models import (
     TrackedItem,
     TrackedItemStore,
 )
+from services.api.usage_limits import enforce_tracker_creation
 from services.common.url_policy import fetch_block_reason
 
 logger = logging.getLogger(__name__)
@@ -229,6 +229,11 @@ async def create_tracked_item(
     }
     ```
     """
+    # Enforced before anything is written, so a refusal — 409 at the fair-use
+    # cap, 429 when creations come too fast, 402 under the legacy credit
+    # ledger (CREDITS_ENFORCEMENT=on) — leaves no partial row behind.
+    enforce_tracker_creation(db, current_user)
+
     # Create tracked item
     db_item = TrackedItem(
         user_id=current_user.id,
@@ -239,8 +244,6 @@ async def create_tracked_item(
     )
     db.add(db_item)
     db.flush()
-
-    deduct(db, current_user, amount=1, reason="tracker_created")
 
     # Add store mappings
     for store in item.stores:
@@ -953,6 +956,11 @@ async def create_tracked_item_from_url(
             detail="This product is already being tracked",
         )
 
+    # Fair-use cap and creation rate window (plans/p3), or the legacy 402
+    # under CREDITS_ENFORCEMENT=on. Ahead of the insert and of the fetch,
+    # so a refusal writes nothing and visits nothing.
+    enforce_tracker_creation(db, current_user)
+
     db_item = TrackedItem(
         user_id=current_user.id,
         canonical_product_id=canonical_id,
@@ -962,8 +970,6 @@ async def create_tracked_item_from_url(
     )
     db.add(db_item)
     db.flush()
-
-    deduct(db, current_user, amount=1, reason="tracker_created")
 
     db_store = TrackedItemStore(
         tracked_item_id=db_item.id,
