@@ -259,14 +259,9 @@ land after PR A merges.
 
 ## 9. Implementation Record
 
-### MS1 — PR A (backend contract), this branch
+### MS1 — PR A (backend contract), this branch → **PR #50**
 
-Landed as three commits off `main` (`eb317bd`):
-`usage_limits.py` + creation-route enforcement → the mount gate in `main.py` → the
-test matrix. `pytest services -q --ignore=services/chatbot` is green (the chatbot
-collection error — `from arabic_nlp import …` — and the `tests/test_mobile_e2e.py`
-live-server failures are pre-existing on `main`, not introduced here; CI's gate is
-`pytest services -q`).
+Five commits off `main` (`eb317bd`): `usage_limits.py` + creation-route enforcement → the mount gate in `main.py` → the test matrix → the env/ops declarations → the supersession record and the live E2E update. `pytest services/api -q` is **474 passed**; `pytest services tests -q --ignore=services/chatbot` is **846 passed** with only pre-existing breakage: the chatbot collection error (`from arabic_nlp import …`) and `tests/test_mobile_e2e.py`, which needs a live stack (`docker compose up -d`). Neither is introduced here; CI's gate is `pytest services -q`.
 
 The mode matrix, as pinned by tests:
 
