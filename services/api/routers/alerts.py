@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -41,8 +42,29 @@ router = APIRouter(tags=["alerts"])
 # redirect: dynamic limit string so tests can dial it down instead of firing
 # hundreds of requests).
 limiter = Limiter(key_func=get_remote_address)
-ALERTS_READ_RATE_LIMIT = os.getenv("ALERTS_READ_RATE_LIMIT") or "120/minute"
-ALERTS_OPEN_RATE_LIMIT = os.getenv("ALERTS_OPEN_RATE_LIMIT") or "120/minute"
+
+
+def _rate_limit(raw: str | None, default: str) -> str:
+    """Validate a slowapi rate string, or keep the built-in default.
+
+    An ops typo like "200 per minute" would otherwise be handed to slowapi and
+    only surface as a runtime error on the first request that hits the limit,
+    which reads like a server bug rather than a misconfiguration.
+    """
+    value = (raw or "").strip()
+    if not value:
+        return default
+    if re.fullmatch(r"\d+(\.\d+)?\s*/\s*(second|minute|hour|day)", value):
+        return value
+    logger.warning(
+        "Invalid alert rate-limit override; using default",
+        extra={"value": raw, "default": default},
+    )
+    return default
+
+
+ALERTS_READ_RATE_LIMIT = _rate_limit(os.getenv("ALERTS_READ_RATE_LIMIT"), "120/minute")
+ALERTS_OPEN_RATE_LIMIT = _rate_limit(os.getenv("ALERTS_OPEN_RATE_LIMIT"), "120/minute")
 
 # Bounded by the server, not the client: the Alerts tab is a feed, and an
 # unbounded ``limit`` would turn a per-user read into a table scan.
@@ -217,10 +239,10 @@ def open_alert(
             status_code=status.HTTP_404_NOT_FOUND, detail="Alert event not found"
         )
 
-    # Read ONCE what the row carries, before any write: the response is built
-    # from these values rather than refreshed after the commit.
+    # Read ONCE what the row carries, before any write: the first-open response
+    # is built from the value this call writes rather than refreshed after the
+    # commit. (The already-open path re-reads, see the comment below.)
     row_id = str(row.id)
-    previously_opened = row.opened_at
     opened_at_value = _utc_naive_now()
 
     # Atomic mark-as-seen: the UPDATE carries "opened_at IS NULL", so two
@@ -241,13 +263,20 @@ def open_alert(
         # existing between this read and this write. The two are NOT the same
         # answer, and neither is allowed to re-read the ORM object: after a
         # commit it can be expired or gone, which is how a user-visible tap
-        # used to reach a 500. Existence is re-checked in the same transaction.
-        still_there = db.execute(
-            select(AlertEvent.id)
-            .where(AlertEvent.id == ident, AlertEvent.user_id == current_user.id)
+        # used to reach a 500. One fresh read in the SAME transaction settles
+        # both: a present row now carries the FIRST opened_at (possibly written
+        # by a concurrent tap whose value this request's earlier SELECT predates
+        # — answering with that stale value used to report already_open with a
+        # null opened_at), and a missing row answers 404.
+        opened_now = db.execute(
+            select(AlertEvent.opened_at)
+            .where(
+                AlertEvent.id == ident,
+                AlertEvent.user_id == current_user.id,
+            )
             .limit(1)
         ).scalar_one_or_none()
-        if still_there is None:
+        if opened_now is None:
             db.rollback()
             ALERT_EVENTS_EVENT_DELETED_TOTAL.inc()
             raise HTTPException(
@@ -261,7 +290,7 @@ def open_alert(
         )
         return {
             "id": row_id,
-            "opened_at": _to_iso(previously_opened),
+            "opened_at": _to_iso(opened_now),
             "already_open": True,
         }
 

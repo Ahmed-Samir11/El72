@@ -12,9 +12,12 @@ Business contract (report §26 Gate 2 "do users return?", §23 ``price_change``
 deduped history, so "an alert the user actually saw" can later be counted
 against "an alert that was only written".
 
-Service isolation (AGENTS): this consumer reads Redis Streams only — never
-another service's code or database — and writes only ``services/api``'s own
-``alert_events`` table.
+Service isolation (AGENTS): the consumer's INPUT is Redis Streams only, and it
+writes only ``services/api``'s own ``alert_events`` table. It DOES read one
+shared table to decide WHOSE event this is: ``tracked_items`` ownership, modelled
+API-side in ``tracked_items_models.py``, because trusting the payload's own
+``user_id`` would let one user's market data land in another user's feed. Reads
+never write, and no other service's code is imported.
 
 Reliability rules this file exists to enforce:
 * ``ensure_group`` runs before the first read, and is re-asserted after any
@@ -58,7 +61,7 @@ from services.api.monitoring.metrics import (
     ALERT_EVENTS_SKIPPED_TOTAL,
     ALERT_EVENTS_STORED_TOTAL,
 )
-from services.api.tracked_items_models import TrackedItem
+from services.api.tracked_items_models import TrackedItem, TrackedItemStore
 from services.common.currency import EGP_TO_USD, EXCHANGE_RATES
 from services.common.redis_client import RedisStreamClient
 
@@ -107,6 +110,16 @@ READ_BACKOFF_SECONDS = 5.0
 # to '>' (they are not new), invisible to this consumer's '0' read (they belong
 # to a dead name). Set it below the longest legitimate write outage you expect.
 CLAIM_MIN_IDLE_MS = _env_int("ALERTS_CLAIM_IDLE_MS", 900_000, minimum=1000)
+
+# How far the payload's own stamp may be trusted. An unbounded parse means a
+# hostile or buggy emitter can date a row in the FUTURE (it sits on top of the
+# feed and claims a future day's dedupe slot) or in the deep PAST (it rewrites
+# history). Outside the window the clock falls back to processing time, which
+# is the only clock here that cannot be argued with.
+EVENT_FUTURE_TOLERANCE_SECONDS = _env_int(
+    "ALERTS_EVENT_FUTURE_TOLERANCE_SECONDS", 300, minimum=0
+)
+EVENT_MAX_AGE_DAYS = _env_int("ALERTS_EVENT_MAX_AGE_DAYS", 7, minimum=1)
 
 # The four event types the alert emitter produces (services/scraper/alert_emitter.py
 # AlertType) and the only values the canonical CHECK allows. Anything else —
@@ -217,8 +230,37 @@ def _event_time(event: dict[str, Any]) -> datetime:
         except ValueError:
             parsed = None
         if parsed is not None:
-            return _as_naive_utc(parsed)
+            return _bounded_event_clock(_as_naive_utc(parsed))
     return _utc_now()
+
+
+def _bounded_event_clock(parsed: datetime) -> datetime:
+    """The payload's clock is trusted only inside a defensible window.
+
+    An unbounded parse lets a hostile or buggy emitter date rows in the FUTURE
+    (they sit on top of the feed and take a future day's dedupe slot) or in the
+    deep PAST (history rewritten). Outside the window the value is not corrected
+    to something invented: it falls back to processing time, the only clock in
+    this process that cannot be argued with, and the fallback is logged.
+    """
+    now = _utc_now()
+    if parsed > now + timedelta(seconds=EVENT_FUTURE_TOLERANCE_SECONDS):
+        logger.warning(
+            "Alert event stamp is in the future; using processing time",
+            extra={
+                "stamp": str(parsed),
+                "future_tolerance_seconds": EVENT_FUTURE_TOLERANCE_SECONDS,
+            },
+        )
+        return now
+    if parsed < now - timedelta(days=EVENT_MAX_AGE_DAYS):
+        logger.warning(
+            "Alert event stamp is older than the accepted window; "
+            "using processing time",
+            extra={"stamp": str(parsed), "max_age_days": EVENT_MAX_AGE_DAYS},
+        )
+        return now
+    return parsed
 
 
 def _event_metadata(event: dict[str, Any]) -> dict[str, Any]:
@@ -337,16 +379,32 @@ def _to_egp(local: float | None, usd: float | None, currency: Any) -> float | No
 
 
 def _clean_url(value: Any) -> str | None:
-    """Keep a plausible http/https product url out of the tap target.
+    """Shape-check a product url: scheme, length, no markup, no oversized blob.
 
-    Not the security boundary — /affiliate/redirect re-checks the merchant host
-    allowlist at tap time — just a guard against storing markup or a 10 KB blob
-    in a column the client renders as a link.
+    Not a security decision by itself — see _matches_tracked_url, which is what
+    decides whether the string is stored at all.
     """
     url = _clean_str(value, MAX_URL_LENGTH)
     if url is None:
         return None
     return url if url.startswith(("http://", "https://")) else None
+
+
+def _matches_tracked_url(value: Any, allowed_urls: set[str]) -> str | None:
+    """Store a url only when it IS one the scraper recorded for THIS item.
+
+    GET /alerts/recent hands this field to the client, and the payload author is
+    the scraper pipeline: a hostile or buggy upstream could otherwise plant an
+    arbitrary link in a user's alert card. tracked_item_stores.store_url is the
+    server-side record of what the user actually tracks, so the payload's url is
+    accepted only as an exact match there; anything else is dropped, and the
+    event still lands. The tap path remains the security boundary either way
+    (/affiliate/redirect re-checks the merchant host at click time).
+    """
+    url = _clean_url(value)
+    if url is None:
+        return None
+    return url if url in allowed_urls else None
 
 
 def _usd_to_egp(value: float | None) -> float | None:
@@ -405,6 +463,25 @@ def _resolve_owner(db: Session, tracked_item_id: int) -> int | None:
     return db.execute(
         select(TrackedItem.user_id).where(TrackedItem.id == tracked_item_id)
     ).scalar_one_or_none()
+
+
+def _tracked_urls(db: Session, tracked_item_id: int) -> set[str]:
+    """The urls the scraper recorded for this tracked item.
+
+    Read through idx_tracked_item_stores_tracked_item_id, so the allowlist check
+    in _matches_tracked_url costs one indexed read, not a scan. One tracked item
+    legitimately has one row per store it maps, so the set is small by construction
+    (the cap is a guard against a corrupted mapping table, not a product limit).
+    """
+    return set(
+        db.execute(
+            select(TrackedItemStore.store_url)
+            .where(TrackedItemStore.tracked_item_id == tracked_item_id)
+            .limit(16)
+        )
+        .scalars()
+        .all()
+    )
 
 
 def _fill_category(
@@ -522,7 +599,9 @@ def store_event(
                 sku=sku,
                 store_id=_clean_str(event.get("store_id"), 32),
                 category=_fill_category(db, sku, event, owner_id),
-                url=_clean_url(event.get("url")),
+                url=_matches_tracked_url(
+                    event.get("url"), _tracked_urls(db, tracked_item_id)
+                ),
                 event_type=event_type,
                 price_egp=(
                     _bounded_decimal(price_egp, max_digits=12)

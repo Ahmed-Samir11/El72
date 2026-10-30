@@ -199,6 +199,15 @@ def test_alert_events_indexes_and_trigger_are_declared_everywhere():
         "idx_alert_events_user_opened",
     }
     expected_unique = {"uq_alert_events_item_type_day"}
+    # PostgreSQL-only declarations: the UNIQUE index uses an expression on
+    # created_at::date, and idx_alert_events_user_unopened is PARTIAL. Neither is
+    # declared on the ORM table (SQLite, which backs the tests, cannot carry
+    # them), so they are pinned here instead: a schema change that drops one
+    # fails loudly rather than degrading the badge query in production only.
+    pg_only_indexes = {
+        "uq_alert_events_item_type_day",
+        "idx_alert_events_user_unopened",
+    }
     for path in (SCHEMA_SQL, MIGRATION_SQL):
         text = path.read_text(encoding="utf-8")
         found = set(re.findall(r"CREATE (?:UNIQUE )?INDEX IF NOT EXISTS (\w+)", text))
@@ -206,16 +215,16 @@ def test_alert_events_indexes_and_trigger_are_declared_everywhere():
             expected_indexes <= found
         ), f"{path.name} misses {expected_indexes - found}"
         assert expected_unique <= found, f"{path.name} misses the same-day UNIQUE index"
+        assert pg_only_indexes <= found, f"{path.name} misses {pg_only_indexes - found}"
         assert (
             "update_alert_events_updated_at_column" in text
         ), f"{path.name} must attach a UTC-pinned updated_at trigger"
 
     orm_indexes = {index.name for index in AlertEvent.__table__.indexes}
     assert expected_indexes <= orm_indexes, "ORM is missing a canonical index"
-    # The UNIQUE index is PostgreSQL-only: an expression on created_at::date
-    # is not portable to the SQLite test engine, whose dedupe path is the
-    # consumer's own read-then-write check (asserted in the consumer tests).
-    assert "uq_alert_events_item_type_day" not in orm_indexes
+    # The PostgreSQL-only set stays out of the ORM by design (see the comment
+    # above), so its absence here is asserted rather than assumed.
+    assert not (pg_only_indexes & orm_indexes), "PG-only index leaked into the ORM"
 
 
 def test_bootstrap_applies_the_alert_events_migration():

@@ -3,7 +3,7 @@
 **Branch:** `feat/push-notifications-and-alert-surface` (off `main`)
 **Date:** 2026-10-29
 **Status:** In implementation — MS1 backend shipped on `feat/push-notifications-and-alert-surface` (PR #49,
-HGM rounds 1-3 findings addressed) — `alert_events` + stream consumer + `GET /alerts/recent` + `POST /alerts/{id}/open`
+HGM rounds 1-4 findings addressed) — `alert_events` + stream consumer + `GET /alerts/recent` + `POST /alerts/{id}/open`
 + store-facing copy truth; MS2 (Alerts tab, app copy in both locales) blocked on owner-supplied Arabic, MS3 blocked
 on H2 + H3 (see §7 and the Implementation Record at §9).
 **Series:** 2 of 5 release-priority plans (P1 affiliate clicks → **P2** → P3 free-tracker model, P4 analytics, P5 activation/trust).
@@ -313,6 +313,20 @@ permission now") — but only **if** MS2 removes the false promise, which today 
 | WARNING a `[PENDING COPY]` marker sits in submitted copy, which conflicts with the release gate | the gate is now stated in the document itself: `grep -rn "PENDING COPY" flutter-app/docs` must come back empty at submission, and the marker's presence is the reason **this branch is not publishable before MS2** | `store-listing.md` header + §2/§3 |
 | WARNING the in-app false promise stays live until MS2 | unchanged BY CONSTRAINT (owner-supplied Arabic, `l10n_coverage_test`); stated as a release gate rather than a TODO | §7 risks |
 | Not done, and why | a migration apply against a live Postgres is not a unit-test concern: `scripts/audit-db-and-bootstrap.sh` applies the migration chain on deploy; the structural guard covers the class of artifact this CRITICAL belonged to. The in-app string awaits MS2 (owner copy) |
+
+### Round 4 — HGM review findings on PR #49 (no CRITICAL; WARNINGs closed, one of my own fixes corrected)
+
+| Finding | Fix | Where |
+|---|---|---|
+| WARNING the payload's timestamp was parsed without bounds, so a hostile or buggy emitter could date rows in the future (they sit on top of the feed and take a future day's dedupe slot) or in the deep past | `_bounded_event_clock()`: outside `ALERTS_EVENT_FUTURE_TOLERANCE_SECONDS` / `ALERTS_EVENT_MAX_AGE_DAYS` the value falls back to processing time — the only clock in this process that cannot be argued with — and the fallback is logged | consumer, test `test_the_payload_clock_is_trusted_only_inside_its_window` |
+| WARNING `GET /alerts/recent` returned a raw URL taken from the payload | the URL is stored only when it equals a `tracked_item_stores.store_url` recorded for that tracked item (one read through the existing `idx_tracked_item_stores_tracked_item_id`); anything else is dropped and the event still lands. The tap path remains the boundary either way | `_matches_tracked_url`, test `test_a_payload_url_that_is_not_the_tracked_url_is_dropped` |
+| WARNING a concurrent open could answer `already_open: true` with `opened_at: null` (the value came from this request's pre-write SELECT) | the `rowcount == 0` branch re-reads `opened_at` in the SAME transaction: a present row answers with the FIRST stamp (possibly written by the other tap), a vanished row answers 404 and is counted | `open_alert`, tests `test_open_marks_an_event_seen_once` / `test_open_answers_404_when_the_row_vanishes_mid_request` |
+| WARNING `unopened_total` counted every row for a user, growing with history | PARTIAL index `idx_alert_events_user_unopened ON alert_events(user_id) WHERE opened_at IS NULL`, so the badge stays proportional to the unread set; pinned in the drift test as PostgreSQL-only, next to the UNIQUE index | schema + `0013_alert_events.sql` + `test_alert_events_schema_sync.py` |
+| WARNING (my own round-1 error) the privacy copy denied WhatsApp delivery while `services/whatsapp/sender.py` exists and, when configured (`MOCK_WHATSAPP=false` + Meta credentials), sends deal alerts through Meta's WhatsApp Business API | copy corrected to what is verifiable: **the app** requests no notifications permission and sends no OS push notification and no email; a WhatsApp deal alert is a **server-side, configuration-gated** channel, disclosed as such in §2/§3 — including that it processes the phone number through a third party — with the default configuration running in mock mode. Listing copy stopped denying channels it cannot see and states only the in-app fact | `privacy-policy.md` §2/§3, `store-listing.md` gate + alert bullet |
+| WARNING the module docstring claimed the consumer reads Redis Streams only, while ownership fan-out reads a shared table | docstring corrected: input is Redis Streams; it reads `tracked_items` ownership and `tracked_item_stores` urls (never writes them) and writes only `alert_events` | module docstring |
+| INFO an invalid `ALERTS_*_RATE_LIMIT` value reached slowapi and surfaced as a runtime error | `_rate_limit()` validates the shape, keeps the default and logs the typo | `routers/alerts.py` |
+| INFO the in-process consumer assumes a single API worker | documented in `.env.example` (one process = one consumer; N workers = N consumers on one group, duplicates prevented by the UNIQUE index, overlap visible in REDRAWS/CLAIMED/DISCARDED). The alternative the review offered — a separate consumer service — is a deployment change and is not taken here |
+| WARNING the in-app `trackerCreated` promise stays live until MS2 | unchanged BY CONSTRAINT (owner-supplied Arabic; `l10n_coverage_test` forbids landing English alone) and enforced as a release gate: no publishable build carries this string before MS2 | §7 risks |
 
 Deferred here, not blocked: MS2 needs the owner's Arabic values for every new key (`navAlerts`, the
 alert-card lines, the channel picker, and a truthful rewrite of `trackerCreated`); MS3 needs H2 (Firebase

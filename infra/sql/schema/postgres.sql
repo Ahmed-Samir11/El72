@@ -435,6 +435,13 @@ CREATE INDEX IF NOT EXISTS idx_alert_events_item_time
     ON alert_events(tracked_item_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_alert_events_user_opened
     ON alert_events(user_id, opened_at);
+-- The badge query is COUNT(*) WHERE opened_at IS NULL for one user. Without a
+-- PARTIAL index the count walks every index entry for that user, including alerts
+-- already opened, so the feed read degrades as history grows. Partial keeps it
+-- proportional to the unread count, which is the number the client displays.
+CREATE INDEX IF NOT EXISTS idx_alert_events_user_unopened
+    ON alert_events(user_id)
+    WHERE opened_at IS NULL;
 -- The same-day rule as a UNIQUE promise, not only a read-then-write check: two
 -- consumers (or two replicas) that both see "no row today" cannot both create
 -- one. Keyed on the day the event happened, matching the consumer's dedupe.

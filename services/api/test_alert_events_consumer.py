@@ -39,13 +39,16 @@ from services.api.alert_events_consumer import (
     _event_time,
     _is_same_day_unique,
     _remember,
+    _utc_now,
     consume_loop,
     parse_event,
     process_message,
     store_event,
 )
 from services.api.models import Alert, AlertEvent, User
-from services.api.tracked_items_models import TrackedItem
+from services.api.tracked_items_models import TrackedItem, TrackedItemStore
+
+_TRACKED_URL = "https://www.compumarts.com/product/rtx-5060"
 
 
 def _count(name: str) -> float:
@@ -80,6 +83,7 @@ def db():
         Alert.__table__,
         AlertEvent.__table__,
         TrackedItem.__table__,
+        TrackedItemStore.__table__,
     ):
         table.create(bind=engine, checkfirst=True)
     factory = sessionmaker(bind=engine)
@@ -101,6 +105,19 @@ def db():
                 user_id=user_id, canonical_product_id=product_id, is_active=True
             )
             session.add(item)
+            session.flush()
+            # The scraper-owned mapping is what says which url this item really
+            # has; an alert payload naming any OTHER url is then not a fact about
+            # this user's product (see _matches_tracked_url).
+            session.add(
+                TrackedItemStore(
+                    tracked_item_id=item.id,
+                    store_id="compumarts_eg",
+                    store_sku=product_id,
+                    store_url=_TRACKED_URL,
+                    is_active=True,
+                )
+            )
             session.commit()
             return item.id
 
@@ -1089,3 +1106,62 @@ def test_stranded_entries_are_claimed_and_not_lost(db, monkeypatch):
     assert len(db.read_rows()) == 1, "the stranded alert was stored"
     assert redis.acked == ["9-0"]
     assert _count("el72_alert_events_claimed_total") - claimed_before == 1
+
+
+def test_a_payload_url_that_is_not_the_tracked_url_is_dropped(db):
+    """Only the url the scraper recorded for this item is ever stored.
+
+    GET /alerts/recent hands this field to the client, and the payload author
+    is the scraper pipeline: without this rule a hostile or buggy upstream could
+    plant an arbitrary link in a user's alert card. The event (\"this product's
+    price changed\") is still true, so the row lands with no link rather than
+    with a link nobody tracked.
+    """
+    user = db.add_user("+201000000051")
+    item = db.add_item(user, "rtx-5060-compumarts")
+
+    store_event(
+        db.factory,
+        _event(
+            tracked_item_id=item,
+            url="https://evil.example.com/product/rtx-5060",
+            alert_type="price_drop",
+        ),
+        now=datetime(2026, 10, 29, 9, 0, 0),
+    )
+    store_event(
+        db.factory,
+        _event(
+            tracked_item_id=item,
+            url=_TRACKED_URL,
+            alert_type="back_in_stock",
+        ),
+        now=datetime(2026, 10, 29, 10, 0, 0),
+    )
+
+    rows = db.read_rows()
+    assert len(rows) == 2, "both events land"
+    urls = {row.url for row in rows}
+    assert urls == {_TRACKED_URL, None}, "the untracked url is never stored"
+
+
+def test_the_payload_clock_is_trusted_only_inside_its_window():
+    """A stamp far in the future or the deep past is not a fact about now.
+
+    Unbounded parsing lets an emitter date rows on top of the feed and take a
+    future day's dedupe slot, or rewrite history. Outside the window the value
+    falls back to processing time rather than to something invented, and the
+    fallback is logged. Inside the window a drained backlog still keeps its own
+    day (round 1's rule), so the two rules are one rule: trust a clock only as
+    far as it can be defended.
+    """
+    now = _utc_now()
+
+    future = _event_time(_event(timestamp=(now + timedelta(days=3)).isoformat()))
+    assert abs((future - now).total_seconds()) < 60, "a future stamp is not stored"
+
+    ancient = _event_time(_event(timestamp="1970-01-01T00:00:00Z"))
+    assert abs((ancient - now).total_seconds()) < 60, "a deep-past stamp is not stored"
+
+    recent = _event_time(_event(timestamp=(now - timedelta(hours=5)).isoformat()))
+    assert abs((recent - (now - timedelta(hours=5))).total_seconds()) < 60

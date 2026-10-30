@@ -64,6 +64,12 @@ CREATE INDEX IF NOT EXISTS idx_alert_events_item_time
     ON alert_events(tracked_item_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_alert_events_user_opened
     ON alert_events(user_id, opened_at);
+-- Same reason as the canonical schema: the "N newer alerts" badge counts only
+-- unopened rows, and a PARTIAL index keeps that count proportional to the unread
+-- set instead of the whole history.
+CREATE INDEX IF NOT EXISTS idx_alert_events_user_unopened
+    ON alert_events(user_id)
+    WHERE opened_at IS NULL;
 
 -- Same-day rule enforced by the database, not only by the consumer's check,
 -- so concurrent consumers/replicas cannot both write the day's alert.
