@@ -326,3 +326,17 @@ addressed; two by an explicit recorded decision rather than a code change.
 | Startup log could drift from the mounted surface | Fixed: `ENFORCEMENT_AT_IMPORT`, `MAX_TRACKERS_AT_IMPORT` and `PAYMENT_SURFACE_ENABLED` are evaluated once at import; the log reports those same values. |
 | Cap refusals consume the creation window | Kept **intentionally** (anti-probing) and written into `enforce_tracker_creation`'s docstring: deleting a tracker and retrying inside the same three seconds answers 429 before 201, pinned by `test_a_refused_attempt_still_counts_as_an_attempt`. |
 | `/credits/balance` stays mounted with payments off | Kept per WS1.2 — the dormant ledger remains readable — and now asserted in `test_main.py`, so it reads as a decision rather than an oversight. |
+
+### Review round 2 (HGM on PR #50) — verdicts
+
+Round 2 came back **APPROVE** (5 WARNING, 4 INFO). Handled:
+
+| Finding | Verdict / fix |
+|---|---|
+| Cap/rate check is not atomic under concurrency | Documented in `enforce_tracker_creation`: the cap is a fair-use bound, not a transactional invariant — the window is checked first, so racing creations for one user are limited to one per 3 s and the worst-case overshoot is a single tracker. An exact cap needs an atomic Redis counter: named follow-up, not paid for in v1. |
+| `/usage/limits` could report a stale countdown when fair use is inactive | Fixed: `cap` and `retry_after_seconds` are reported only in fair-use mode (a leftover timestamp after a mode switch can no longer become a countdown the server is not enforcing); pinned by `test_usage_limits_reports_no_cap_or_countdown_when_fair_use_is_off`, which records an attempt first. |
+| Throttle is process-local with eviction limits | Kept and stated where the map is declared: the multi-worker semantics are spelled out ("one creation per MIN per worker") with the Redis window as the follow-up, and eviction now picks the **oldest attempt** rather than first-seen insertion order. |
+| E2E creation-cost row was wrong under `CREDITS_ENFORCEMENT=off` | Fixed: `test_09` is a three-way branch (`on` → one credit spent; `fair_use`/`off` → none; tracker count only asserted under fair use). |
+| E2E rate row could be flaky | Its premise is now stated in the test: it is honest under the documented single-API deployment (compose runs one uvicorn worker, no `--workers`), and it is exactly what a Redis-window follow-up would have to preserve. |
+| Two queries for the Profile chip numbers | Fixed: `usage_payload` reads `COUNT(*)` and `MAX(created_at)` in one query; the unused `last_created_at` helper is gone rather than left as dead code. |
+| Env parsed per call; deprecated `on_event` startup | Kept as-is, deliberately: per-call parsing is what lets a test (and a config reload) change the mode without re-importing, and `on_event` is the pattern this module already uses everywhere — changing it here would be an unrelated refactor. |
