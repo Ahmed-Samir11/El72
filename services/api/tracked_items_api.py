@@ -944,6 +944,14 @@ async def create_tracked_item_from_url(
     store_id, sku = _store_and_sku_from_url(payload.url)
     canonical_id = f"{store_id}:{sku}"
 
+    # Fair-use cap and creation rate window (plans/p3), or the legacy 402
+    # under CREDITS_ENFORCEMENT=on. Ahead of the duplicate check on purpose:
+    # a repeated attempt against an already-tracked URL is still a creation
+    # attempt, so it charges the window instead of being a free way to hammer
+    # the endpoint. The SSRF guard stays first — it is the security boundary,
+    # and its 422 must never be masked by a limit answer.
+    enforce_tracker_creation(db, current_user)
+
     # Avoid duplicate trackers for the same URL.
     existing = (
         db.query(TrackedItemStore)
@@ -955,11 +963,6 @@ async def create_tracked_item_from_url(
             status_code=status.HTTP_409_CONFLICT,
             detail="This product is already being tracked",
         )
-
-    # Fair-use cap and creation rate window (plans/p3), or the legacy 402
-    # under CREDITS_ENFORCEMENT=on. Ahead of the insert and of the fetch,
-    # so a refusal writes nothing and visits nothing.
-    enforce_tracker_creation(db, current_user)
 
     db_item = TrackedItem(
         user_id=current_user.id,

@@ -231,15 +231,21 @@ def mount_routers(target: FastAPI, *, payment_surface: bool) -> None:
     target.include_router(tracked_items_router)
 
     if payment_surface:
-        # Manual payment flow (bridge to Paymob).
+        # Manual payment flow (bridge to Paymob) — this router also carries the
+        # admin payment surface (/admin/login, /admin/audit-log), so a release
+        # build with payment_surface=False has no /admin route either: there is
+        # no payment-administration endpoint to reach.
         target.include_router(payment_router.router)
 
         # Recurring subscriptions (Paymob subscriptions, Feature 7).
         target.include_router(subscription_router.router)
 
 
-# Evaluated once at import so the log, the mount and any later check cannot
-# drift apart within a process.
+# Evaluated once at import, so the mount, the startup log and any later check
+# report one decision rather than re-reading an environment that may have moved
+# under the process.
+ENFORCEMENT_AT_IMPORT = usage_limits.enforcement_mode()
+MAX_TRACKERS_AT_IMPORT = usage_limits.max_trackers()
 PAYMENT_SURFACE_ENABLED = usage_limits.payments_surface_enabled()
 mount_routers(app, payment_surface=PAYMENT_SURFACE_ENABLED)
 
@@ -255,14 +261,15 @@ def _report_fair_use_posture() -> None:
     The release posture must be auditable from the running process, not only
     from the compose file: "this backend sells no trackers, and bounds tracking
     by fair use" is a claim an operator can check against the store listing.
+    The values logged are the ones that decided the mount, so the log cannot
+    disagree with the routes that exist.
     """
-    mode = usage_limits.enforcement_mode()
-    fair_use = mode == usage_limits.FAIR_USE
+    fair_use = ENFORCEMENT_AT_IMPORT == usage_limits.FAIR_USE
     logger.info(
         "Tracker creation enforcement posture",
         extra={
-            "credits_enforcement": mode,
-            "fair_use_max_trackers": usage_limits.max_trackers() if fair_use else None,
+            "credits_enforcement": ENFORCEMENT_AT_IMPORT,
+            "fair_use_max_trackers": (MAX_TRACKERS_AT_IMPORT if fair_use else None),
             "creation_min_interval_seconds": (
                 usage_limits.MIN_CREATION_INTERVAL_SECONDS if fair_use else None
             ),

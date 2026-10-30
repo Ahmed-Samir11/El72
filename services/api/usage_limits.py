@@ -31,7 +31,7 @@ from __future__ import annotations
 import logging
 import math
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -67,11 +67,18 @@ DEFAULT_MAX_TRACKERS = 100
 # adds trackers faster than one per three seconds by hand.
 MIN_CREATION_INTERVAL_SECONDS = 3.0
 
-# Process-local creation throttle, keyed by user id. Same shape as the
-# refresh throttle in tracked_items_api: MVP runs a single API instance, and
-# a multi-worker deployment would move this to Redis. It bounds hammering
-# within a process, which is what a v1 deployment is.
+# Process-local creation throttle, keyed by user id. Same shape as the refresh
+# throttle in tracked_items_api: MVP runs a single API instance, and a multi-worker
+# deployment would move this to Redis (named in the plan as a follow-up; until then,
+# more than one instance weakens the bound to "one creation per MIN per worker" —
+# it never becomes a per-user paywall).
+#
+# The map is bounded and self-cleaning: an entry only constrains its owner for
+# MIN_CREATION_INTERVAL_SECONDS, so stale entries are dropped rather than kept,
+# and a long-running process never grows it with the number of accounts that
+# ever touched the endpoint.
 _last_creation_at: dict[str, datetime] = {}
+_THROTTLE_MAX_ENTRIES = 20_000
 
 router = APIRouter()
 
@@ -85,6 +92,49 @@ def _now() -> datetime:
     green.
     """
     return datetime.now(timezone.utc)
+
+
+def _retry_pair(wait: float) -> tuple:
+    """Report one wait twice: seconds for the body, whole seconds for the header.
+
+    A client may count down from either, so the two must never disagree: the
+    body never rounds a real wait down to 0.0 while the header still says 1,
+    and the header is never shorter than the body.
+    """
+    if wait <= 0:
+        return 0.0, "0"
+    seconds = max(0.01, round(wait, 2))
+    return seconds, str(max(1, math.ceil(seconds)))
+
+
+def _remaining_seconds(last: Optional[datetime], now: datetime) -> float:
+    """Seconds still to wait for this user, measured from ``last``."""
+    if last is None:
+        return 0.0
+    return max(0.0, MIN_CREATION_INTERVAL_SECONDS - (now - last).total_seconds())
+
+
+def _prune_stale(now: datetime) -> None:
+    """Forget attempts that can no longer trigger a 429."""
+    cutoff = now - timedelta(seconds=MIN_CREATION_INTERVAL_SECONDS)
+    for key in [k for k, seen_at in _last_creation_at.items() if seen_at <= cutoff]:
+        _last_creation_at.pop(key)
+
+
+def _record_attempt(user: User) -> None:
+    """Charge this attempt against the user's creation window.
+
+    Every fair-use attempt is charged — allowed or refused — so an at-cap or
+    over-eager client cannot probe the limiter for free. The map is kept
+    bounded as it fills.
+    """
+    key = str(user.id)
+    if key not in _last_creation_at and len(_last_creation_at) >= _THROTTLE_MAX_ENTRIES:
+        _prune_stale(_now())
+        while len(_last_creation_at) >= _THROTTLE_MAX_ENTRIES and _last_creation_at:
+            # Insertion order is oldest attempt first: evict rather than grow.
+            _last_creation_at.pop(next(iter(_last_creation_at)))
+    _last_creation_at[key] = _now()
 
 
 def enforcement_mode() -> str:
@@ -185,13 +235,9 @@ def seconds_until_next_creation(user: User) -> float:
     """Seconds still to wait before the next tracker creation is allowed.
 
     ``0.0`` means the next creation may proceed (including for a user who has
-    never created one in this process).
+    never attempted one in this process).
     """
-    last = _last_creation_at.get(str(user.id))
-    if last is None:
-        return 0.0
-    elapsed = (_now() - last).total_seconds()
-    return max(0.0, MIN_CREATION_INTERVAL_SECONDS - elapsed)
+    return _remaining_seconds(_last_creation_at.get(str(user.id)), _now())
 
 
 def reset_creation_times() -> None:
@@ -209,6 +255,15 @@ def enforce_tracker_creation(db: Session, user: User) -> None:
     Called **before** anything is written, so a refusal leaves no partial row
     and no credit is burned. Under ``on`` the ledger deduction runs here,
     in the caller's session/transaction, exactly as before.
+
+    Rate semantics, pinned by tests because a client counts down from them:
+    every fair-use attempt charges the window — allowed, rate-refused or cap-
+    refused — so a hammering client cannot probe for free; and the advertised
+    wait is re-measured **from the attempt that carries it**, so obeying
+    ``Retry-After`` is always enough to get through next time. A cap refusal
+    therefore also spends the window: deleting a tracker and retrying inside
+    the same three seconds answers 429 before it answers 201, which is the
+    honest reading of "creations are rate limited".
     """
     mode = enforcement_mode()
     if mode == DISABLED:
@@ -217,20 +272,23 @@ def enforce_tracker_creation(db: Session, user: User) -> None:
         credits.deduct(db, user, amount=1, reason="tracker_created")
         return
 
-    wait = seconds_until_next_creation(user)
-    # A refused attempt also counts as an attempt: a client hammering a
-    # capped or throttled user must not be able to probe for free.
-    _last_creation_at[str(user.id)] = _now()
-    if wait > 0:
+    if seconds_until_next_creation(user) > 0:
+        _record_attempt(user)
+        retry_seconds, retry_header = _retry_pair(seconds_until_next_creation(user))
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail={
                 "code": "creation_rate_limit",
-                "retry_after_seconds": round(wait, 2),
+                "retry_after_seconds": retry_seconds,
             },
-            headers={"Retry-After": str(max(1, math.ceil(wait)))},
+            headers={"Retry-After": retry_header},
         )
 
+    _record_attempt(user)
+    # One COUNT over one user's rows, served by idx_tracked_items_user_id and
+    # bounded by the cap itself; the rate window keeps it to at most one per
+    # MIN_CREATION_INTERVAL_SECONDS per user. A composite (user_id, is_active)
+    # index is the first step if tracker volume ever makes this hot (plan follow-up).
     cap = max_trackers()
     active = active_tracker_count(db, user)
     if active >= cap:
@@ -259,7 +317,7 @@ def usage_payload(db: Session, user: User) -> dict:
         "active_trackers": active_tracker_count(db, user),
         "cap": max_trackers() if mode == FAIR_USE else None,
         "created_last": _iso_utc(created),
-        "retry_after_seconds": round(seconds_until_next_creation(user), 2),
+        "retry_after_seconds": _retry_pair(seconds_until_next_creation(user))[0],
     }
 
 
