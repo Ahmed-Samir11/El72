@@ -1,7 +1,8 @@
 """Unit tests for tracked items API endpoints."""
 
+import math
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 
 os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
@@ -953,10 +954,13 @@ def test_rapid_creations_answer_429_with_a_countdown(client, monkeypatch):
 
     Before this plan, 429 existed only in a comment
     (tracked_items_repository.dart) — the Retry-After header is the contract
-    the countdown is built on.
+    the countdown is built on. The clock is frozen so the assertion is about
+    the window, not about how long the fixture took to run.
     """
     api, session, user = client
     monkeypatch.setenv("CREDITS_ENFORCEMENT", "fair_use")
+    frozen = datetime(2026, 10, 29, 12, 0, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(usage_limits, "_now", lambda: frozen)
 
     assert (
         api.post("/tracked-items/", json=_tracker_payload("fast-1")).status_code == 201
@@ -964,13 +968,43 @@ def test_rapid_creations_answer_429_with_a_countdown(client, monkeypatch):
 
     resp = api.post("/tracked-items/", json=_tracker_payload("fast-2"))
     assert resp.status_code == 429, resp.text
-    assert int(resp.headers["retry-after"]) >= 1
     detail = resp.json()["detail"]
     assert detail["code"] == "creation_rate_limit"
     assert (
         0 < detail["retry_after_seconds"] <= usage_limits.MIN_CREATION_INTERVAL_SECONDS
     )
+    # The two ways to count down must agree: the header is a whole second and
+    # never shorter than the body's number, so waiting either one clears the
+    # window the server will actually enforce.
+    assert int(resp.headers["retry-after"]) >= math.ceil(detail["retry_after_seconds"])
     assert session.query(TrackedItem).count() == 1
+
+
+def test_duplicate_creation_attempts_still_charge_the_window(client, monkeypatch):
+    """A repeated URL is still a creation attempt — not a free way to hammer.
+
+    Enforcement runs ahead of the duplicate check, so an immediate duplicate
+    answers 429; once the window is clear the same URL answers the duplicate
+    409 with its prose detail — which is how the client tells the two 409s
+    apart from a cap answer (a structured detail). The clock is frozen because
+    the first creation's background price fetch burns several real seconds, which
+    would otherwise clear the window on its own.
+    """
+    api, session, user = client
+    monkeypatch.setenv("CREDITS_ENFORCEMENT", "fair_use")
+    frozen = datetime(2026, 10, 29, 12, 0, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(usage_limits, "_now", lambda: frozen)
+    url = "https://amazon.eg/dp/DUP-THROTTLE"
+
+    assert api.post("/tracked-items/from-url", json={"url": url}).status_code == 201
+
+    resp = api.post("/tracked-items/from-url", json={"url": url})
+    assert resp.status_code == 429, resp.text
+
+    monkeypatch.setattr(usage_limits, "MIN_CREATION_INTERVAL_SECONDS", 0.0)
+    resp_again = api.post("/tracked-items/from-url", json={"url": url})
+    assert resp_again.status_code == 409, resp_again.text
+    assert resp_again.json()["detail"] == "This product is already being tracked"
 
 
 def test_from_url_creation_is_bounded_the_same_way(client, monkeypatch):

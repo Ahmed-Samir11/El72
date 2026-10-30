@@ -309,3 +309,20 @@ ship PR A without PR B.
 **Still open (PR B, and owner input):** MS2/MS3 (client flag, Profile chip,
 cap/rate dialogs, ARB keys in both locales, store assets), and H6/H7/Arabic from
 §7.
+
+### Review round 1 (HGM on PR #50) — verdicts
+
+The review agent returned REQUEST_CHANGES: 1 CRITICAL, 5 WARNING, 4 INFO. All
+addressed; two by an explicit recorded decision rather than a code change.
+
+| Finding | Verdict / fix |
+|---|---|
+| **CRITICAL** — Retry-After understates the wait, because the throttle was advanced before the 429 was raised | Fixed. A refused attempt still charges the window (anti-probing), and the advertised wait is now re-measured **from the attempt that carries it**, so obeying `Retry-After` is always enough. `test_obeying_the_advertised_wait_always_gets_through` takes four too-soon attempts, waits exactly the advertised number after each, and asserts success: the countdown is a tested contract. |
+| Unbounded process-local throttle, and per-worker scope | Fixed the growth: `_record_attempt` evicts at `_THROTTLE_MAX_ENTRIES` and `_prune_stale` forgets attempts older than the window; `test_the_throttle_map_is_bounded_and_prunes_stale_entries` pins both. The per-worker limit stays a named follow-up (move the window to Redis) and is stated where the map is declared, with the weaker multi-instance semantics spelled out. |
+| Duplicate `/from-url` attempts bypassed the creation throttle | Fixed: `enforce_tracker_creation` runs **ahead of** the duplicate check (the SSRF guard stays first, so a 422 is never masked by a limit answer). `test_duplicate_creation_attempts_still_charge_the_window` pins 429-then-409 and the detail shape that separates the duplicate 409 (string) from a cap 409 (dict). |
+| 429 payload pinned but the Retry-After contract not verified end-to-end | Fixed by the walk above, plus a header/body consistency assertion on the real route and `test_header_and_body_never_disagree_on_a_tiny_window` (a real wait never rounds to 0.0 while the header says 1). |
+| Admin surface asserted but not gated by `mount_routers` | Clarified and pinned: `/admin/login` and `/admin/audit-log` are defined **inside** the payment router, so the mount gate removes them; the coupling is commented in `mount_routers` and asserted in both directions in `test_main.py`. |
+| COUNT query on every creation | Accepted with evidence, no schema change in this PR: one COUNT over one user's rows, served by the existing `idx_tracked_items_user_id`, bounded by the cap itself and to ≤1 per `MIN_CREATION_INTERVAL_SECONDS` per user by the window. A composite `(user_id, is_active)` index is recorded as the first step if it ever becomes hot. |
+| Startup log could drift from the mounted surface | Fixed: `ENFORCEMENT_AT_IMPORT`, `MAX_TRACKERS_AT_IMPORT` and `PAYMENT_SURFACE_ENABLED` are evaluated once at import; the log reports those same values. |
+| Cap refusals consume the creation window | Kept **intentionally** (anti-probing) and written into `enforce_tracker_creation`'s docstring: deleting a tracker and retrying inside the same three seconds answers 429 before 201, pinned by `test_a_refused_attempt_still_counts_as_an_attempt`. |
+| `/credits/balance` stays mounted with payments off | Kept per WS1.2 — the dormant ledger remains readable — and now asserted in `test_main.py`, so it reads as a decision rather than an oversight. |

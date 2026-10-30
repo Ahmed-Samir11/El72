@@ -6,9 +6,11 @@ and never refuse under ``off``. A change that quietly weakens one of those
 three columns shows up here.
 """
 
+import math
 import os
 from datetime import datetime, timedelta, timezone
 from itertools import count
+from types import SimpleNamespace
 
 os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 
@@ -200,20 +202,88 @@ def test_creating_too_fast_answers_429_with_retry_after(db_session, monkeypatch)
 
     usage_limits.enforce_tracker_creation(session, user)
 
+    # One second later: the attempt is refused, and because a refused attempt
+    # also charges the window, the countdown is re-measured from this attempt.
     _fixed_clock(monkeypatch, start + timedelta(seconds=1))
     with pytest.raises(HTTPException) as error:
         usage_limits.enforce_tracker_creation(session, user)
 
     assert error.value.status_code == 429
     # The header is what the client counts down from; the detail carries the
-    # same number without rounding it up to a whole second.
-    assert error.value.headers == {"Retry-After": "2"}
+    # same number without rounding it away.
+    assert error.value.headers == {"Retry-After": "3"}
     assert error.value.detail["code"] == "creation_rate_limit"
-    assert 1.9 < error.value.detail["retry_after_seconds"] <= 2.0
+    assert error.value.detail["retry_after_seconds"] == pytest.approx(
+        usage_limits.MIN_CREATION_INTERVAL_SECONDS
+    )
 
-    # Past the window the same creation is allowed again.
-    _fixed_clock(monkeypatch, start + timedelta(seconds=4))
+
+def test_obeying_the_advertised_wait_always_gets_through(db_session, monkeypatch):
+    """A client that waits exactly what the server advertised is let through.
+
+    This is the contract the countdown UI is built on: the advertised number
+    must never be shorter than the wait the server will actually enforce, which
+    is exactly what goes wrong when a refused attempt moves the window forward
+    but reports the old remainder.
+    """
+    session, user, _ = db_session
+    monkeypatch.setenv(CREDITS_ENFORCEMENT_ENV, usage_limits.FAIR_USE)
+    start = datetime(2026, 10, 29, 12, 0, 0, tzinfo=timezone.utc)
+    _fixed_clock(monkeypatch, start)
     usage_limits.enforce_tracker_creation(session, user)
+
+    for offset in (0.5, 1, 2, 2.9):
+        _fixed_clock(monkeypatch, start + timedelta(seconds=offset))
+        with pytest.raises(HTTPException) as error:
+            usage_limits.enforce_tracker_creation(session, user)
+        assert error.value.status_code == 429
+
+        advertised = float(error.value.detail["retry_after_seconds"])
+        assert int(error.value.headers["Retry-After"]) >= math.ceil(advertised)
+
+        # Trust the answer: wait exactly that long, from that attempt.
+        _fixed_clock(monkeypatch, start + timedelta(seconds=offset + advertised))
+        assert usage_limits.enforce_tracker_creation(session, user) is None
+
+
+def test_header_and_body_never_disagree_on_a_tiny_window(db_session, monkeypatch):
+    """A sub-second window must not report 0.0 seconds in the body while the
+    header still says one second."""
+    session, user, _ = db_session
+    monkeypatch.setenv(CREDITS_ENFORCEMENT_ENV, usage_limits.FAIR_USE)
+    monkeypatch.setattr(usage_limits, "MIN_CREATION_INTERVAL_SECONDS", 0.004)
+
+    usage_limits.enforce_tracker_creation(session, user)
+    with pytest.raises(HTTPException) as error:
+        usage_limits.enforce_tracker_creation(session, user)
+
+    assert error.value.status_code == 429
+    assert error.value.detail["retry_after_seconds"] > 0
+    assert int(error.value.headers["Retry-After"]) >= math.ceil(
+        error.value.detail["retry_after_seconds"]
+    )
+
+
+def test_the_throttle_map_is_bounded_and_prunes_stale_entries(monkeypatch):
+    """A long-running process must not grow the window with its user count.
+
+    An entry only constrains its owner for ``MIN_CREATION_INTERVAL_SECONDS``,
+    so the map is evicted rather than allowed to expand, and attempts that can
+    no longer trigger a 429 are forgotten outright.
+    """
+    monkeypatch.setattr(usage_limits, "_THROTTLE_MAX_ENTRIES", 3)
+    start = datetime(2026, 10, 29, 12, 0, 0, tzinfo=timezone.utc)
+    _fixed_clock(monkeypatch, start)
+
+    for index in range(8):
+        _fixed_clock(monkeypatch, start + timedelta(seconds=index))
+        usage_limits._record_attempt(SimpleNamespace(id=1000 + index))
+        assert len(usage_limits._last_creation_at) <= 3
+
+    # Six hundred seconds later nothing in the map can answer 429 any more.
+    _fixed_clock(monkeypatch, start + timedelta(seconds=600))
+    usage_limits._prune_stale(usage_limits._now())
+    assert usage_limits._last_creation_at == {}
 
 
 def test_rate_window_is_per_user(db_session, monkeypatch):

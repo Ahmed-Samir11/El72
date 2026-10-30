@@ -277,7 +277,13 @@ def test_release_build_mounts_no_payment_surface():
     paths = {route.path for route in built.routes}
     assert not [p for p in paths if p.startswith("/payment")]
     assert not [p for p in paths if p.startswith("/subscription")]
+    # /admin/login and /admin/audit-log are defined inside the payment router,
+    # so the admin payment surface disappears with it. Asserted here so that
+    # coupling is visible in the gate rather than an accident of file layout.
     assert not [p for p in paths if p.startswith("/admin")]
+    # Deliberate, not an oversight: the dormant ledger stays readable (plans/p3
+    # WS1.2) even though nothing can be bought on a fair-use backend.
+    assert "/credits/balance" in paths
 
     probe = TestClient(built)
     assert probe.get("/payment/status/anything").status_code == 404
@@ -296,3 +302,4 @@ def test_payment_surface_mounts_when_it_is_asked_for():
     assert "/payment/start" in paths
     assert "/payment/manual" in paths
     assert "/subscription/status" in paths
+    assert "/admin/login" in paths

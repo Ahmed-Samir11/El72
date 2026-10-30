@@ -329,8 +329,9 @@ def test_08_create_duplicate_tracker_conflict(auth_headers):
     assert resp1.status_code == 201, resp1.text
     tid = resp1.json()["id"]
     _created_trackers.add(tid)
-    # Same URL → duplicate conflict (409). The cap answer is also a 409, so the
-    # detail has to tell them apart: this one is prose, a cap answer is a dict.
+    # Same URL → duplicate conflict (409). Enforcement runs first, so the
+    # attempt must be spaced like any other creation or it answers 429 instead.
+    _wait_for_creation_slot(auth_headers)
     resp2 = _api(
         "POST",
         "/tracked-items/from-url",
@@ -338,6 +339,8 @@ def test_08_create_duplicate_tracker_conflict(auth_headers):
         headers=auth_headers,
     )
     assert resp2.status_code == 409, resp2.text
+    # A cap answer is also a 409, so the detail shape is the discriminator:
+    # prose for "already tracking this", a dict for "you are at the cap".
     assert isinstance(resp2.json().get("detail"), str), resp2.text
 
 
