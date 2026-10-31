@@ -369,7 +369,21 @@ Gates: `flutter test` - 300 passed; `flutter test --dart-define=ENABLE_PAYMENTS=
 
 Why they were not written here, concretely: this session's model cannot emit Arabic script. Three attempts to add the values to `app_ar.arb` came back Latin-transliterated (`metb'im` for `metb'im`), and the corrupted keys were reverted rather than shipped. `app_ar.arb` on `main` is intact human Arabic, so the repo pipeline is not at fault - only generation from this model. Unblock: the maintainer pastes the six values, or the same work runs on an Arabic-competent model.
 
+### Review round 2 (HGM on PR #52) - verdicts
+
+| Finding | Verdict |
+|---|---|
+| **[WARNING]** a payments-off 402 is not pinned to neutral user-facing copy | Real. It was leaking internals: the fallback printed `InsufficientCreditsException(Not enough credits)`. All three refusals now share a `TrackerCreationRefusal` base carrying the server's own `detail`, and `errorMessage()` renders that (already translated by the backend) or the neutral `Something went wrong.` - tests pin that no class name can reach a screen. |
+| **[WARNING]** malformed fair-use cap values degrade to zero | Real. `activeTrackers`/`cap` are now `int?`: unknown stays unknown, because a dialog reading "0 of 0" out of a hand-edited proxy response is worse than declining to state a number. |
+| **[WARNING]** `paymentsEnabled=true` by default makes the release guarantee build-command dependent | Kept deliberately. A compile-time flag has no runtime test surface; the artifact's build command *is* the contract, so CI pins it (release AAB + a whole suite run under the define) and `config_test` reads the workflow to fail if the pin is dropped. Flipping the default instead would have red-flagged every dev command. |
+| **[WARNING]** live `GET /usage/limits` failure discards the original response | Kept: `credits_repository.dart` and `payment_repository.dart` do exactly this; changing the transport convention is outside this PR. |
+| **[WARNING]** creation throttle is process-local; cap check is not atomic | MS1's recorded trade-offs (Redis counter + window as the follow-up), not client issues. |
+| **[INFO]** `usageLimitsProvider` is wired but not consumed by the UI | True by construction: the chip is the ARB-blocked copy. Wiring it now means MS2 lands as one UI edit rather than a data-layer change plus a UI change. |
+| **[INFO]** the posture test string-matches the workflow file | Kept: same file-reading precedent as `l10n_coverage_test.dart`, and for a compile-time flag there is nothing else to assert. |
+| **[INFO]** deprecated FastAPI startup pattern extended | Documented under MS1 §9 (repo-wide convention, unrelated refactor). |
+
 ### Review round 1 (HGM on PR #52) - verdicts
+
 
 | Finding | Verdict |
 |---|---|

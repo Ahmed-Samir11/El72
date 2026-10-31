@@ -1,5 +1,7 @@
 import 'package:dio/dio.dart';
 
+import '../../data/repositories/tracked_items_repository.dart';
+
 /// Extracts a short, human-readable message from an exception for UI
 /// display. Raw stack traces and internal exception objects must never be
 /// shown to users.
@@ -21,6 +23,16 @@ String errorMessage(Object error) {
       default:
         break;
     }
+  }
+
+  // A tracker-creation refusal (402 legacy credits, 409 fair-use cap, 429
+  // creation window) carries the server's own human-facing detail, which the
+  // backend already translates. Show that; never the internals, which would
+  // put a class name and its numbers on a user's screen.
+  if (error is TrackerCreationRefusal) {
+    final detail = error.message;
+    if (detail != null && detail.trim().isNotEmpty) return detail.trim();
+    return 'Something went wrong.';
   }
 
   // Fallback: first line of the string form, truncated for display.

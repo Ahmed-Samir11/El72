@@ -4,16 +4,23 @@ import '../demo_data.dart';
 import '../models/tracked_item_model.dart';
 import '../services/api_client.dart';
 
+/// Shared shape for every refusal the backend can answer to a tracker create.
+///
+/// The point is [message]: the server's own human-facing `detail`, already
+/// translated by the backend. `errorMessage` shows that instead of the
+/// exception's internals, so a refusal can never put a class name on screen.
+abstract class TrackerCreationRefusal implements Exception {
+  const TrackerCreationRefusal(this.message);
+
+  /// Human-facing detail from the API, when the response carried one.
+  final String? message;
+}
+
 /// Thrown when the backend rejects a tracker creation with HTTP 402
 /// (insufficient credits). Kept distinct from generic errors so the UI can
 /// offer the "upgrade your plan" flow instead of a raw server message.
-class InsufficientCreditsException implements Exception {
-  const InsufficientCreditsException(this.message);
-
-  /// Human-facing detail from the API (kept for logging/tests; the UI shows
-  /// its own localized copy).
-  final String message;
-
+class InsufficientCreditsException extends TrackerCreationRefusal {
+  const InsufficientCreditsException(super.message);
   @override
   String toString() => 'InsufficientCreditsException($message)';
 }
@@ -24,21 +31,21 @@ class InsufficientCreditsException implements Exception {
 ///
 /// The free product's main refusal. Carries the numbers so the dialog can
 /// state the ceiling the user hit instead of a generic "too many" message.
-class FairUseCapException implements Exception {
+class FairUseCapException extends TrackerCreationRefusal {
   const FairUseCapException({
     required this.activeTrackers,
     required this.cap,
-    this.message,
-  });
+    String? message,
+  }) : super(message);
 
-  /// Trackers the user currently has running.
-  final int activeTrackers;
+  /// Trackers the user currently has running, or null when the server did not
+  /// say. Never defaulted to 0: a cap dialog reading a made-up "0 of 0" would
+  /// be worse than refusing to state a number.
+  final int? activeTrackers;
 
-  /// The per-user ceiling on active trackers.
-  final int cap;
-
-  /// Machine-facing detail from the API, kept for logging/tests.
-  final String? message;
+  /// The per-user ceiling on active trackers, or null when the server did not
+  /// send a usable number.
+  final int? cap;
 
   @override
   String toString() => 'FairUseCapException($activeTrackers/$cap)';
@@ -50,18 +57,15 @@ class FairUseCapException implements Exception {
 /// [retryAfterSeconds] is what the server says to wait — it comes from the
 /// structured body and falls back to the `Retry-After` header, and the server
 /// rounds it upward, so waiting exactly this long gets through.
-class RateLimitedException implements Exception {
+class RateLimitedException extends TrackerCreationRefusal {
   const RateLimitedException({
     required this.retryAfterSeconds,
-    this.message,
+    String? message,
     this.cause,
-  });
+  }) : super(message);
 
   /// Seconds still to wait before another tracker may be created.
   final double retryAfterSeconds;
-
-  /// Machine-facing detail from the API, kept for logging/tests.
-  final String? message;
 
   /// The original [DioException], so the UI can render the same honest line
   /// any other transport failure gets instead of this exception's internals.
@@ -137,8 +141,8 @@ class TrackedItemsRepository {
         final code = detail['code'];
         if (code == 'fair_use_cap') {
           throw FairUseCapException(
-            activeTrackers: _asInt(detail['active_trackers']),
-            cap: _asInt(detail['cap']),
+            activeTrackers: _asIntOrNull(detail['active_trackers']),
+            cap: _asIntOrNull(detail['cap']),
             message: message,
           );
         }
@@ -170,10 +174,10 @@ class TrackedItemsRepository {
     await _apiClient.dio.post('/tracked-items/$itemId/refresh');
   }
 
-  /// Read an optional JSON number without crashing on a malformed value: a
-  /// string or object where a number was expected must degrade to 0, not throw
-  /// a cast error out of the refusal mapping.
-  static int _asInt(Object? value) => value is num ? value.toInt() : 0;
+  /// JSON number -> int, or null when the value is missing or not a number:
+  /// a refusal whose numbers are malformed must not invent a ceiling of 0.
+  static int? _asIntOrNull(Object? value) =>
+      value is num ? value.toInt() : null;
 
   static double? _asDouble(Object? value) =>
       value is num ? value.toDouble() : null;

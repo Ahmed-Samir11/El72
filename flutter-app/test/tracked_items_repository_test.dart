@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:elhaq_tracker/src/core/format/error_message.dart';
 import 'package:elhaq_tracker/src/data/repositories/tracked_items_repository.dart';
 import 'package:elhaq_tracker/src/data/services/api_client.dart';
 
@@ -290,7 +291,7 @@ void main() {
     );
 
     test(
-      'malformed fair-use numbers degrade to zero instead of crashing',
+      'malformed fair-use numbers stay unknown instead of inventing a zero cap',
       () async {
         final client = ApiClient.withStorage(_FakeSecureStorage());
         client.dio.httpClientAdapter = _DetailAdapter(409, {
@@ -304,10 +305,33 @@ void main() {
           repo.createFromUrl('https://example.com/x'),
           throwsA(
             isA<FairUseCapException>()
-                .having((e) => e.activeTrackers, 'activeTrackers', 0)
-                .having((e) => e.cap, 'cap', 0),
+                .having((e) => e.activeTrackers, 'activeTrackers', null)
+                .having((e) => e.cap, 'cap', null),
           ),
         );
+      },
+    );
+
+    test(
+      'a refusal renders the server detail, never the exception internals',
+      () async {
+        // The sheet shows `errorPrefix(errorMessage(e))`, so whatever this
+        // mapping returns is what a user reads: the backend's own human-facing
+        // text (which the server already translates), never a class name and
+        // its numbers.
+        final refusal = FairUseCapException(
+          activeTrackers: 100,
+          cap: 100,
+          message: 'You have reached the maximum',
+        );
+        expect(errorMessage(refusal), 'You have reached the maximum');
+        expect(errorMessage(refusal).contains('FairUseCapException'), isFalse);
+
+        // Fair use sends a structured object with no human text: the neutral
+        // line, still no internals.
+        final bare = RateLimitedException(retryAfterSeconds: 2.76);
+        expect(errorMessage(bare), 'Something went wrong.');
+        expect(errorMessage(bare).contains('RateLimitedException'), isFalse);
       },
     );
 
