@@ -30,6 +30,7 @@ from services.api.routers import affiliate as affiliate_router
 from services.api.routers import alerts as alerts_router
 from services.api.routers import auth, public_api
 from services.api.routers import credits as credits_router
+from services.api.routers import events as events_router
 from services.api.routers import payment as payment_router
 from services.api.routers import subscription as subscription_router
 from services.api.tracked_items_api import router as tracked_items_router
@@ -246,6 +247,10 @@ def mount_routers(target: FastAPI, *, payment_surface: bool) -> None:
     # Kept in its own router so the two meanings of "alert" stay separate: this
     # one reads alert EVENTS, while main.py's POST /alerts creates a tracker.
     target.include_router(alerts_router.router)
+
+    # First-party funnel events (plans/p4): POST /events appends to the
+    # app_events hypertable. Part of the free product, not of the payment rails.
+    target.include_router(events_router.router)
 
     # Tracked-item lifecycle. Creation is bounded by the fair-use cap and the
     # creation rate window (see services/api/usage_limits.py).
