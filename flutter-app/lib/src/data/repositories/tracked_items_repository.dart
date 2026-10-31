@@ -51,13 +51,21 @@ class FairUseCapException implements Exception {
 /// structured body and falls back to the `Retry-After` header, and the server
 /// rounds it upward, so waiting exactly this long gets through.
 class RateLimitedException implements Exception {
-  const RateLimitedException({required this.retryAfterSeconds, this.message});
+  const RateLimitedException({
+    required this.retryAfterSeconds,
+    this.message,
+    this.cause,
+  });
 
   /// Seconds still to wait before another tracker may be created.
   final double retryAfterSeconds;
 
   /// Machine-facing detail from the API, kept for logging/tests.
   final String? message;
+
+  /// The original [DioException], so the UI can render the same honest line
+  /// any other transport failure gets instead of this exception's internals.
+  final Object? cause;
 
   @override
   String toString() => 'RateLimitedException($retryAfterSeconds s)';
@@ -143,6 +151,7 @@ class TrackedItemsRepository {
           throw RateLimitedException(
             retryAfterSeconds: seconds ?? 0,
             message: message,
+            cause: e,
           );
         }
       }

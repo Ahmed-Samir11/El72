@@ -277,7 +277,12 @@ class _ProfileTab extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final isDemo = AppConfig.demoMode;
-    final creditAsync = ref.watch(creditBalanceProvider);
+    // Only watched when this build has the payment surface: a free release
+    // backend does not mount /credits/balance at all, so watching it unconditionally
+    // would fire a request whose 404 nobody renders.
+    final creditAsync = AppConfig.paymentsEnabled
+        ? ref.watch(creditBalanceProvider)
+        : null;
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
@@ -293,34 +298,35 @@ class _ProfileTab extends ConsumerWidget {
           ),
         ),
         const SizedBox(height: 12),
-        Card(
-          child: ListTile(
-            leading: const Icon(Icons.workspace_premium_outlined),
-            title: Text(AppLocalizations.of(context).currentPlan),
-            // Live credit balance; falls back to the static plan name while
-            // loading or on error so the tile never shows a spinner.
-            subtitle: creditAsync.maybeWhen(
-              data: (credits) => Text(
-                AppLocalizations.of(context).creditsRemaining(credits.balance),
+        // The credit-plan tile exists only in a build compiled with the payment
+        // surface. A free release has no plan to manage, so the whole card is
+        // absent: no balance line, no "Manage" affordance, nothing that could
+        // be read as a paywall. (MS2 replaces it with the fair-use chip, which
+        // needs Arabic copy that has not landed yet.)
+        if (AppConfig.paymentsEnabled)
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.workspace_premium_outlined),
+              title: Text(AppLocalizations.of(context).currentPlan),
+              // Live credit balance; falls back to the static plan name while
+              // loading or on error so the tile never shows a spinner.
+              subtitle: creditAsync!.maybeWhen(
+                data: (credits) => Text(
+                  AppLocalizations.of(
+                    context,
+                  ).creditsRemaining(credits.balance),
+                ),
+                orElse: () => Text(AppLocalizations.of(context).freePlan),
               ),
-              orElse: () => Text(AppLocalizations.of(context).freePlan),
+              trailing: TextButton(
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const SubscriptionScreen()),
+                ),
+                child: Text(AppLocalizations.of(context).manage),
+              ),
             ),
-            // The manage/upgrade entry exists only in a build compiled with the
-            // payment surface. A free release has no credit-packages screen to
-            // navigate to, so the control is absent rather than dead.
-            trailing: AppConfig.paymentsEnabled
-                ? TextButton(
-                    onPressed: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => const SubscriptionScreen(),
-                      ),
-                    ),
-                    child: Text(AppLocalizations.of(context).manage),
-                  )
-                : null,
           ),
-        ),
         const SizedBox(height: 12),
         Card(
           child: SwitchListTile.adaptive(

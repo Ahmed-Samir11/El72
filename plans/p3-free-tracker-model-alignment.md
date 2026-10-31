@@ -100,6 +100,14 @@ to v1 for no measured gain.
    `flutter-ci`/`publish-release` jobs in `.github/workflows/ci.yml`) contains no
    payment UI. Dev builds pass `--dart-define=ENABLE_PAYMENTS=true` to keep the
    screens testable. Nothing is deleted, so P3 is one revert away from being undone.
+
+   **Implemented the other way round, deliberately:** the code is
+   `bool.fromEnvironment('ENABLE_PAYMENTS', defaultValue: true)`. Defaulting to
+   `false` would break every existing dev widget test and the ~40 payment tests
+   unless each local command carries the define, which is how a gate quietly rots.
+   The release guarantee is enforced where it actually counts - the build
+   command in `.github/workflows/ci.yml` - and CI now runs the suite in **both**
+   postures, so a regression in either direction fails the build.
 2. **Profile tab**: replace `creditsRemaining` + `Manage → SubscriptionScreen`
    (`dashboard_page.dart:398-405`) with the fair-use state from `/usage/limits`
    ("Tracking {n} of up to {cap} products at once") and no route to a purchase screen
@@ -379,6 +387,7 @@ Keys to add, with the English source and where it renders:
 | `fairUseCapBody(cap)` | 409 cap dialog body | "You already have {cap} trackers running, which is the maximum. Close one to make room, or tap Not now." |
 | `creationWaitTitle` | 429 dialog title | "One tracker at a time" |
 | `creationWaitBody(seconds)` | 429 dialog body | "You just added a tracker. Wait {seconds} seconds before adding the next one." |
+| `creationWaitBodyNoCount(seconds omitted)` | 429 dialog when `Retry-After` is an HTTP date the client cannot resolve (`retryAfterSeconds == 0`) | "One tracker at a time. Tap Start Tracking again when you are ready." |
 
 Reused, already bilingual, no new translation needed: `reachedLimitTitle` (cap dialog
 title), `close`, `notNow` (dialog buttons), `startTracking`, `navTrackers`.

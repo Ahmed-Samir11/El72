@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -39,6 +40,46 @@ class _FailingRepository implements TrackedItemsRepository {
   @override
   Future<void> createFromUrl(String url, {double? targetPrice}) async {
     throw Exception('Backend exploded');
+  }
+
+  @override
+  Future<void> refreshPrice(int itemId) async {}
+}
+
+/// Stub for the free product's main refusal: the user already has `cap` trackers
+/// running, so the create is refused with HTTP 409 + a structured detail.
+class _AtCapRepository implements TrackedItemsRepository {
+  @override
+  Future<List<TrackedItem>> getTrackedItems({
+    bool includeInactive = false,
+  }) async => const [];
+
+  @override
+  Future<void> createFromUrl(String url, {double? targetPrice}) async {
+    throw FairUseCapException(activeTrackers: 100, cap: 100);
+  }
+
+  @override
+  Future<void> refreshPrice(int itemId) async {}
+}
+
+/// Stub for the creation-window refusal (HTTP 429), carrying the original
+/// DioException as `cause` exactly as the real repository does.
+class _RateLimitedRepository implements TrackedItemsRepository {
+  @override
+  Future<List<TrackedItem>> getTrackedItems({
+    bool includeInactive = false,
+  }) async => const [];
+
+  @override
+  Future<void> createFromUrl(String url, {double? targetPrice}) async {
+    throw RateLimitedException(
+      retryAfterSeconds: 2.76,
+      cause: DioException(
+        requestOptions: RequestOptions(path: '/tracked-items/from-url'),
+        type: DioExceptionType.badResponse,
+      ),
+    );
   }
 
   @override
@@ -162,6 +203,57 @@ void main() {
     expect(find.byType(AlertDialog), findsNothing);
     expect(find.byType(SubscriptionScreen), findsNothing);
   });
+
+  testWidgets(
+    'the fair-use cap shows the localized limit line, never the internals',
+    (tester) async {
+      await tester.pumpWidget(
+        _wrap(
+          Scaffold(body: const CreateTrackerSheet()),
+          repository: _AtCapRepository(),
+        ),
+      );
+
+      await tester.enterText(
+        find.byType(TextField).first,
+        'https://example.com/x',
+      );
+      await tester.tap(find.text('Start Tracking'));
+      await tester.pumpAndSettle();
+
+      // A bilingual line the app already has, in both postures. The full cap
+      // dialog (count + "close one") is MS2's blocked-copy work; what must NOT
+      // happen meanwhile is leaking the exception's internals or offering an
+      // upgrade the free product does not have.
+      expect(find.text("You've reached your limit"), findsOneWidget);
+      expect(find.textContaining('FairUseCapException'), findsNothing);
+      expect(find.text('Upgrade plan'), findsNothing);
+      expect(find.byType(SubscriptionScreen), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'the creation window falls back to the generic line, no class name',
+    (tester) async {
+      await tester.pumpWidget(
+        _wrap(
+          Scaffold(body: const CreateTrackerSheet()),
+          repository: _RateLimitedRepository(),
+        ),
+      );
+
+      await tester.enterText(
+        find.byType(TextField).first,
+        'https://example.com/x',
+      );
+      await tester.tap(find.text('Start Tracking'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(SnackBar), findsOneWidget);
+      expect(find.textContaining('RateLimitedException'), findsNothing);
+      expect(find.text('Upgrade plan'), findsNothing);
+    },
+  );
 
   testWidgets('a non-402 failure keeps the generic SnackBar (no dialog)', (
     tester,

@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -146,25 +148,26 @@ void main() {
       },
     );
 
-    test(
-      'the payment surface is a compile-time choice, not a runtime toggle',
-      () {
-        // A store build is compiled with --dart-define=ENABLE_PAYMENTS=false
-        // (see .github/workflows/ci.yml, which also runs the whole suite under
-        // that define), so the credit-packages screen and the "Upgrade plan"
-        // route cannot be re-opened at runtime after launch. Asserting the
-        // define's own semantics keeps this honest in both CI postures without
-        // hard-coding one of them.
-        expect(
-          AppConfig.paymentsEnabled,
-          bool.fromEnvironment('ENABLE_PAYMENTS', defaultValue: true),
-        );
-        // Dev builds keep the merged-but-dark rails reachable for testing.
-        expect(
-          bool.fromEnvironment('ENABLE_PAYMENTS', defaultValue: true),
-          isTrue,
-        );
-      },
-    );
+    test('the release build is compiled without the payment surface', () {
+      // `AppConfig.paymentsEnabled` is a compile-time constant, so no runtime
+      // test can prove which posture a store artifact uses - the artifact's
+      // own build command can. Read the workflow and require the define there
+      // (same file-reading precedent as `l10n_coverage_test.dart`).
+      final workflow = File('../.github/workflows/ci.yml').readAsStringSync();
+
+      expect(
+        workflow,
+        contains('--dart-define=ENABLE_PAYMENTS=false'),
+        reason:
+            'a release AAB built without the define would ship the credit-'
+            'packages screen the free product promises not to have',
+      );
+      // The suite must also RUN under that define, so the off posture is
+      // compiled and exercised rather than merely assumed.
+      expect(
+        workflow,
+        contains('flutter test --dart-define=ENABLE_PAYMENTS=false'),
+      );
+    });
   });
 }

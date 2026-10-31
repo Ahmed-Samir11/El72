@@ -264,6 +264,32 @@ void main() {
     );
 
     test(
+      'HTTP 429 with an HTTP-date Retry-After gives a zero countdown, not a crash',
+      () async {
+        // A proxy may replace the server's body countdown with an HTTP date.
+        // The client cannot resolve it, so it reports 0 = "no usable countdown"
+        // rather than inventing a wait; MS2's dialog must then show its copy
+        // without a number (recorded in plans/p3 as a separate copy row).
+        final client = ApiClient.withStorage(_FakeSecureStorage());
+        client.dio.httpClientAdapter = _DetailAdapter(429, {
+          'code': 'creation_rate_limit',
+        }, retryAfter: 'Wed, 21 Oct 2026 07:28:00 GMT');
+        final repo = TrackedItemsRepository(apiClient: client);
+
+        await expectLater(
+          repo.createFromUrl('https://example.com/x'),
+          throwsA(
+            isA<RateLimitedException>()
+                .having((e) => e.retryAfterSeconds, 'retryAfterSeconds', 0.0)
+                // The original transport error is kept so the UI can render
+                // its usual line instead of this exception's internals.
+                .having((e) => e.cause, 'cause', isA<DioException>()),
+          ),
+        );
+      },
+    );
+
+    test(
       'malformed fair-use numbers degrade to zero instead of crashing',
       () async {
         final client = ApiClient.withStorage(_FakeSecureStorage());

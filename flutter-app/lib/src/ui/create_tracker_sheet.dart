@@ -24,7 +24,7 @@ class _CreateTrackerSheetState extends ConsumerState<CreateTrackerSheet> {
   /// not set to false). A release build of the free product has it off, so the
   /// "Upgrade plan" route that navigates to [SubscriptionScreen] is compiled out
   /// of the flow rather than hidden at runtime.
-  static final bool _paymentsEnabled = AppConfig.paymentsEnabled;
+  static const bool _paymentsEnabled = AppConfig.paymentsEnabled;
 
   /// The one error line every unhandled failure of the create shows. Extracted
   /// so a 402 in a payments-off build cannot become a silent no-op: the user
@@ -153,6 +153,28 @@ class _CreateTrackerSheetState extends ConsumerState<CreateTrackerSheet> {
                     ],
                   ),
                 );
+              } on FairUseCapException {
+                // The ceiling is the free product's main refusal. MS2's cap
+                // dialog (with the number and the close-one affordance) needs
+                // copy that has no Arabic twin yet, so until that lands this
+                // states only what the app already says in both locales - never
+                // the exception's internals.
+                if (!context.mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      AppLocalizations.of(context).reachedLimitTitle,
+                    ),
+                    backgroundColor: context.appTokens.error,
+                  ),
+                );
+              } on RateLimitedException catch (failure) {
+                // The creation window has not elapsed. MS2's countdown line is
+                // part of the same blocked copy, so the honest interim is the
+                // line any transport failure already gets - rendered from the
+                // original DioException so no class name reaches the screen.
+                if (!context.mounted) return;
+                _showGenericError(context, failure.cause ?? failure);
               } catch (e) {
                 if (context.mounted) _showGenericError(context, e);
               }
