@@ -78,6 +78,21 @@ MIN_CREATION_INTERVAL_SECONDS = 3.0
 # and a long-running process never grows it with the number of accounts that
 # ever touched the endpoint.
 _last_creation_at: dict[str, datetime] = {}
+
+# Misconfigured values already warned about, as (setting, raw value). These
+# readers run on every creation and every /usage/limits call, so warning each
+# time would bury the log in one repeated line; a new bad value still warns.
+_warned_config: set[tuple[str, str]] = set()
+
+
+def _warn_config_once(setting: str, raw: object, message: str, **extra) -> None:
+    key = (setting, str(raw))
+    if key in _warned_config:
+        return
+    _warned_config.add(key)
+    logger.warning(message, extra=extra)
+
+
 _THROTTLE_MAX_ENTRIES = 20_000
 
 router = APIRouter()
@@ -151,13 +166,13 @@ def enforcement_mode() -> str:
     raw = os.getenv(CREDITS_ENFORCEMENT_ENV, DEFAULT_ENFORCEMENT).strip().lower()
     if raw in ENFORCEMENT_MODES:
         return raw
-    logger.warning(
+    _warn_config_once(
+        CREDITS_ENFORCEMENT_ENV,
+        raw,
         "Ignoring an unrecognized CREDITS_ENFORCEMENT value; using the default",
-        extra={
-            "value": raw[:40],
-            "accepted": list(ENFORCEMENT_MODES),
-            "used": DEFAULT_ENFORCEMENT,
-        },
+        value=raw[:40],
+        accepted=list(ENFORCEMENT_MODES),
+        used=DEFAULT_ENFORCEMENT,
     )
     return DEFAULT_ENFORCEMENT
 
@@ -192,15 +207,21 @@ def max_trackers() -> int:
     try:
         value = int(raw)
     except ValueError:
-        logger.warning(
+        _warn_config_once(
+            MAX_TRACKERS_ENV,
+            raw,
             "Ignoring a non-integer FAIR_USE_MAX_TRACKERS value; using the default",
-            extra={"value": raw[:20], "used": DEFAULT_MAX_TRACKERS},
+            value=raw[:20],
+            used=DEFAULT_MAX_TRACKERS,
         )
         return DEFAULT_MAX_TRACKERS
     if value <= 0:
-        logger.warning(
+        _warn_config_once(
+            MAX_TRACKERS_ENV,
+            raw,
             "Ignoring a non-positive FAIR_USE_MAX_TRACKERS value; using the default",
-            extra={"value": value, "used": DEFAULT_MAX_TRACKERS},
+            value=value,
+            used=DEFAULT_MAX_TRACKERS,
         )
         return DEFAULT_MAX_TRACKERS
     return value
@@ -237,6 +258,7 @@ def reset_creation_times() -> None:
     limiters: the state is module-level and every test shares it otherwise.
     """
     _last_creation_at.clear()
+    _warned_config.clear()
 
 
 def enforce_tracker_creation(db: Session, user: User) -> None:

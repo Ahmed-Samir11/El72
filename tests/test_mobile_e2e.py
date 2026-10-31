@@ -445,6 +445,7 @@ def test_14_creation_rate_window_is_enforced(auth_headers):
     if _usage(auth_headers)["enforcement"] != "fair_use":
         pytest.skip("the creation rate window belongs to the fair-use mode")
 
+    started = time.monotonic()
     _create_tracker(auth_headers)
     resp = _api(
         "POST",
@@ -452,6 +453,12 @@ def test_14_creation_rate_window_is_enforced(auth_headers):
         json={"url": _unique_url()},
         headers=auth_headers,
     )
+    if resp.status_code == 201 and time.monotonic() - started >= 3.0:
+        # The window opens when the first create is admitted, and that create
+        # includes a live price fetch. If it alone outlasted the window, the
+        # second create was rightly allowed: the row proves nothing either way.
+        _created_trackers.add(resp.json().get("id"))
+        pytest.skip("the first create outlasted the creation window")
     assert resp.status_code == 429, resp.text
     retry_after = resp.headers.get("Retry-After") or resp.headers.get("retry-after")
     assert retry_after and int(retry_after) >= 1, resp.headers

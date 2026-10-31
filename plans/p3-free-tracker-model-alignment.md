@@ -386,3 +386,19 @@ and are fixed:
   in `services/chatbot/i18n.py` for both locales; the Arabic is generated
   (owner-approved, #51) and has not been natively reviewed.
 
+### Review round 4 (HGM on local Qwen 3.8 Flash Next, PR #50) — verdicts
+
+REQUEST_CHANGES, 1 CRITICAL / 5 WARNING / 4 INFO, 1299 s.
+
+| # | Finding | Verdict | Action |
+|---|---|---|---|
+| 1 | CRITICAL: legacy mode deducts before the duplicate check | Overstated | `credits.deduct()` only flushes; the duplicate 409 is raised before any commit and `get_db` closes without committing, so nothing is charged. The visible change (an out-of-credit duplicate answers 402, not 409, under `CREDITS_ENFORCEMENT=on`) is the enforce-first ordering recorded in round 3. |
+| 2 | Chatbot truncates fractional waits | Valid (this pass's code) | `_wait_seconds()` rounds up (2.5 → 3, 0.5 → 1), with a singular "1 second" line in both locales. |
+| 3 | Throttle dict not thread-safe | Not applicable | Both creation endpoints are `async def`: the check and the write run on the event loop with no `await` between them. Other readers only `.get()`. |
+| 4 | Live E2E rate test can flake | Valid | `test_14` skips as inconclusive when the first create alone outlasts the 3 s window. |
+| 5 | Cap 100 may bind paid-tier accounts | Owner decision | H6 confirmed cap = 100 for the release (2026-10-31). |
+| 6 | `PAYMENTS_ENABLED` can mount rails under `fair_use` | By design | The two flags are independent so the rails stay testable; the release posture is asserted in `test_main.py`. |
+| 7 | Bad settings log on every call | Valid | `_warn_config_once()` warns once per (setting, value); a new bad value still warns. |
+| 8 | Any non-cap 409 read as a duplicate | Valid (this pass's code) | Only a plain-text 409 is "already tracking"; a structured 409 with an unknown code falls back to the generic reply. |
+| 9 | `_iso_utc` assumes naive UTC | Accepted | The columns are naive UTC across the schema. |
+| 10 | Deprecated `on_event` | Accepted | Same as the module's existing startup hooks; repo-wide migration is separate. |

@@ -527,6 +527,28 @@ def test_rate_limit_refusal_falls_back_to_the_header_then_to_no_number():
     )
 
 
+@pytest.mark.parametrize(
+    "wait, expected",
+    [
+        (2.5, "Try again in 3 seconds."),
+        (2.01, "Try again in 3 seconds."),
+        (0.5, "Try again in 1 second."),
+        ("2.2", "Try again in 3 seconds."),
+    ],
+)
+def test_rate_limit_countdown_is_rounded_up_never_down(wait, expected):
+    # Rounding down would send the user back before the window has passed.
+    response = _api_refusal(
+        429, {"code": "creation_rate_limit", "retry_after_seconds": wait}
+    )
+    assert _creation_refusal_message(response, "en", "Laptop").endswith(expected)
+
+
+def test_a_structured_409_with_an_unknown_code_is_not_called_a_duplicate():
+    response = _api_refusal(409, {"code": "something_new"})
+    assert _creation_refusal_message(response, "en", "Laptop") is None
+
+
 def test_other_statuses_are_not_creation_refusals():
     import httpx
 

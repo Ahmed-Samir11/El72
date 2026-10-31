@@ -125,6 +125,36 @@ def test_payments_surface_is_off_unless_asked_for(monkeypatch):
     assert usage_limits.payments_surface_enabled() is True
 
 
+def test_a_bad_setting_is_logged_once_not_on_every_request(monkeypatch, caplog):
+    caplog.set_level("WARNING")
+    monkeypatch.setenv(usage_limits.CREDITS_ENFORCEMENT_ENV, "strict")
+    for _ in range(5):
+        assert usage_limits.enforcement_mode() == usage_limits.DEFAULT_ENFORCEMENT
+
+    warnings = [
+        r
+        for r in caplog.records
+        if r.getMessage().startswith("Ignoring an unrecognized CREDITS_ENFORCEMENT")
+    ]
+    assert len(warnings) == 1
+
+    # A different bad value is a different mistake, and is reported.
+    monkeypatch.setenv(usage_limits.CREDITS_ENFORCEMENT_ENV, "paranoid")
+    usage_limits.enforcement_mode()
+    assert (
+        len(
+            [
+                r
+                for r in caplog.records
+                if r.getMessage().startswith(
+                    "Ignoring an unrecognized CREDITS_ENFORCEMENT"
+                )
+            ]
+        )
+        == 2
+    )
+
+
 def test_cap_configuration_mistakes_fall_back_to_the_default(monkeypatch, caplog):
     monkeypatch.delenv(usage_limits.MAX_TRACKERS_ENV, raising=False)
     assert usage_limits.max_trackers() == usage_limits.DEFAULT_MAX_TRACKERS
