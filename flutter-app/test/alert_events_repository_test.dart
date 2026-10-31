@@ -71,7 +71,9 @@ class _Adapter implements HttpClientAdapter {
     return ResponseBody.fromString(
       body,
       statusCode,
-      headers: const {'content-type': ['application/json']},
+      headers: const {
+        'content-type': ['application/json'],
+      },
     );
   }
 }
@@ -152,53 +154,62 @@ void main() {
       expect(noPrice.discountPct, isNull);
     });
 
-    test('asks within the server limit so the query cannot be rejected (422)', () async {
-      final (repo, adapter) = _repo();
-      adapter.body = twoRowsEnvelope;
+    test(
+      'asks within the server limit so the query cannot be rejected (422)',
+      () async {
+        final (repo, adapter) = _repo();
+        adapter.body = twoRowsEnvelope;
 
-      await repo.getRecentAlerts(limit: 5000);
-      expect(adapter.queries.last['limit'], maxAlertsLimit);
+        await repo.getRecentAlerts(limit: 5000);
+        expect(adapter.queries.last['limit'], maxAlertsLimit);
 
-      await repo.getRecentAlerts(limit: 0);
-      expect(adapter.queries.last['limit'], minAlertsLimit);
+        await repo.getRecentAlerts(limit: 0);
+        expect(adapter.queries.last['limit'], minAlertsLimit);
 
-      await repo.getRecentAlerts();
-      expect(adapter.queries.last['limit'], defaultAlertsLimit);
-    });
+        await repo.getRecentAlerts();
+        expect(adapter.queries.last['limit'], defaultAlertsLimit);
+      },
+    );
 
-    test('HTTP 404 (a server older than plans/p2) is a failure, not emptiness', () async {
-      final (repo, adapter) = _repo();
-      adapter.statusCode = 404;
-      adapter.body = '{"detail": "Not Found"}';
+    test(
+      'HTTP 404 (a server older than plans/p2) is a failure, not emptiness',
+      () async {
+        final (repo, adapter) = _repo();
+        adapter.statusCode = 404;
+        adapter.body = '{"detail": "Not Found"}';
 
-      await expectLater(
-        repo.getRecentAlerts(),
-        throwsA(
-          isA<AlertFeedUnavailable>().having(
-            (e) => e.statusCode,
-            'statusCode',
-            404,
+        await expectLater(
+          repo.getRecentAlerts(),
+          throwsA(
+            isA<AlertFeedUnavailable>().having(
+              (e) => e.statusCode,
+              'statusCode',
+              404,
+            ),
           ),
-        ),
-      );
-    });
+        );
+      },
+    );
 
-    test('junk in the envelope drops rows instead of throwing the feed away', () async {
-      final (repo, adapter) = _repo();
-      adapter.body = jsonEncode({
-        'alerts': [
-          {'id': 1, 'created_at': 'not-a-time'}, // unplaceable on a timeline
-          'not-an-object',
-          {'id': 2, 'created_at': '2026-06-25T08:00:00', 'store_id': 42},
-        ],
-        'unopened_total': '3',
-      });
+    test(
+      'junk in the envelope drops rows instead of throwing the feed away',
+      () async {
+        final (repo, adapter) = _repo();
+        adapter.body = jsonEncode({
+          'alerts': [
+            {'id': 1, 'created_at': 'not-a-time'}, // unplaceable on a timeline
+            'not-an-object',
+            {'id': 2, 'created_at': '2026-06-25T08:00:00', 'store_id': 42},
+          ],
+          'unopened_total': '3',
+        });
 
-      final feed = await repo.getRecentAlerts();
+        final feed = await repo.getRecentAlerts();
 
-      expect(feed.alerts.length, 1); // the unparseable row is dropped
-      expect(feed.unopenedTotal, 3); // a string number still counts
-    });
+        expect(feed.alerts.length, 1); // the unparseable row is dropped
+        expect(feed.unopenedTotal, 3); // a string number still counts
+      },
+    );
 
     test('an empty array with no failure means the empty state', () async {
       final (repo, adapter) = _repo();
@@ -211,16 +222,24 @@ void main() {
   });
 
   group('markOpened', () {
-    test('addresses the open endpoint for the caller\'s own event id', () async {
-      final (repo, adapter) = _repo();
-      adapter.statusCode = 200;
-      adapter.body = '{"opened_at": "2026-06-25T10:00:00"}';
+    test(
+      'addresses the open endpoint for the caller\'s own event id',
+      () async {
+        final (repo, adapter) = _repo();
+        adapter.statusCode = 200;
+        adapter.body = '{"opened_at": "2026-06-25T10:00:00"}';
 
-      final marked = await repo.markOpened('6f2b1a9c-0000-4f18-9b2e-1c2d3e4f5060');
+        final marked = await repo.markOpened(
+          '6f2b1a9c-0000-4f18-9b2e-1c2d3e4f5060',
+        );
 
-      expect(marked, isTrue);
-      expect(adapter.paths.last, '/alerts/6f2b1a9c-0000-4f18-9b2e-1c2d3e4f5060/open');
-    });
+        expect(marked, isTrue);
+        expect(
+          adapter.paths.last,
+          '/alerts/6f2b1a9c-0000-4f18-9b2e-1c2d3e4f5060/open',
+        );
+      },
+    );
 
     test('an id that is not an id shape never reaches the network', () async {
       final (repo, adapter) = _repo();

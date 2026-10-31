@@ -126,7 +126,9 @@ void main() {
     await tester.runAsync(() async {
       await tester.pumpWidget(
         _app(
-          AlertCard(event: _event(price: null, reference: null, discount: null)),
+          AlertCard(
+            event: _event(price: null, reference: null, discount: null),
+          ),
         ),
       );
     });
@@ -139,7 +141,9 @@ void main() {
     expect(find.text('Amazon'), findsOneWidget);
   });
 
-  testWidgets('prices that exist render the localized price pair', (tester) async {
+  testWidgets('prices that exist render the localized price pair', (
+    tester,
+  ) async {
     await tester.runAsync(() async {
       await tester.pumpWidget(_app(AlertCard(event: _event())));
     });

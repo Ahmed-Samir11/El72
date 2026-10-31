@@ -36,9 +36,7 @@ class AlertFeed {
 
   AlertFeed({required this.alerts, required this.unopenedTotal});
 
-  AlertFeed.empty()
-    : alerts = const [],
-      unopenedTotal = 0;
+  AlertFeed.empty() : alerts = const [], unopenedTotal = 0;
 }
 
 /// Data source for the user's alert history (`GET /alerts/recent`) and for
@@ -123,7 +121,9 @@ bool isEventIdShaped(String value) => _eventIdPattern.hasMatch(value);
 /// store id, a null price, or a `created_at` the client cannot place on a
 /// timeline, and none of that may take the whole feed down.
 AlertFeed _parseFeed(dynamic data) {
-  final body = data is Map ? Map<String, dynamic>.from(data) : <String, dynamic>{};
+  final body = data is Map
+      ? Map<String, dynamic>.from(data)
+      : <String, dynamic>{};
 
   final rawAlerts = body['alerts'];
   final events = <AlertEvent>[];

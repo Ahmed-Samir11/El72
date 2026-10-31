@@ -59,12 +59,8 @@ class AlertsTab extends ConsumerWidget {
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
               child: Text(
                 AppLocalizations.of(context).alertsTabHint,
-                style: Theme.of(
-                  context,
-                ).textTheme.bodyMedium?.copyWith(
-                  color: Theme.of(
-                    context,
-                  ).colorScheme.onSurfaceVariant,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
                 ),
               ),
             ),
@@ -117,34 +113,31 @@ class AlertsTab extends ConsumerWidget {
                 );
               }
               return SliverList(
-                delegate: SliverChildBuilderDelegate(
-                  (context, index) {
-                    final event = feed.alerts[index];
-                    return AlertCard(
-                      event: event,
-                      // Bookkeeping runs before the merchant opens and never
-                      // blocks it: a refused mark-open (offline, rate-limited,
-                      // an id that is not this user's) leaves the feed as it
-                      // was rather than pretending the alert was seen.
-                      onOpened: event.id.isEmpty
-                          ? null
-                          : (eventId) {
-                              ref
-                                  .read(alertEventsRepositoryProvider)
-                                  .markOpened(eventId)
-                                  .then((marked) {
-                                    if (!marked) return;
-                                    // The tab may be gone (back button, tab
-                                    // switch rebuilds it) — the feed refresh
-                                    // then belongs to the next visit anyway.
-                                    if (!context.mounted) return;
-                                    ref.invalidate(alertFeedProvider);
-                                  });
-                            },
-                    );
-                  },
-                  childCount: feed.alerts.length,
-                ),
+                delegate: SliverChildBuilderDelegate((context, index) {
+                  final event = feed.alerts[index];
+                  return AlertCard(
+                    event: event,
+                    // Bookkeeping runs before the merchant opens and never
+                    // blocks it: a refused mark-open (offline, rate-limited,
+                    // an id that is not this user's) leaves the feed as it
+                    // was rather than pretending the alert was seen.
+                    onOpened: event.id.isEmpty
+                        ? null
+                        : (eventId) {
+                            ref
+                                .read(alertEventsRepositoryProvider)
+                                .markOpened(eventId)
+                                .then((marked) {
+                                  if (!marked) return;
+                                  // The tab may be gone (back button, tab
+                                  // switch rebuilds it) — the feed refresh
+                                  // then belongs to the next visit anyway.
+                                  if (!context.mounted) return;
+                                  ref.invalidate(alertFeedProvider);
+                                });
+                          },
+                  );
+                }, childCount: feed.alerts.length),
               );
             },
           ),

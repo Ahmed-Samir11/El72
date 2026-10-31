@@ -113,7 +113,8 @@ String alertStoreLabel(String storeId) {
   return label.replaceFirst(label[0], label[0].toUpperCase());
 }
 
-String _string(Object? value) => value is String ? value : (value?.toString() ?? '');
+String _string(Object? value) =>
+    value is String ? value : (value?.toString() ?? '');
 
 double? _number(Object? value) {
   if (value is double) return value;

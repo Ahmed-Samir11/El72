@@ -81,7 +81,9 @@ class AlertCard extends StatelessWidget {
             if (!context.mounted) return;
             messenger.showSnackBar(
               SnackBar(
-                content: Text(strings.unableToOpen(store.isEmpty ? event.sku : store)),
+                content: Text(
+                  strings.unableToOpen(store.isEmpty ? event.sku : store),
+                ),
               ),
             );
           }
@@ -104,9 +106,7 @@ class AlertCard extends StatelessWidget {
                       store.isEmpty ? event.category : store,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: Theme.of(
-                        context,
-                      ).textTheme.titleMedium?.copyWith(
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
                         fontWeight: FontWeight.w600,
                       ),
                     ),
@@ -114,11 +114,7 @@ class AlertCard extends StatelessWidget {
                   // Un-opened marker. Counted by the server's badge; shown per
                   // card so a long list does not hide which rows are new.
                   if (event.isUnopened)
-                    Icon(
-                      Icons.circle,
-                      size: 10,
-                      color: colorScheme.primary,
-                    ),
+                    Icon(Icons.circle, size: 10, color: colorScheme.primary),
                 ],
               ),
               const SizedBox(height: 8),
