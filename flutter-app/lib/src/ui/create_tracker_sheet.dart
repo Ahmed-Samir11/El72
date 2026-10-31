@@ -116,14 +116,19 @@ class _CreateTrackerSheetState extends ConsumerState<CreateTrackerSheet> {
                     ),
                   );
                 }
-              } on InsufficientCreditsException catch (e) {
+              } on InsufficientCreditsException {
                 // Out of credits (HTTP 402): the legacy paid model.
                 if (!context.mounted) return;
                 if (!_paymentsEnabled) {
                   // A free build has no credit-packages screen to offer, so the
-                  // refusal degrades to the same honest error line any other
-                  // failure gets - never a silent no-op, never an upgrade offer.
-                  _showGenericError(context, e);
+                  // refusal degrades to the generic error line - never a silent
+                  // no-op, never an upgrade offer. The server's detail is NOT
+                  // shown: it talks about credits, which a free product has none
+                  // of, so the line stays neutral.
+                  _showGenericError(
+                    context,
+                    const InsufficientCreditsException(null),
+                  );
                   return;
                 }
                 final nav = Navigator.of(context);

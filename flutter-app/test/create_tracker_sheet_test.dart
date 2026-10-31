@@ -75,6 +75,10 @@ class _AtCapRepository implements TrackedItemsRepository {
 /// Stub for the creation-window refusal (HTTP 429), carrying the original
 /// DioException as `cause` exactly as the real repository does.
 class _RateLimitedRepository implements TrackedItemsRepository {
+  _RateLimitedRepository({this.seconds = 2.76});
+
+  final double seconds;
+
   @override
   Future<List<TrackedItem>> getTrackedItems({
     bool includeInactive = false,
@@ -83,7 +87,7 @@ class _RateLimitedRepository implements TrackedItemsRepository {
   @override
   Future<void> createFromUrl(String url, {double? targetPrice}) async {
     throw RateLimitedException(
-      retryAfterSeconds: 2.76,
+      retryAfterSeconds: seconds,
       cause: DioException(
         requestOptions: RequestOptions(path: '/tracked-items/from-url'),
         type: DioExceptionType.badResponse,
@@ -201,6 +205,9 @@ void main() {
       expect(find.byType(AlertDialog), findsNothing);
       expect(find.text('Upgrade plan'), findsNothing);
       expect(find.byType(SnackBar), findsOneWidget);
+      // Neutral, not the server's credit wording: the free product has none.
+      expect(find.text('Error: Something went wrong.'), findsOneWidget);
+      expect(find.textContaining('credits'), findsNothing);
       return;
     }
 
@@ -333,6 +340,19 @@ void main() {
     );
     expect(find.textContaining('RateLimitedException'), findsNothing);
     expect(find.byType(SnackBar), findsNothing);
+  });
+
+  testWidgets('a sub-second wait reads as one second, in the singular', (
+    tester,
+  ) async {
+    await submit(tester, _RateLimitedRepository(seconds: 0.4));
+
+    expect(
+      find.text(
+        'You just added a tracker. Wait 1 second before adding the next one.',
+      ),
+      findsOneWidget,
+    );
   });
 
   testWidgets('a wait with no usable countdown says so without a number', (

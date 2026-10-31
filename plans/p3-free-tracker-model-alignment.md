@@ -519,3 +519,18 @@ REQUEST_CHANGES, 1 CRITICAL / 5 WARNING / 4 INFO, 1299 s.
 - **H7 done:** `.agents/instructions.md`'s revenue-model line describes free tracking
   bounded by fair use, with the paid rails flagged off; `business_research.md`
   records H6/H7 as resolved.
+
+### Review round 3 (HGM on local Qwen 3.8 Flash Next, PR #52) — verdicts
+
+REQUEST_CHANGES, 6 WARNING / 3 INFO, 627 s. Addressed together with merging #49.
+
+| # | Finding | Verdict | Action |
+|---|---|---|---|
+| 1, 2 | Seconds and cap are not pluralized (EN "1 seconds", AR "{seconds} ثانية" for every count) | Valid | `creationWaitBody` and `fairUseCapBody` are ICU plurals in both locales: EN `=1`/other; AR one/two/few/many/other ("ثانيتين", "{n} ثوانٍ", "100 متتبع"). The `fairUseChip` zero form ("حتى {cap} متتبع") is already right for cap = 100: a noun after a hundred is singular. |
+| 3 | A payments-off 402 can show the server's credit wording | Valid | The free build shows the neutral "Something went wrong."; the test asserts no "credits" text. |
+| 4 | `ENABLE_PAYMENTS` defaults to true | By design | Recorded in WS2: CI pins the release build command and runs the suite in both postures. |
+| 5 | The credits test may hit the real usage repository when payments are off | Valid | `dashboard_credits_test` pins `usageLimitsProvider`. |
+| 6, 7, 8 | Transport error drops the original Dio error; formatter imports the repository; workflow string match | Accepted | The sibling repositories follow the same conventions; recorded in round 2. |
+| 9 | PR description says the Arabic keys are not included | Valid | PR body updated. |
+
+Merging #49 into this branch had no key conflicts: main's ARB files plus this branch's seven keys, with `trackerCreated` taken from #49 (the copy that no longer promises WhatsApp).
