@@ -177,13 +177,15 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U elhaq -d elhaq_ts"
           --health-interval 5s --health-timeout 5s --health-retries 20
-    env:
-      DATABASE_URL: postgresql://elhaq:ci@localhost:5432/elhaq
-      TIMESCALE_URL: postgresql://elhaq:ci@localhost:5433/elhaq_ts
     steps:
       - uses: actions/checkout@v4
 
+      # Scoped to this step: services/api/dependencies.py builds an engine from
+      # TIMESCALE_URL at import, so it must not leak into the pytest step.
       - name: Run scripts/db-bootstrap.sh against both databases
+        env:
+          DATABASE_URL: postgresql://elhaq:ci@localhost:5432/elhaq
+          TIMESCALE_URL: postgresql://elhaq:ci@localhost:5433/elhaq_ts
         run: bash scripts/db-bootstrap.sh
 
       - name: Set up Python
@@ -199,7 +201,9 @@ jobs:
 
       - name: Run the live database tests
         env:
-          EL72_LIVE_TIMESCALE_URL: ${{ env.TIMESCALE_URL }}
+          # psycopg2 named explicitly: it is the driver services/api ships, and
+          # the unpinned SQLAlchemy 2.1 here would otherwise pick psycopg 3.
+          EL72_LIVE_TIMESCALE_URL: postgresql+psycopg2://elhaq:ci@localhost:5433/elhaq_ts
           # Fail instead of skipping if the URL above ever goes missing.
           EL72_LIVE_DB_REQUIRED: '1'
         run: pytest services/api/test_events_live_timescale.py -v -rs
