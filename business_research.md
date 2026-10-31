@@ -70,6 +70,9 @@ Kanbkam used Affiliate & Lead Gen: Merchant pays you a percentage (1-3%) when a 
  
 Now with the suggestions(maaaaan ts needs to be studied)
 1. The Token/Credit System (The "Pay-As-You-Track" Model)(Good)
+   [SUPERSEDED 2026-10-29 — see the supersession record at the end of this file:
+   tracking is free and bounded by fair use, never by a purchase. Kept below
+   as research history, and the rails it needs stay merged but flagged off.]
 Instead of a monthly subscription, users buy a package of "Tracking Credits" (e.g., 20 EGP for 5 tracking credits via Vodafone Cash).
 How it works: Tracking an item costs 1 credit per week or day (we should discuss ts). When a user runs out of credits, tracking pauses.
 Why it works in Egypt: It mimics the culturally deeply embedded behavior of recharging Fakka cards. It gives the user absolute control with zero commitment.\
@@ -94,6 +97,8 @@ How it works: WhatsApp alert displays the item price alongside dynamic installme
 Why it works in Egypt: We are providing a financial service directly to the consumer at the exact moment of high purchase intent, bypassing merchant suspicion entirely.
 For this one, we should bear in mind the whatsapp api shit, as we could get flagged because of the price. We can arrange ts differently. Similar to a standard alert, it directs the user to the app and provides them with this as a ready alternative.
 6. Tiered Pricing Value-Caps (ts was our initial revenue model)
+   [SUPERSEDED 2026-10-29 — pricing tiers over basic tracking is not the model
+   in force; see the supersession record at the end of this file]
 A freemium model is directly tied to the monetary value of the item being tracked.
 How it works:
 Free Tier: Track items up to 5,000 EGP (clothes, groceries, basic accessories).
@@ -110,6 +115,52 @@ We remain impartial because we don’t pick partners; we let the platforms handl
 How it works: When a user clicks a deal notification for Amazon Egypt, Noon, or Jumia, etc, our service automatically appends our enterprise tracking ID.
 Why consumers won't suspect it: The user clicks the link and lands exactly on the native, trusted Amazon or Noon app. To them, Elhaq simply found the best deal on Amazon. They don't care that Amazon quietly routes a 2% to 5% cut of the transaction to our business account.
 8. Still more to come
+
+
+
+
+============================================================
+SUPERSESSION RECORD — 2026-10-29
+(plans/p3-free-tracker-model-alignment.md, PR: backend first)
+============================================================
+What is in force for the release (strategy report §2 new hypothesis, §27
+final recommendation, §24 priority 9 "Anti-abuse/rate limiting — protects
+the free tracker economics"):
+
+    FREE SHOPPING INTELLIGENCE + FREE TRACKING + AFFILIATE MONETIZATION
+
+Tracker creation costs nothing. Abuse is bounded by **fair use**, not by a
+payment decision: a per-user active-tracker cap (default 100, chosen to match
+the ceiling the free tier already resolved to, so no existing account loses
+capability) and a minimum gap between creations (3 s). Server answers:
+409 with {code: "fair_use_cap", active_trackers, cap}, 429 with a Retry-After
+header, and GET /usage/limits with {active_trackers, cap, created_last,
+retry_after_seconds, enforcement} — the payload the Profile tab renders
+instead of "credits remaining", and the per-user tracker count P4's
+engagement rollups read.
+
+What this supersedes in this file: item 1 "The Token/Credit System" and item
+6 "Tiered Pricing Value-Caps", plus the "Revenue model: Freemium — credit-based
+tracking" line in .agents/instructions.md (that file is maintainer-edited —
+tracked as a follow-up, not silently rewritten here). The report's own risk
+column names why: "payment friction suppresses adoption", and its
+recommendation is "do not turn limits into artificial payment friction during
+the validation year".
+
+What is NOT removed: user_credits / credit_transactions, the Paymob and
+subscription routers, the wallet/cash payment flows and their tests. They are
+flagged out of the release — CREDITS_ENFORCEMENT=fair_use and
+PAYMENTS_ENABLED=false in .env.example and docker-compose.yml, ENABLE_PAYMENTS
+=false on the Flutter side in PR B — and stay green under CREDITS_ENFORCEMENT=on
+so a later premium tier (§18 "do not build yet", §19 future directions) is a
+re-enable, not a rebuild. The free-tracker economics remain an ASSUMPTION,
+not a FACT: P4 measures trackers/user and clicks/user from launch, and if
+affiliate revenue per MAU is too low, the flagged payment rails return.
+
+Owner decisions still open (do not invent these in code):
+- H6 — confirm the launch economic model and the cap value for the store release.
+- H7 — rewrite .agents/instructions.md's freemium line in a maintainer session.
+- Arabic copy for the new fair-use UI strings (PR B).
 
 
 

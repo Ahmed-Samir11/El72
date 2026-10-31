@@ -5,11 +5,12 @@ os.environ["DATABASE_URL"] = "sqlite:///test.db"
 if os.path.exists("test.db"):
     os.remove("test.db")
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from services.api.main import app
+from services.api.main import app, mount_routers
 from services.api.main import engine as app_engine
 from services.api.models import Base
 
@@ -258,3 +259,67 @@ def test_cors_disallowed_origin_rejected():
 
     del os.environ["ALLOWED_ORIGINS"]
     importlib.reload(api_main)
+
+
+# --- the payment surface is a mount decision, not an assumption (plans/p3) ---
+
+
+def _mounted_paths(target: FastAPI) -> set:
+    """Every path [target] serves, on old and new FastAPI alike.
+
+    Production pins an older FastAPI, where ``app.routes`` holds one route per
+    endpoint. Newer releases keep each ``include_router`` as a single entry with
+    no ``.path`` and expand it lazily, so the routes it contributes are read
+    from ``effective_route_contexts()`` instead. Walking ``app.routes`` alone
+    (rather than the OpenAPI schema) keeps ``include_in_schema=False`` routes
+    such as ``/admin/login`` visible to the gate.
+    """
+    paths = set()
+    for route in target.routes:
+        path = getattr(route, "path", None)
+        if path is not None:
+            paths.add(path)
+        elif hasattr(route, "effective_route_contexts"):
+            paths.update(context.path for context in route.effective_route_contexts())
+    return paths
+
+
+def test_release_build_mounts_no_payment_surface():
+    """The shipped configuration registers no Paymob route at all.
+
+    This is what lets the store listing make no payment claim and keeps a
+    financial-transaction surface off the release backend: an endpoint nobody
+    advertises is still an endpoint somebody can find.
+    """
+    built = FastAPI()
+    mount_routers(built, payment_surface=False)
+
+    paths = _mounted_paths(built)
+    assert not [p for p in paths if p.startswith("/payment")]
+    assert not [p for p in paths if p.startswith("/subscription")]
+    # /admin/login and /admin/audit-log are defined inside the payment router,
+    # so the admin payment surface disappears with it. Asserted here so that
+    # coupling is visible in the gate rather than an accident of file layout.
+    assert not [p for p in paths if p.startswith("/admin")]
+    # Deliberate, not an oversight: the dormant ledger stays readable (plans/p3
+    # WS1.2) even though nothing can be bought on a fair-use backend.
+    assert "/credits/balance" in paths
+
+    probe = TestClient(built)
+    assert probe.get("/payment/status/anything").status_code == 404
+    # The free-tracker surface is mounted, and it is auth-gated.
+    assert "/usage/limits" in paths
+    assert probe.get("/usage/limits").status_code == 401
+
+
+def test_payment_surface_mounts_when_it_is_asked_for():
+    """The rails are flagged out of the release, not deleted: asking for them
+    mounts the whole payment and subscription surface again."""
+    built = FastAPI()
+    mount_routers(built, payment_surface=True)
+
+    paths = _mounted_paths(built)
+    assert "/payment/start" in paths
+    assert "/payment/manual" in paths
+    assert "/subscription/status" in paths
+    assert "/admin/login" in paths

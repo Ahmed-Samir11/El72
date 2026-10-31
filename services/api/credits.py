@@ -7,6 +7,13 @@ existing users (and tests) keep working without a backfill migration.
 The deduction is meant to run in the *same* session/transaction as the
 operation it guards (e.g. tracker creation), so a failed deduction (402)
 rolls back the caller's work cleanly.
+
+Not the shipped gate: under ``CREDITS_ENFORCEMENT=fair_use`` — the default,
+chosen in [services/api/usage_limits.py] — tracker creation never calls this
+module at all, and abuse is bounded by the per-user tracker cap and the
+creation rate window instead. The ledger stays live for ``CREDITS_ENFORCEMENT=on``
+and for the premium tier a future release may earn (plans/p3: flagged out,
+not deleted), so no table, no grant path and no 402 behavior is removed here.
 """
 
 from __future__ import annotations

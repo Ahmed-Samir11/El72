@@ -1,7 +1,8 @@
 """Unit tests for tracked items API endpoints."""
 
+import math
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 
 os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
@@ -14,6 +15,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from services.api import credits as credits_module
+from services.api import usage_limits
 from services.api.dependencies import get_current_user, get_db
 from services.api.models import Base as ApiBase
 from services.api.models import User
@@ -898,3 +901,176 @@ def test_refresh_tracked_item_price_404_and_400(client, db_session):
     session.add(item)
     session.commit()
     assert api.post(f"/tracked-items/{item.id}/refresh").status_code == 400
+
+
+# --- fair-use enforcement on the creation endpoints (plans/p3 WS1) ---------
+
+
+def _tracker_payload(product_id):
+    return {
+        "canonical_product_id": product_id,
+        "specs": {"brand": "Lenovo"},
+        "stores": [
+            {
+                "store_id": "amazon_eg",
+                "store_sku": "SKU-1",
+                "store_url": "https://amazon.eg/dp/SKU-1",
+            }
+        ],
+    }
+
+
+def test_fair_use_cap_answers_409_with_a_structured_detail(client, monkeypatch):
+    """The 101st tracker (here: the 2nd at cap 1) is a ceiling, not a purchase.
+
+    The client renders its dialog from these numbers, so the payload shape is
+    pinned, not just the status.
+    """
+    api, session, user = client
+    monkeypatch.setenv("CREDITS_ENFORCEMENT", "fair_use")
+    monkeypatch.setattr(usage_limits, "MIN_CREATION_INTERVAL_SECONDS", 0.0)
+    monkeypatch.setenv("FAIR_USE_MAX_TRACKERS", "1")
+
+    assert (
+        api.post("/tracked-items/", json=_tracker_payload("cap-item-1")).status_code
+        == 201
+    )
+
+    resp = api.post("/tracked-items/", json=_tracker_payload("cap-item-2"))
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"] == {
+        "code": "fair_use_cap",
+        "active_trackers": 1,
+        "cap": 1,
+    }
+    assert session.query(TrackedItem).count() == 1
+    assert session.query(TrackedItemStore).count() == 1
+
+
+def test_free_tracking_under_fair_use_never_touches_the_ledger(client, monkeypatch):
+    """Two trackers cost zero credits: the ledger stays untouched (M5/M1)."""
+    api, session, user = client
+    monkeypatch.setenv("CREDITS_ENFORCEMENT", "fair_use")
+    monkeypatch.setattr(usage_limits, "MIN_CREATION_INTERVAL_SECONDS", 0.0)
+
+    assert (
+        api.post("/tracked-items/", json=_tracker_payload("free-1")).status_code == 201
+    )
+    assert (
+        api.post("/tracked-items/", json=_tracker_payload("free-2")).status_code == 201
+    )
+
+    assert session.query(TrackedItem).count() == 2
+    assert credits_module.get_balance(session, user) == 100
+    assert session.query(credits_module.CreditTransaction).count() == 0
+
+
+def test_rapid_creations_answer_429_with_a_countdown(client, monkeypatch):
+    """The rate window needs a number the client can count down from.
+
+    Before this plan, 429 existed only in a comment
+    (tracked_items_repository.dart) — the Retry-After header is the contract
+    the countdown is built on. The clock is frozen so the assertion is about
+    the window, not about how long the fixture took to run.
+    """
+    api, session, user = client
+    monkeypatch.setenv("CREDITS_ENFORCEMENT", "fair_use")
+    frozen = datetime(2026, 10, 29, 12, 0, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(usage_limits, "_now", lambda: frozen)
+
+    assert (
+        api.post("/tracked-items/", json=_tracker_payload("fast-1")).status_code == 201
+    )
+
+    resp = api.post("/tracked-items/", json=_tracker_payload("fast-2"))
+    assert resp.status_code == 429, resp.text
+    detail = resp.json()["detail"]
+    assert detail["code"] == "creation_rate_limit"
+    assert (
+        0 < detail["retry_after_seconds"] <= usage_limits.MIN_CREATION_INTERVAL_SECONDS
+    )
+    # The two ways to count down must agree: the header is a whole second and
+    # never shorter than the body's number, so waiting either one clears the
+    # window the server will actually enforce.
+    assert int(resp.headers["retry-after"]) >= math.ceil(detail["retry_after_seconds"])
+    assert session.query(TrackedItem).count() == 1
+
+
+def test_duplicate_creation_attempts_still_charge_the_window(client, monkeypatch):
+    """A repeated URL is still a creation attempt — not a free way to hammer.
+
+    Enforcement runs ahead of the duplicate check, so an immediate duplicate
+    answers 429; once the window is clear the same URL answers the duplicate
+    409 with its prose detail — which is how the client tells the two 409s
+    apart from a cap answer (a structured detail). The clock is frozen because
+    the first creation's background price fetch burns several real seconds, which
+    would otherwise clear the window on its own.
+    """
+    api, session, user = client
+    monkeypatch.setenv("CREDITS_ENFORCEMENT", "fair_use")
+    frozen = datetime(2026, 10, 29, 12, 0, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(usage_limits, "_now", lambda: frozen)
+    url = "https://amazon.eg/dp/DUP-THROTTLE"
+
+    assert api.post("/tracked-items/from-url", json={"url": url}).status_code == 201
+
+    resp = api.post("/tracked-items/from-url", json={"url": url})
+    assert resp.status_code == 429, resp.text
+
+    monkeypatch.setattr(usage_limits, "MIN_CREATION_INTERVAL_SECONDS", 0.0)
+    resp_again = api.post("/tracked-items/from-url", json={"url": url})
+    assert resp_again.status_code == 409, resp_again.text
+    assert resp_again.json()["detail"] == "This product is already being tracked"
+
+
+def test_from_url_creation_is_bounded_the_same_way(client, monkeypatch):
+    """Both creation routes enforce, so a cap cannot be routed around."""
+    api, session, user = client
+    monkeypatch.setenv("CREDITS_ENFORCEMENT", "fair_use")
+    monkeypatch.setattr(usage_limits, "MIN_CREATION_INTERVAL_SECONDS", 0.0)
+    monkeypatch.setenv("FAIR_USE_MAX_TRACKERS", "1")
+
+    assert (
+        api.post(
+            "/tracked-items/from-url",
+            json={"url": "https://amazon.eg/dp/FAIR-USE-1"},
+        ).status_code
+        == 201
+    )
+
+    resp = api.post(
+        "/tracked-items/from-url", json={"url": "https://amazon.eg/dp/FAIR-USE-2"}
+    )
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"]["code"] == "fair_use_cap"
+    assert session.query(TrackedItem).count() == 1
+
+
+def test_legacy_credit_deduction_still_answers_402_under_on_mode(client, monkeypatch):
+    """The old model is retained, not weakened: CREDITS_ENFORCEMENT=on keeps
+    charging one credit per tracker and still refuses at zero with 402."""
+    api, session, user = client
+    monkeypatch.setenv("CREDITS_ENFORCEMENT", "on")
+
+    credits_module.deduct(session, user, amount=100)
+    assert credits_module.get_balance(session, user) == 0
+
+    resp = api.post("/tracked-items/", json=_tracker_payload("legacy-item"))
+    assert resp.status_code == 402, resp.text
+    assert session.query(TrackedItem).count() == 0
+
+
+def test_unconfigured_enforcement_defaults_to_fair_use_end_to_end(client, monkeypatch):
+    """A backend that forgets the variable must not fall back into payment friction."""
+    api, session, user = client
+    monkeypatch.delenv("CREDITS_ENFORCEMENT", raising=False)
+    monkeypatch.setattr(usage_limits, "MIN_CREATION_INTERVAL_SECONDS", 0.0)
+    monkeypatch.setenv("FAIR_USE_MAX_TRACKERS", "1")
+
+    assert (
+        api.post("/tracked-items/", json=_tracker_payload("default-1")).status_code
+        == 201
+    )
+    resp = api.post("/tracked-items/", json=_tracker_payload("default-2"))
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"]["code"] == "fair_use_cap"
