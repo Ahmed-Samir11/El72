@@ -1,17 +1,23 @@
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../../../l10n/app_localizations.dart';
 import '../../core/format/price_format.dart';
 import '../../core/styles/app_colors.dart';
 import '../../core/styles/app_theme.dart';
 import '../../data/models/deal_model.dart';
+import '../common/merchant_link.dart';
 import 'product_image.dart';
 
 class DealCard extends StatelessWidget {
   final Deal deal;
 
-  const DealCard({super.key, required this.deal});
+  /// The component that resolves the tap through the affiliate redirect
+  /// before opening it (plan p1). Injected in tests; the default performs
+  /// the real resolve + external-browser launch.
+  final MerchantLink merchantLink;
+
+  DealCard({super.key, required this.deal, MerchantLink? merchantLink})
+    : merchantLink = merchantLink ?? MerchantLink.shared;
 
   @override
   Widget build(BuildContext context) {
@@ -25,10 +31,19 @@ class DealCard extends StatelessWidget {
       elevation: 2,
       child: InkWell(
         onTap: () async {
-          final uri = Uri.tryParse(deal.sourceUrl);
-          if (uri == null || !await launchUrl(uri)) {
+          // Taken before any await: the resolve request can outlive the
+          // card, and re-looking the messenger up on a disposed context
+          // throws (same rule as the search-result card).
+          final messenger = ScaffoldMessenger.of(context);
+          final opened = await merchantLink.open(
+            targetUrl: deal.sourceUrl,
+            source: sourceDealFeed,
+            sku: deal.sku.isEmpty ? null : deal.sku,
+            dealId: deal.id.isEmpty ? null : deal.id,
+          );
+          if (!opened) {
             if (!context.mounted) return;
-            ScaffoldMessenger.of(context).showSnackBar(
+            messenger.showSnackBar(
               SnackBar(
                 content: Text(
                   AppLocalizations.of(context).unableToOpen(deal.title),

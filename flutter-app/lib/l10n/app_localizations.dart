@@ -758,6 +758,13 @@ abstract class AppLocalizations {
   /// **'Target: {price}'**
   String targetLabel(String price);
 
+  /// Secondary action on a tracker card that opens the tracked product page
+  /// at the merchant (the tap is affiliate-attributed; plans/p1).
+  ///
+  /// In en, this message translates to:
+  /// **'Open product'**
+  String get openProduct;
+
   /// No description provided for @currentLabel.
   ///
   /// In en, this message translates to:

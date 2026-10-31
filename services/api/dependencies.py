@@ -41,6 +41,11 @@ pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 # JWT
 security = HTTPBearer()
 
+# Optional credential for surfaces that work with OR without a session (the
+# affiliate redirect is one: the landing page calls it too). auto_error=False
+# so a missing bearer token is None, not an automatic 403.
+optional_security = HTTPBearer(auto_error=False)
+
 
 # Dependency
 def get_db():
@@ -68,6 +73,33 @@ def verify_password(plain_password, hashed_password):
 
 def get_password_hash(password):
     return pwd_context.hash(password)
+
+
+def get_optional_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(optional_security),
+    db: Session = Depends(get_db),
+):
+    """Resolve the caller's user when a valid bearer token is presented.
+
+    Attribution without authentication: a click from a signed-in app user is
+    attributed by user_id; a click from the landing page or any token-less
+    caller is still logged with user_id NULL. Malformed/expired tokens are
+    deliberately NOT an error here — rejecting them would turn attribution
+    into an auth wall on a public redirect. Never returns a phone number; the
+    User row's id is all that reaches affiliate_clicks.
+    """
+    if credentials is None:
+        return None
+    try:
+        payload = jwt.decode(
+            credentials.credentials, SECRET_KEY, algorithms=[ALGORITHM]
+        )
+        phone = payload.get("sub")
+    except JWTError:
+        return None
+    if not isinstance(phone, str) or not phone:
+        return None
+    return db.query(User).filter(User.phone == phone, User.status == "ACTIVE").first()
 
 
 def create_access_token(

@@ -128,9 +128,9 @@ def test_copilot_hook_entries_are_well_formed():
         )
 
         timeout = entry.get("timeoutSec")
-        assert isinstance(timeout, int) and not isinstance(timeout, bool), (
-            f"{label}: 'timeoutSec' is required by the loader"
-        )
+        assert isinstance(timeout, int) and not isinstance(
+            timeout, bool
+        ), f"{label}: 'timeoutSec' is required by the loader"
         assert 0 < timeout <= 300, f"{label}: odd timeout {timeout}"
 
         matcher = entry.get("matcher")
@@ -237,9 +237,7 @@ def test_claude_side_settings_are_kept_in_sync():
                 assert hook["timeout"] > 0, hook
                 commands.append(hook["command"])
 
-    claude_scripts = {
-        Path(_command_parts(command)[-1]).name for command in commands
-    }
+    claude_scripts = {Path(_command_parts(command)[-1]).name for command in commands}
     copilot_scripts = {
         Path(_command_parts(entry["command"])[-1]).name
         for _, entry in _copilot_entries()

@@ -12,6 +12,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from services.api.affiliate import missing_affiliate_tags
 from services.api.card_payment_models import CardPayment  # noqa: F401
 from services.api.dependencies import get_current_user, get_db
 from services.api.manual_payment_models import ManualPayment  # noqa: F401
@@ -210,6 +211,27 @@ app.include_router(subscription_router.router)
 # Demo mode: seed realistic demo data on startup (idempotent).
 # Toggle with DEMO_MODE=True (default) for the investor demo.
 DEMO_MODE = os.getenv("DEMO_MODE", "False").lower() in ("1", "true", "yes", "on")
+
+
+@app.on_event("startup")
+def _warn_on_unconfigured_affiliate_tags() -> None:
+    """An unconfigured *_AFFILIATE_TAG must be loud in production (plan p1, C8).
+
+    Without a tag, build_affiliate_url passes the merchant URL through:
+    every click is still logged but earns nothing. That difference — "we
+    measured zero" vs "we forgot to configure" — must be an operator-visible
+    startup WARNING naming the store, not a silent no-op. Outside
+    APP_ENV=production, empty tags are the documented dev default and stay
+    quiet (GET /affiliate/config reports presence in every mode).
+    """
+    if os.getenv("APP_ENV", "").strip().lower() != "production":
+        return
+    for store_id, env_var in missing_affiliate_tags():
+        logger.warning(
+            "Affiliate tag not configured: clicks for this store are "
+            "attributed but earn no revenue",
+            extra={"store_id": store_id, "env_var": env_var},
+        )
 
 
 @app.on_event("startup")

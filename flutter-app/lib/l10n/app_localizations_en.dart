@@ -372,6 +372,9 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get openProduct => 'Open product';
+
+  @override
   String currentLabel(String price) {
     return 'Current: $price';
   }

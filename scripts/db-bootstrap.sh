@@ -66,6 +66,11 @@ apply_file "$DATABASE_URL" \
 apply_file "$DATABASE_URL" \
     infra/sql/migrations/0011_chatbot_query_cache.sql
 
+# Affiliate click attribution (plans/p1): user/session/source/category context
+# on affiliate_clicks + the clicked_at -> created_at rename.
+apply_file "$DATABASE_URL" \
+    infra/sql/migrations/0012_affiliate_click_attribution.sql
+
 # Same sequence for the independent TimescaleDB instance.
 apply_file "$TIMESCALE_URL" \
     infra/sql/schema/timescaledb.sql

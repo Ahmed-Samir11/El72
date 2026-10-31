@@ -131,7 +131,8 @@ class _TrackersTab extends ConsumerWidget {
                   itemBuilder: (context, i) {
                     final item = items[i];
                     final lowest = item.lowestPrice;
-                    // Swipe left to delete, after a confirmation dialog.
+                    // Swipe toward the start edge (left in LTR, right in RTL)
+                    // to delete, after a confirmation dialog.
                     return Dismissible(
                       key: ValueKey('tracker-${item.id}'),
                       direction: DismissDirection.endToStart,
@@ -155,6 +156,8 @@ class _TrackersTab extends ConsumerWidget {
                         hasPrice: lowest != null && lowest.priceLocal > 0,
                         isActive: item.isActive,
                         fetchStatus: item.fetchStatus,
+                        productUrl: lowest?.url ?? '',
+                        sku: item.canonicalProductId,
                         onTap: () {
                           Navigator.push(
                             context,

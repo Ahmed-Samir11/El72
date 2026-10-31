@@ -753,8 +753,7 @@ class AlfrensiaScraper(BaseScraper):
             pass
         try:
             btn = await page.query_selector(
-                "button[name='add'], .product-form__submit,"
-                ' button.add-to-cart'
+                "button[name='add'], .product-form__submit," ' button.add-to-cart'
             )
             if btn:
                 disabled = await btn.get_attribute("disabled")
@@ -780,7 +779,9 @@ class AlfrensiaScraper(BaseScraper):
 
     async def search_product(self, page: Page, product_name: str) -> Optional[str]:
         try:
-            search_url = f"https://alfrensia.com/en/search?q={'+'.join(product_name.split())}"
+            search_url = (
+                f"https://alfrensia.com/en/search?q={'+'.join(product_name.split())}"
+            )
             await page.goto(search_url, timeout=20000)
             await page.wait_for_timeout(2000)
 
@@ -793,11 +794,10 @@ class AlfrensiaScraper(BaseScraper):
                     t = text.lower()
                     h = (href or "").lower()
                     token_hits = sum(1 for tok in target_tokens if tok in t or tok in h)
-                    length_bonus = sum(
-                        len(tok)
-                        for tok in target_tokens
-                        if tok in t or tok in h
-                    ) / 50.0
+                    length_bonus = (
+                        sum(len(tok) for tok in target_tokens if tok in t or tok in h)
+                        / 50.0
+                    )
                     phrase = " ".join(target_tokens)
                     phrase_bonus = 1 if phrase and phrase in t else 0
                     return token_hits + length_bonus + phrase_bonus
@@ -871,8 +871,7 @@ class SigmaComputerScraper(BaseScraper):
             pass
         try:
             btn = await page.query_selector(
-                "button[name='add'], .product-form__submit,"
-                ' button.add-to-cart'
+                "button[name='add'], .product-form__submit," ' button.add-to-cart'
             )
             if btn:
                 disabled = await btn.get_attribute("disabled")
@@ -911,11 +910,10 @@ class SigmaComputerScraper(BaseScraper):
                     t = text.lower()
                     h = (href or "").lower()
                     token_hits = sum(1 for tok in target_tokens if tok in t or tok in h)
-                    length_bonus = sum(
-                        len(tok)
-                        for tok in target_tokens
-                        if tok in t or tok in h
-                    ) / 50.0
+                    length_bonus = (
+                        sum(len(tok) for tok in target_tokens if tok in t or tok in h)
+                        / 50.0
+                    )
                     phrase = " ".join(target_tokens)
                     phrase_bonus = 1 if phrase and phrase in t else 0
                     return token_hits + length_bonus + phrase_bonus

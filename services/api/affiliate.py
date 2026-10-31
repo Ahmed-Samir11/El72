@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 STORE_HOSTS = {
@@ -11,14 +12,119 @@ STORE_HOSTS = {
     "jumia_eg": {"jumia.com.eg", "www.jumia.com.eg"},
 }
 
+# Per-store affiliate program tag (monetization constants come from env —
+# never a global constant). The env contract mirrors .env.example.
+AFFILIATE_TAG_ENV_VARS = {
+    "amazon_eg": "AMAZON_AFFILIATE_TAG",
+    "noon_eg": "NOON_AFFILIATE_TAG",
+    "jumia_eg": "JUMIA_AFFILIATE_TAG",
+}
+
+# Stable app-surface identifiers for affiliate_clicks.source (report §11: CTR
+# must be separable per surface). A value outside this set is recorded as
+# 'unknown' rather than dropped: an unknown source is still a click.
+VALID_CLICK_SOURCES = frozenset(
+    {"deal_feed", "search_result", "tracker_card", "browse", "web", "unknown"}
+)
+
 
 def _affiliate_tag(store_id: str) -> str:
-    env_names = {
-        "amazon_eg": "AMAZON_AFFILIATE_TAG",
-        "noon_eg": "NOON_AFFILIATE_TAG",
-        "jumia_eg": "JUMIA_AFFILIATE_TAG",
+    return os.getenv(AFFILIATE_TAG_ENV_VARS.get(store_id, ""), "").strip()
+
+
+def tag_presence() -> dict[str, bool]:
+    """Per-store affiliate tag presence (env var set and non-blank).
+
+    Consumed by the /affiliate/config admin report and the production startup
+    warning: an unconfigured tag means "no revenue path configured", never
+    "no traffic" — the click is still logged (build_affiliate_url passes the
+    URL through).
+    """
+    return {
+        store_id: bool(_affiliate_tag(store_id)) for store_id in AFFILIATE_TAG_ENV_VARS
     }
-    return os.getenv(env_names.get(store_id, ""), "").strip()
+
+
+def missing_affiliate_tags() -> list[tuple[str, str]]:
+    """(store_id, env_var) pairs whose affiliate tag is unset in production."""
+    return [
+        (store_id, env_name)
+        for store_id, env_name in AFFILIATE_TAG_ENV_VARS.items()
+        if not _affiliate_tag(store_id)
+    ]
+
+
+def normalize_click_source(source: str | None) -> str:
+    """Clamp a client-supplied source to the allowlist.
+
+    The surface label comes from the client, so it is context, not identity:
+    anything unrecognized (or absent) becomes 'unknown' — the click stays
+    attributable and no caller can inject arbitrary strings into the metric
+    dimension.
+    """
+    value = (source or "").strip().lower()
+    return value if value in VALID_CLICK_SOURCES else "unknown"
+
+
+# Bounded, printable, hostile-free charset for a client-declared category. A
+# category is display context (unlike source, it is not an enum the app
+# controls), so anything outside this set — markup, scheme-ish or path-like
+# tokens, control characters — is dropped to NULL rather than stored and later
+# rendered. Unicode word characters are in-set (the app ships an Arabic UI,
+# so a category label may legitimately be Arabic); slash stays out — a real
+# label never needs one, while 'example.com/path' always has one.
+_CATEGORY_RE = re.compile(r"[\w \(\)\,\.'+\-&]{1,100}\Z")
+
+
+def normalize_category(category: str | None) -> str | None:
+    """Clamp a client-supplied category to a safe display string or None.
+
+    Returns the trimmed value when it matches the bounded charset (Unicode
+    letters/digits and a small set of separators), otherwise None — so a
+    probe with markup or a URL-shaped category cannot pollute the §11
+    category dimension. None then lets the server fill the real category
+    from its own alerts context.
+    """
+    value = (category or "").strip()
+    return value if value and _CATEGORY_RE.match(value) else None
+
+
+# Tokens that are logged and may later surface in web pages: opaque ids
+# plus a few separators — never markup, spaces or control bytes.
+_SAFE_TOKEN_RE = re.compile(r"[A-Za-z0-9._+\-]{1,256}\Z")
+
+
+def normalize_opaque_token(value: str | None, max_length: int = 128) -> str | None:
+    """Trim a caller-supplied session/event token and drop anything outside
+    the safe charset (empty or oversized-after-trim values go to NULL too,
+    so one client cannot split a session's CTR across ' x ' and 'x').
+    """
+    token = (value or "").strip()
+    return (
+        token
+        if token and len(token) <= max_length and _SAFE_TOKEN_RE.match(token)
+        else None
+    )
+
+
+# Allowlist charset for opaque ids: letters, digits and the punctuation real
+# product ids actually use — no colon (scheme), slash (path), '?'/'#' (query).
+_OPAQUE_ID_RE = re.compile(r"[A-Za-z0-9._+\-]{1,255}\Z")
+
+
+def is_opaque_id(value: str | None) -> bool:
+    """True when a client-supplied id is an opaque token, not a URL.
+
+    sku/deal_id identify products on the server's own tables; a caller that
+    smuggles anything URL-shaped (a scheme, a path, a host with dots, query
+    punctuation) into an id field is probing the redirect surface, so the
+    request is rejected (400) instead of logged. Allowlisting the charset
+    beats blacklisting '://' shapes: 'mailto:x', 'example.com/p' or '//evil'
+    are all refused, while real opaque product ids pass.
+    """
+    if value is None:
+        return True
+    return _OPAQUE_ID_RE.match(value.strip()) is not None
 
 
 def _host_allowed(store_id: str, hostname: str) -> bool:
@@ -53,10 +159,17 @@ def build_affiliate_url(store_id: str, target_url: str) -> str:
 
 
 def store_for_url(target_url: str) -> str:
-    """Return the supported store ID for a merchant URL."""
+    """Return the supported store ID for a merchant URL.
+
+    HTTPS only: the redirect hands the caller a tagged affiliate URL and a
+    store tag is the monetization credential — over a plaintext http hop it
+    could be stripped or intercepted, and every supported merchant serves
+    https. An http merchant link is refused (the client then opens the
+    ORIGINAL url unattributed; attribution is never a precondition).
+    """
     parsed = urlparse(target_url)
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-        raise ValueError("target_url must be an HTTP or HTTPS URL")
+    if parsed.scheme != "https" or not parsed.hostname:
+        raise ValueError("target_url must be an HTTPS URL")
     for store_id in STORE_HOSTS:
         if _host_allowed(store_id, parsed.hostname):
             return store_id
