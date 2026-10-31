@@ -369,6 +369,20 @@ Gates: `flutter test` - 300 passed; `flutter test --dart-define=ENABLE_PAYMENTS=
 
 Why they were not written here, concretely: this session's model cannot emit Arabic script. Three attempts to add the values to `app_ar.arb` came back Latin-transliterated (`metb'im` for `metb'im`), and the corrupted keys were reverted rather than shipped. `app_ar.arb` on `main` is intact human Arabic, so the repo pipeline is not at fault - only generation from this model. Unblock: the maintainer pastes the six values, or the same work runs on an Arabic-competent model.
 
+### Review round 1 (HGM on PR #52) - verdicts
+
+| Finding | Verdict |
+|---|---|
+| **[CRITICAL]** the release-posture config test fails under `ENABLE_PAYMENTS=false` | Real. A test cannot observe whether a define was *absent* rather than false, so asserting `isTrue` broke the off half of CI. Replaced with a test that reads `.github/workflows/ci.yml` and requires both the release define and the off-posture test run - the artifact's own build command is the thing that can be pinned. |
+| **[WARNING]** payments-off build still exposed credit-balance UI | Real. The whole credit tile (heading, balance line, `Manage`) is now absent under the flag, asserted in both postures, and `creditBalanceProvider` is not watched at all - a release build never requests a route the backend does not mount. |
+| **[WARNING]** the generic error path can surface machine-facing copy for fair-use refusals | Real for the internals half. The cap refusal now shows the already-bilingual `reachedLimitTitle`; the rate refusal renders the ordinary transport line from the retained `cause`, so no exception class name can reach a screen. The count-and-countdown dialog itself stays blocked on the ARB keys. |
+| **[WARNING]** `Retry-After` as an HTTP date degrades to a zero wait | Documented and pinned by a test: 0 means "no usable countdown", and the dialog must drop the number then - a separate copy row, added below. |
+| **[WARNING]** the plan said the flag defaults to `false` | Doc drift fixed in WS2 above: the shipped code defaults to `true` and CI pins the release posture at the build command. |
+| **[WARNING]** client and backend defaults differ | Kept deliberately: the server's default is the shipped posture (`PAYMENTS_ENABLED=false`), the client's default is the dev posture. Both directions are gated in CI; recorded in section 11. |
+| **[INFO]** use `const` for the local flag | Done. |
+| **[INFO]** live-mode `GET /usage/limits` failure discards the original response | Kept: `credits_repository.dart` and `payment_repository.dart` do exactly this; changing the transport convention is outside this PR. |
+| **[INFO]** the PR contains unrelated plan documents | Real, and my first check was wrong: `git add plans` swept the untracked P4/P5 drafts into the client commit. Removed from the branch (`git rm --cached`, files kept on disk); the branch diff now carries only `plans/p3-...md`. Lesson: stage paths, not directories. |
+
 ### WS4 unblocker: the exact copy PR B needs (owner to translate)
 
 The model running this session cannot emit Arabic script — attempted three times, every
@@ -387,6 +401,14 @@ Keys to add, with the English source and where it renders:
 | `fairUseCapBody(cap)` | 409 cap dialog body | "You already have {cap} trackers running, which is the maximum. Close one to make room, or tap Not now." |
 | `creationWaitTitle` | 429 dialog title | "One tracker at a time" |
 | `creationWaitBody(seconds)` | 429 dialog body | "You just added a tracker. Wait {seconds} seconds before adding the next one." |
+| `creationWaitBodyNoCount()` | 429 dialog when `Retry-After` is an HTTP date (`retryAfterSeconds == 0`) | "One tracker at a time. Tap Start Tracking again when you are ready." |
+
+
+The product's own Arabic register for these strings is already on disk: `app_ar.arb`
+(UI nouns: `متba` tracker / `متban` trackers, `الرصيد` credit, `خط` plan) and `short_ar.txt`
+at the repo root (`إلحق it tracks products you care about on Amazon Egypt, Noon and Jumia`),
+which uses the verb form `تtracks`. Whichever the owner chooses, the six values above should
+reuse it rather than invent a third term.
 | `creationWaitBodyNoCount(seconds omitted)` | 429 dialog when `Retry-After` is an HTTP date the client cannot resolve (`retryAfterSeconds == 0`) | "One tracker at a time. Tap Start Tracking again when you are ready." |
 
 Reused, already bilingual, no new translation needed: `reachedLimitTitle` (cap dialog
