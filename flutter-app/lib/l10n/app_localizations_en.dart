@@ -394,6 +394,26 @@ class AppLocalizationsEn extends AppLocalizations {
       'Couldn\'t refresh the price right now - try again in a moment.';
 
   @override
+  String get deleteTrackerTitle => 'Delete tracker?';
+
+  @override
+  String deleteTrackerBody(String title) {
+    return 'Stop tracking \"$title\"? Its price history will be removed.';
+  }
+
+  @override
+  String get deleteTrackerConfirm => 'Delete';
+
+  @override
+  String get trackerDeleted => 'Tracker deleted';
+
+  @override
+  String get retry => 'Retry';
+
+  @override
+  String get trackerDeleteFailed => 'Couldn\'t delete the tracker - try again.';
+
+  @override
   String genericLoadError(String error) {
     return 'Failed to load.\n$error';
   }

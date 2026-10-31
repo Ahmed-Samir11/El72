@@ -477,11 +477,52 @@ CREATE TABLE IF NOT EXISTS chat_search_results (
     currency TEXT NOT NULL DEFAULT 'EGP',
     url TEXT NOT NULL,
     image_url TEXT,
+    -- Rank inside the list the user saw, so "add the third one" resolves to
+    -- the same product after a restart (the in-process cache is an optimization).
+    position INTEGER NOT NULL DEFAULT 0,
+    -- Shared by the rows of one search. Both searches of a session restart at
+    -- position 0, so the group id says which rows belong to the same list; the
+    -- newest group is found by created_at, never by ordering the uuids.
+    -- Rows written before migration 0011 have it NULL until that migration
+    -- stamps them with one deterministic id per session.
+    search_id UUID,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Warm store searches, keyed by the normalized (store, query, price window)
+-- the chatbot builds. Mirrored from its in-process cache so a repeat search
+-- answers from the database instead of re-crawling the store, and so warm
+-- results survive a container restart. Writes upsert on cache_key, and expired
+-- rows are swept (first cache read of a process, then every 20 writes), so the
+-- table grows with distinct queries, not with page size or repeat searches.
+CREATE TABLE IF NOT EXISTS chat_query_cache (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    cache_key TEXT NOT NULL UNIQUE,
+    store_id TEXT NOT NULL,
+    results JSONB NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    -- Epoch seconds rather than a timestamptz: the chatbot compares expiry
+    -- numerically, which keeps the query identical on PostgreSQL and on the in-memory
+    -- SQLite its unit tests use. Negative (empty-result) entries get a short
+    -- expiry here, not the full CACHE_TTL_SECONDS.
+    expires_at_epoch BIGINT NOT NULL,
+    -- Named exactly as 0011_chatbot_query_cache.sql adds it, so a fresh database
+    -- and a migrated one agree on the constraint, not just the column type.
+    CONSTRAINT chat_query_cache_expiry_non_negative CHECK (expires_at_epoch >= 0)
 );
 
 CREATE INDEX IF NOT EXISTS idx_chat_messages_session_id ON chat_messages(session_id);
 CREATE INDEX IF NOT EXISTS idx_chat_search_results_session_id ON chat_search_results(session_id);
+-- Ordinal requests ("أadd رقم 3") filter a session by position; without the
+-- pair, PostgreSQL scans every row the session ever produced.
+-- Which search is newest is decided by created_at inside one session, so the
+-- session index above already bounds that lookup to the session's own rows;
+-- the triple below serves the grouped read itself. A separate
+-- (session_id, created_at) index would buy little on a table that holds at most
+-- a few dozen rows per search.
+CREATE INDEX IF NOT EXISTS idx_chat_search_results_session_search
+    ON chat_search_results (session_id, search_id, position);
+CREATE INDEX IF NOT EXISTS idx_chat_query_cache_expiry ON chat_query_cache(expires_at_epoch);
 CREATE INDEX IF NOT EXISTS idx_chat_sessions_user_id ON chat_sessions(user_id);
 
 -- Keep updated_at columns current.

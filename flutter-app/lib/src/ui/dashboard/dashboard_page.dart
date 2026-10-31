@@ -4,6 +4,7 @@ import '../../../l10n/app_localizations.dart';
 import '../../core/format/error_message.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../data/models/tracked_item_model.dart';
 import '../../data/providers.dart';
 import '../../data/config.dart';
 import '../../routing/app_router.dart';
@@ -90,9 +91,26 @@ class _TrackersTab extends ConsumerWidget {
     return itemsAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (e, _) => Center(
-        child: Text(
-          AppLocalizations.of(context).failedToLoadTrackers(errorMessage(e)),
-          textAlign: TextAlign.center,
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                AppLocalizations.of(
+                  context,
+                ).failedToLoadTrackers(errorMessage(e)),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 12),
+              // The provider caches the failure, so offer an explicit retry.
+              FilledButton.icon(
+                onPressed: () => ref.invalidate(trackedItemsProvider),
+                icon: const Icon(Icons.refresh),
+                label: Text(AppLocalizations.of(context).retry),
+              ),
+            ],
+          ),
         ),
       ),
       data: (items) {
@@ -123,58 +141,76 @@ class _TrackersTab extends ConsumerWidget {
                   itemBuilder: (context, i) {
                     final item = items[i];
                     final lowest = item.lowestPrice;
-                    return TrackerCard(
-                      imageUrl: lowest?.imageUrl ?? '',
-                      title: item.displayName,
-                      currentPrice: lowest?.priceLocal ?? 0.0,
-                      targetPrice: item.targetPrice ?? 0.0,
-                      hasPrice: lowest != null && lowest.priceLocal > 0,
-                      isActive: item.isActive,
-                      fetchStatus: item.fetchStatus,
-                      productUrl: lowest?.url ?? '',
-                      sku: item.canonicalProductId,
-                      onTap: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => PriceHistoryPage(
-                              sku: item.canonicalProductId,
-                              title: item.displayName,
+                    // Swipe toward the start edge (left in LTR, right in RTL)
+                    // to delete, after a confirmation dialog.
+                    return Dismissible(
+                      key: ValueKey('tracker-${item.id}'),
+                      direction: DismissDirection.endToStart,
+                      background: Container(
+                        alignment: AlignmentDirectional.centerEnd,
+                        padding: const EdgeInsets.symmetric(horizontal: 24),
+                        color: Theme.of(context).colorScheme.error,
+                        child: Icon(
+                          Icons.delete_outline,
+                          color: Theme.of(context).colorScheme.onError,
+                        ),
+                      ),
+                      confirmDismiss: (_) =>
+                          _confirmAndDeleteTracker(context, ref, item),
+                      onDismissed: (_) => ref.invalidate(trackedItemsProvider),
+                      child: TrackerCard(
+                        imageUrl: lowest?.imageUrl ?? '',
+                        title: item.displayName,
+                        currentPrice: lowest?.priceLocal ?? 0.0,
+                        targetPrice: item.targetPrice ?? 0.0,
+                        hasPrice: lowest != null && lowest.priceLocal > 0,
+                        isActive: item.isActive,
+                        fetchStatus: item.fetchStatus,
+                        productUrl: lowest?.url ?? '',
+                        sku: item.canonicalProductId,
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => PriceHistoryPage(
+                                sku: item.canonicalProductId,
+                                title: item.displayName,
+                              ),
                             ),
-                          ),
-                        );
-                      },
-                      // Retryable fetch failure: re-trigger the backend fetch
-                      // (the server resets the status to "fetching"), then
-                      // reload so the card shows the spinner again.
-                      onRetry: () async {
-                        try {
-                          await ref
-                              .read(trackedItemsRepositoryProvider)
-                              .refreshPrice(item.id);
-                        } catch (_) {
-                          // The refresh request itself failed (DioException
-                          // on 429/offline/5xx, or anything else unexpected):
-                          // tell the user instead of letting the error escape
-                          // the tap handler — the card stays in its failure
-                          // state so they can retry later.
-                          if (context.mounted) {
-                            ScaffoldMessenger.of(context)
-                              ..hideCurrentSnackBar()
-                              ..showSnackBar(
-                                SnackBar(
-                                  content: Text(
-                                    AppLocalizations.of(
-                                      context,
-                                    ).priceRefreshFailed,
+                          );
+                        },
+                        // Retryable fetch failure: re-trigger the backend fetch
+                        // (the server resets the status to "fetching"), then
+                        // reload so the card shows the spinner again.
+                        onRetry: () async {
+                          try {
+                            await ref
+                                .read(trackedItemsRepositoryProvider)
+                                .refreshPrice(item.id);
+                          } catch (_) {
+                            // The refresh request itself failed (DioException
+                            // on 429/offline/5xx, or anything else unexpected):
+                            // tell the user instead of letting the error escape
+                            // the tap handler — the card stays in its failure
+                            // state so they can retry later.
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context)
+                                ..hideCurrentSnackBar()
+                                ..showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                      AppLocalizations.of(
+                                        context,
+                                      ).priceRefreshFailed,
+                                    ),
                                   ),
-                                ),
-                              );
+                                );
+                            }
+                            return;
                           }
-                          return;
-                        }
-                        ref.invalidate(trackedItemsProvider);
-                      },
+                          ref.invalidate(trackedItemsProvider);
+                        },
+                      ),
                     );
                   },
                 ),
@@ -189,6 +225,57 @@ class _AlertsTab extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     return const AlertsTab();
   }
+}
+
+/// Ask before deleting [item]; delete it on confirmation.
+///
+/// Returns true only when the backend deleted the tracker, so the swiped
+/// card is removed; on cancel or failure the card slides back.
+Future<bool> _confirmAndDeleteTracker(
+  BuildContext context,
+  WidgetRef ref,
+  TrackedItem item,
+) async {
+  final l10n = AppLocalizations.of(context);
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: Text(l10n.deleteTrackerTitle),
+      content: Text(l10n.deleteTrackerBody(item.displayName)),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(dialogContext, false),
+          child: Text(l10n.cancel),
+        ),
+        FilledButton(
+          style: FilledButton.styleFrom(
+            backgroundColor: Theme.of(dialogContext).colorScheme.error,
+            foregroundColor: Theme.of(dialogContext).colorScheme.onError,
+          ),
+          onPressed: () => Navigator.pop(dialogContext, true),
+          child: Text(l10n.deleteTrackerConfirm),
+        ),
+      ],
+    ),
+  );
+  if (confirmed != true) return false;
+
+  try {
+    await ref.read(trackedItemsRepositoryProvider).deleteTrackedItem(item.id);
+  } catch (_) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(content: Text(l10n.trackerDeleteFailed)));
+    }
+    return false;
+  }
+  if (context.mounted) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(l10n.trackerDeleted)));
+  }
+  return true;
 }
 
 class _DealsTab extends ConsumerWidget {

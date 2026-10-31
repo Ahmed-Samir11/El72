@@ -1,7 +1,21 @@
 """Deterministic Egyptian Arabic language and intent helpers."""
 
 import re
+import unicodedata
 from typing import Any, Dict, Optional
+
+
+def strip_arabic_marks(text: str) -> str:
+    """Drop Arabic diacritics and presentation marks from [text].
+
+    Keyboards emit combining marks inside ordinary words ("alif" typed as
+    ``a`` ``f`` + U+064F), which breaks every word-based lookup below. They
+    carry no meaning for parsing, so all entry points normalize them away first.
+    """
+    return "".join(
+        char for char in text if unicodedata.category(char) not in ("Mn", "Mc", "Me")
+    )
+
 
 _ARABIC_CHAR_RE = re.compile(r"[\u0600-\u06FF\u0750-\u077F]")
 _EASTERN_DIGITS = str.maketrans("٠١٢٣٤٥٦٧٨٩٬٫", "0123456789,.")
@@ -49,30 +63,30 @@ PRODUCT_TRANSLATIONS = {
     "كتب": "books",
 }
 
-# The alef in these keys is spelled two ways: bare, or with a hamza above it.
-# Queries carry both, so the hamza variant is folded onto the bare alef on the
-# input side (see _parse_number) and the keys are folded the same way here.
-# Without the fold, a key carrying a hamza alef is unreachable and its scale
-# word silently stops multiplying: the two-thousand word reads as one thousand.
-_HAMZA_ALEF = "\u0623"  # alef with hamza above
-_BARE_ALEF = "\u0627"  # alef
-
-
-_NUMBER_WORDS_BY_SPELLING = {
+# Scale words: a number written next to one of these is in thousands or
+# millions. They are kept apart from the spelled-out values so a thousand
+# cannot hide among the tens, and so "12 alf" reads as 12 x 1000 rather
+# than as a bare 1000.
+_MULTIPLIER_WORDS = {
     "الف": 1000,
     "ألف": 1000,
     "ألفين": 2000,
-    "مليون": 1_000_000,
-    "مليونين": 2_000_000,
-    "نص مليون": 500_000,
+    "مليون": 1000000,
+    "مليونين": 2000000,
+    "أف": 1000,
+}
+
+# Spelled-out values, including the Egyptian contractions for hundreds.
+_NUMBER_WORDS = {
+    "نص مليون": 500000,
     "مية": 100,
     "مائه": 100,
     "مئة": 100,
-    "عشر تلاف": 10_000,
-    "عشرة الاف": 10_000,
-    "عشرة آلاف": 10_000,
+    "عشر تلاف": 10000,
+    "عشرة الاف": 10000,
+    "عشرة آلاف": 10000,
     "خمستاشر": 15,
-    "خمستاشر ألف": 15_000,
+    "خمستاشر ألف": 15000,
     "خمسة عشر": 15,
     "عشرين": 20,
     "تلاتين": 30,
@@ -87,26 +101,33 @@ _NUMBER_WORDS_BY_SPELLING = {
     "تسعين": 90,
 }
 
+# Longest alternative first: "alfin" must win before "alf", and a spelled
+# number before the bare scale word inside it.
+_SCALE = "|".join(sorted(_MULTIPLIER_WORDS, key=len, reverse=True))
+_SPOKEN = "|".join(sorted(_NUMBER_WORDS, key=len, reverse=True))
+
+# One price amount, in either shape: digits with an optional scale word, or
+# a spelled-out number. Shared by the "under X" pattern and the trailing-value
+# pattern, so the two cannot drift apart.
+_AMOUNT = rf"(?:[0-9٠-٩][0-9٠-٩,٬.]*\s*(?:{_SCALE})?" rf"|{_SPOKEN}|{_SCALE})"
+
 _PRICE_PATTERN = re.compile(
     r"(?:بسعر\s+)?(?:أقل\s+من|اقل\s+من|تحت|بحد\s+أقصى|بحد\s+اقصى|"
     r"ميزانيتي|مش\s+أكتر\s+من|مش\s+اكتر\s+من|(?<![\u0600-\u06FF])ب)\s+"
-    r"([0-9٠-٩][0-9٠-٩,٬.]*\s*(?:ألف|الف|ألفين|مليون|مليونين)?|"
-    r"(?:ألفين|ألف|الف|خمستاشر(?:\s+ألف)?|نص مليون|عشر تلاف|عشرة آلاف|عشرة الاف))"
+    rf"({_AMOUNT})"
     r"\s*(?:جنيه|جنية|egp)?",
     re.IGNORECASE,
 )
 
-
-# Fold the table onto exactly the spelling the input is folded to, so every
-# scale word stays reachable however its alef is written.
-_NUMBER_WORDS = {
-    word.replace(_HAMZA_ALEF, _BARE_ALEF): value
-    for word, value in _NUMBER_WORDS_BY_SPELLING.items()
-}
+_STANDALONE_PRICE = re.compile(
+    rf"({_AMOUNT})\s*(?:جنيه|جنية|egp)?\s*$",
+    re.IGNORECASE,
+)
 
 
 def detect_language(text: str) -> str:
     """Return ``ar`` when at least 30% of alphabetic chars are Arabic."""
+    text = strip_arabic_marks(text)
     arabic_count = len(_ARABIC_CHAR_RE.findall(text))
     total_alpha = sum(1 for char in text if char.isalpha())
     return "ar" if total_alpha and arabic_count / total_alpha >= 0.3 else "en"
@@ -115,37 +136,15 @@ def detect_language(text: str) -> str:
 def _parse_number(value: str) -> Optional[float]:
     """Parse Arabic or Latin digits and common Egyptian number words."""
     normalized = value.translate(_EASTERN_DIGITS).strip().lower()
-    normalized = normalized.replace(_HAMZA_ALEF, _BARE_ALEF)
     normalized = re.sub(r"\s+", " ", normalized)
     if normalized in _NUMBER_WORDS:
         return float(_NUMBER_WORDS[normalized])
 
-    # A price filter usually arrives with the number and its scale word in
-    # one captured run ("12 alef-lam-fe"). ``_NUMBER_WORDS`` is the only place
-    # that writes out every spelling each scale word is typed with, so the
-    # scale word is looked up there instead of repeating a second list of
-    # spellings here: a hardcoded list that missed one spelling turned 12000
-    # into 12 EGP.
-    parts = normalized.split(" ")
-    for take in (2, 1):
-        if len(parts) <= take:
-            continue
-        factor = _NUMBER_WORDS.get(" ".join(parts[-take:]))
-        if factor is None:
-            continue
-        try:
-            digits = float(" ".join(parts[:-take]).replace(",", ""))
-        except ValueError:
-            continue
-        return digits * factor
-
     multiplier = 1
-    for word, factor in (
-        ("مليونين", 2_000_000),
-        ("مليون", 1_000_000),
-        ("ألفين", 2_000),
-        ("ألف", 1_000),
-        ("الف", 1_000),
+    for word, factor in sorted(
+        _MULTIPLIER_WORDS.items(),
+        key=lambda item: len(item[0]),
+        reverse=True,
     ):
         if word in normalized:
             normalized = normalized.replace(word, "").strip()
@@ -154,39 +153,22 @@ def _parse_number(value: str) -> Optional[float]:
     if not normalized:
         return float(multiplier)
     try:
-        return float(normalized.replace(",", "").replace("٬", ""))
+        return float(normalized.replace(",", "").replace("٬", "")) * multiplier
     except ValueError:
         return None
 
 
 def parse_arabic_intent(message: str) -> Dict[str, Any]:
     """Parse an Egyptian Arabic product query and optional maximum price."""
-    msg = message.strip().replace(_HAMZA_ALEF, _BARE_ALEF)
+    msg = strip_arabic_marks(message).strip()
     max_price: Optional[float] = None
     query = msg
     match = _PRICE_PATTERN.search(msg)
     if match:
-        # The alternation stops at the first scale-word spelling that fits, so
-        # a longer one is cut short: the two-thousand word is also the one-
-        # thousand word with a suffix, and matching the shorter form turns 2000
-        # into 1000. When nothing else was consumed after the captured run,
-        # any letters glued to it belong to the same word, so the capture is
-        # extended to the end of that word. A space-separated currency word
-        # has already been consumed by the pattern, so it is never swallowed.
-        end = match.end(1)
-        if match.end() == end:
-            while end < len(msg) and _ARABIC_CHAR_RE.match(msg[end]):
-                end += 1
-        max_price = _parse_number(msg[match.start(1) : end])
-        query = f"{msg[:match.start()]} {msg[max(match.end(), end):]}"
+        max_price = _parse_number(match.group(1))
+        query = f"{msg[:match.start()]} {msg[match.end():]}"
     else:
-        standalone = re.search(
-            r"([0-9٠-٩][0-9٠-٩,٬.]*"
-            r"|ألفين|ألف|الف|خمستاشر(?:\s+ألف)?|نص مليون|عشر تلاف|عشرة آلاف)"
-            r"\s*(?:جنيه|جنية|egp)?\s*$",
-            msg,
-            re.IGNORECASE,
-        )
+        standalone = _STANDALONE_PRICE.search(msg)
         if standalone:
             max_price = _parse_number(standalone.group(1))
             query = msg[: standalone.start()]
@@ -198,7 +180,7 @@ def parse_arabic_intent(message: str) -> Dict[str, Any]:
 
 def translate_query_for_search(query: str) -> str:
     """Translate known Arabic product terms while preserving brands and specs."""
-    translated = query
+    translated = strip_arabic_marks(query)
     for arabic, english in sorted(
         PRODUCT_TRANSLATIONS.items(), key=lambda item: len(item[0]), reverse=True
     ):
@@ -212,7 +194,7 @@ def translate_query_for_search(query: str) -> str:
 
 def parse_add_command(message: str) -> Optional[int]:
     """Return a one-based result index for an Arabic add-to-feed command."""
-    normalized = re.sub(r"\s+", " ", message.strip())
+    normalized = re.sub(r"\s+", " ", strip_arabic_marks(message).strip())
     if not re.search(r"(?:أضف|اضف|تابع|متابعة|أتابع|اتابع)", normalized):
         return None
     number = re.search(r"(?:رقم\s*)?([0-9٠-٩]+)", normalized)

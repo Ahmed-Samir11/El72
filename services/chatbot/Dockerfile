@@ -15,8 +15,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Install Playwright browsers (required by Crawl4AI for web scraping)
 RUN playwright install --with-deps chromium
 
-# Copy application code (chatbot service only)
-COPY services/chatbot/main.py services/chatbot/search_service.py services/chatbot/models.py services/chatbot/arabic_nlp.py services/chatbot/i18n.py ./
+# Application code: the chatbot service plus the shared library it imports
+# (services/common -> /app/common, which carries the JWT and robots.txt contracts
+# the chatbot must not re-implement).
+COPY services/common/ /app/common/
+COPY services/chatbot/main.py services/chatbot/search_service.py services/chatbot/models.py services/chatbot/arabic_nlp.py services/chatbot/i18n.py services/chatbot/cache.py services/chatbot/extractors.py services/chatbot/store_health.py ./
 
 # Expose port (service listens on 8003)
 EXPOSE 8003
