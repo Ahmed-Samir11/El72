@@ -143,7 +143,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get trackerCreated =>
-      '✅ Tracker created! You\'ll get a WhatsApp notification when we find a deal.';
+      '✅ Tracker created! Price alerts for this product appear in the Alerts tab.';
 
   @override
   String get startTracking => 'Start Tracking';
@@ -478,4 +478,59 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get noMessagesYet => 'No messages yet. Start a conversation.';
+
+  @override
+  String get navAlerts => 'Alerts';
+
+  @override
+  String get alertsTabTitle => 'Alerts';
+
+  @override
+  String get alertsTabHint =>
+      'Price alerts for your products. Press one to open it at the store.';
+
+  @override
+  String get alertsEmpty => 'No price alerts yet.';
+
+  @override
+  String alertsLoadFailed(String error) {
+    return 'Failed to load alerts.\n$error';
+  }
+
+  @override
+  String alertsUnopenedBadge(String count) {
+    return '$count active alerts';
+  }
+
+  @override
+  String alertPreviousPrice(String price) {
+    return 'Previous price: $price';
+  }
+
+  @override
+  String alertCurrentPrice(String price) {
+    return 'Current price: $price';
+  }
+
+  @override
+  String alertDiscountLine(String percent) {
+    return 'Discount: $percent%';
+  }
+
+  @override
+  String get alertWhenToday => 'Today';
+
+  @override
+  String alertWhenDaysAgo(int days) {
+    String _temp0 = intl.Intl.pluralLogic(
+      days,
+      locale: localeName,
+      other: '$days days ago',
+      one: '1 day ago',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get alertNoLink => 'No merchant link for this alert.';
 }

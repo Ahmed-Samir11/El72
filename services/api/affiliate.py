@@ -24,7 +24,15 @@ AFFILIATE_TAG_ENV_VARS = {
 # must be separable per surface). A value outside this set is recorded as
 # 'unknown' rather than dropped: an unknown source is still a click.
 VALID_CLICK_SOURCES = frozenset(
-    {"deal_feed", "search_result", "tracker_card", "browse", "web", "unknown"}
+    {
+        "deal_feed",
+        "search_result",
+        "tracker_card",
+        "alert_card",
+        "browse",
+        "web",
+        "unknown",
+    }
 )
 
 

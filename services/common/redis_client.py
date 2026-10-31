@@ -170,6 +170,43 @@ class RedisStreamClient:
             return 0
         return await self._redis.xack(stream, group, *ids)
 
+    async def xautoclaim(
+        self,
+        stream: str,
+        group: str,
+        consumer: str,
+        min_idle_ms: int,
+        start_id: str = "0",
+        count: int = 10,
+    ) -> list[tuple]:
+        """Claim entries idle in `group` for at least `min_idle_ms` (XAUTOCLAIM).
+
+        Entries delivered to a consumer that has since gone away (a restarted
+        replica, an old pid) are invisible to '>' forever and to its own '0' read
+        only, so they would be stranded in the group's pending list. Claiming
+        hands them to THIS consumer, which then decides and acks them normally.
+
+        Returns only the (id, fields) pairs; the reply's cursor (and, on newer
+        servers, a deleted-ids list) are an implementation detail of the command.
+        """
+        reply = await self._redis.xautoclaim(
+            stream,
+            group,
+            consumer,
+            min_idle_ms,
+            start_id=start_id,
+            count=count,
+        )
+        if not reply:
+            return []
+        # redis-py returns [next_cursor, entries] (older) or [next_cursor,
+        # entries, deleted_ids] (Redis 7 replies). Take the entry list by shape,
+        # not by position, so a server-version change cannot silently drop alerts.
+        for item in reply:
+            if isinstance(item, list):
+                return [tuple(entry) for entry in item]
+        return []
+
     async def close(self) -> None:
         """Close the underlying Redis connection cleanly."""
         await self._redis.close()

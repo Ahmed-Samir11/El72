@@ -144,7 +144,7 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get trackerCreated =>
-      '✅ تم إنشاء المتتبع! ستصلك رسالة واتساب عند العثور على صفقة.';
+      '✅ تم إنشاء المتتبع! ستظهر تنبيهات أسعار هذا المنتج في تبويب التنبيهات.';
 
   @override
   String get startTracking => 'ابدأ التتبع';
@@ -482,4 +482,62 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get noMessagesYet => 'لا توجد رسائل بعد. ابدأ محادثة.';
+
+  @override
+  String get navAlerts => 'التنبيهات';
+
+  @override
+  String get alertsTabTitle => 'التنبيهات';
+
+  @override
+  String get alertsTabHint =>
+      'تنبيهات الأسعار لمنتجاتك. اضغط على أي تنبيه لفتحه في المتجر.';
+
+  @override
+  String get alertsEmpty => 'لا توجد تنبيهات أسعار بعد.';
+
+  @override
+  String alertsLoadFailed(String error) {
+    return 'تعذّر تحميل التنبيهات.\n$error';
+  }
+
+  @override
+  String alertsUnopenedBadge(String count) {
+    return '$count تنبيهات نشطة';
+  }
+
+  @override
+  String alertPreviousPrice(String price) {
+    return 'السعر السابق: $price';
+  }
+
+  @override
+  String alertCurrentPrice(String price) {
+    return 'السعر الحالي: $price';
+  }
+
+  @override
+  String alertDiscountLine(String percent) {
+    return 'الخصم: $percent%';
+  }
+
+  @override
+  String get alertWhenToday => 'اليوم';
+
+  @override
+  String alertWhenDaysAgo(int days) {
+    String _temp0 = intl.Intl.pluralLogic(
+      days,
+      locale: localeName,
+      other: 'منذ $days يوم',
+      many: 'منذ $days يومًا',
+      few: 'منذ $days أيام',
+      two: 'منذ يومين',
+      one: 'منذ يوم واحد',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get alertNoLink => 'لا يوجد رابط متجر لهذا التنبيه.';
 }

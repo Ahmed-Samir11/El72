@@ -1,7 +1,9 @@
+import asyncio
 import json
 import logging
 import os
 import time
+from contextlib import suppress
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,6 +16,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from services.api import usage_limits
 from services.api.affiliate import missing_affiliate_tags
+from services.api.alert_events_consumer import consume_loop
 from services.api.card_payment_models import CardPayment  # noqa: F401
 from services.api.dependencies import get_current_user, get_db
 from services.api.manual_payment_models import ManualPayment  # noqa: F401
@@ -24,6 +27,7 @@ from services.api.monitoring.metrics import (
     metrics_response,
 )
 from services.api.routers import affiliate as affiliate_router
+from services.api.routers import alerts as alerts_router
 from services.api.routers import auth, public_api
 from services.api.routers import credits as credits_router
 from services.api.routers import payment as payment_router
@@ -42,6 +46,18 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 30
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./elhaq.db")
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 TARGETS_STREAM = "stream:targets"
+
+# The alert-events consumer (plans/p2 MS1) runs in-process: stream:alerts ->
+# alert_events, so a price event is still present the next time the app opens.
+# Enabled by default because an API without it serves an Alerts tab that stays
+# silently empty; set ALERT_EVENTS_CONSUMER=false only when Redis is deliberately
+# absent, where el72_alert_events_consumer_up reads 0 instead of lying quietly.
+ALERT_EVENTS_CONSUMER_ENABLED = os.getenv("ALERT_EVENTS_CONSUMER", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
 
 # SQLAlchemy setup
 engine = create_engine(DATABASE_URL)
@@ -226,6 +242,11 @@ def mount_routers(target: FastAPI, *, payment_surface: bool) -> None:
     # Affiliate click tracking and safe merchant redirects.
     target.include_router(affiliate_router.router)
 
+    # Alert surface: GET /alerts/recent + POST /alerts/{id}/open (plans/p2 MS1).
+    # Kept in its own router so the two meanings of "alert" stay separate: this
+    # one reads alert EVENTS, while main.py's POST /alerts creates a tracker.
+    target.include_router(alerts_router.router)
+
     # Tracked-item lifecycle. Creation is bounded by the fair-use cap and the
     # creation rate window (see services/api/usage_limits.py).
     target.include_router(tracked_items_router)
@@ -312,6 +333,43 @@ def _seed_demo_data_on_startup() -> None:
     except Exception:
         logger.exception("Demo seed failed; API startup is stopping")
         raise
+
+
+@app.on_event("startup")
+async def _start_alert_events_consumer() -> None:
+    """Start the in-process stream:alerts -> alert_events consumer (plans/p2 MS1).
+
+    The task never blocks startup: Redis is connected to lazily inside the
+    consumer loop, so an outage reads as ``el72_alert_events_consumer_up 0`` plus
+    ``el72_alert_events_read_errors_total`` rather than as an API that will not
+    boot. Disabled only by explicit configuration, and then the log says so, so
+    "the Alerts tab is empty" can be traced to "the consumer is off".
+    """
+    if not ALERT_EVENTS_CONSUMER_ENABLED:
+        logger.info(
+            "Alert events consumer disabled (ALERT_EVENTS_CONSUMER=false): "
+            "stream:alerts will not be persisted, so the Alerts feed stays empty"
+        )
+        return
+    existing = getattr(app.state, "alert_events_task", None)
+    if existing is not None and not existing.done():
+        # A second startup in the same process (test harness, hot reload) must
+        # not replace the running consumer: two tasks, one stream group and
+        # one gauge, would make "the consumer is up" mean "one of them is".
+        logger.info("Alert events consumer already running; not starting a second")
+        return
+    app.state.alert_events_task = asyncio.create_task(consume_loop(SessionLocal))
+
+
+@app.on_event("shutdown")
+async def _stop_alert_events_consumer() -> None:
+    """Cancel the consumer task so a reload cannot leave a second consumer behind."""
+    task = getattr(app.state, "alert_events_task", None)
+    if task is None:
+        return
+    task.cancel()
+    with suppress(asyncio.CancelledError):
+        await task
 
 
 @app.get("/metrics", include_in_schema=False)
