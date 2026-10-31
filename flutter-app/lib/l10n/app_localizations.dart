@@ -967,6 +967,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'{days} days ago'**
   String alertWhenDaysAgo(String days);
+
+  /// No description provided for @alertNoLink.
+  ///
+  /// In en, this message translates to:
+  /// **'No merchant link for this alert.'**
+  String get alertNoLink;
 }
 
 class _AppLocalizationsDelegate

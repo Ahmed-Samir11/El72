@@ -504,4 +504,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String alertWhenDaysAgo(String days) {
     return '$days days ago';
   }
+
+  @override
+  String get alertNoLink => 'No merchant link for this alert.';
 }

@@ -350,5 +350,6 @@
         "type": "String"
       }
     }
-  }
+  },
+  "alertNoLink": "No merchant link for this alert."
 }

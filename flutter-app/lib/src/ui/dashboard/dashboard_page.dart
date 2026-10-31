@@ -13,6 +13,7 @@ import '../subscription_screen.dart';
 import '../widgets/deal_card.dart';
 import '../widgets/market_pulse_header.dart';
 import '../widgets/tracker_card.dart';
+import '../alerts/alerts_tab.dart';
 import '../chatbot/chat_page.dart';
 
 class DashboardPage extends StatefulWidget {
@@ -29,6 +30,7 @@ class _DashboardPageState extends State<DashboardPage> {
   Widget build(BuildContext context) {
     final pages = <Widget>[
       _TrackersTab(),
+      _AlertsTab(),
       _DealsTab(),
       _ChatTab(),
       _ProfileTab(),
@@ -41,6 +43,14 @@ class _DashboardPageState extends State<DashboardPage> {
           NavigationDestination(
             icon: Icon(Icons.track_changes),
             label: AppLocalizations.of(context).navTrackers,
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.notifications),
+            // plans/p2 MS2: the in-app alert feed, ahead of Deals — an alert is
+            // the thing that happened to a product you already track. The label
+            // carries the meaning; nothing here promises an OS push or a
+            // WhatsApp message (the tab's own hint text says what it is).
+            label: AppLocalizations.of(context).navAlerts,
           ),
           NavigationDestination(
             icon: Icon(Icons.local_offer),
@@ -57,7 +67,7 @@ class _DashboardPageState extends State<DashboardPage> {
         ],
         onDestinationSelected: (i) => setState(() => index = i),
       ),
-      floatingActionButton: (index == 0 || index == 1)
+      floatingActionButton: (index == 0 || index == 2)
           ? FloatingActionButton(
               onPressed: () {
                 showModalBottomSheet(
@@ -171,6 +181,13 @@ class _TrackersTab extends ConsumerWidget {
         );
       },
     );
+  }
+}
+
+class _AlertsTab extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return const AlertsTab();
   }
 }
 
@@ -331,6 +348,10 @@ class _ProfileTab extends ConsumerWidget {
               ref.invalidate(trackedItemsProvider);
               ref.invalidate(liveDealsProvider);
               ref.invalidate(platformStatsProvider);
+              // The alert feed is the previous identity's history: their
+              // un-opened count and their products must not survive into the
+              // new session (plans/p2 MS2).
+              ref.invalidate(alertFeedProvider);
               ref.invalidate(chatConversationProvider);
               if (context.mounted) {
                 Navigator.of(
@@ -347,6 +368,7 @@ class _ProfileTab extends ConsumerWidget {
             ref.invalidate(trackedItemsProvider);
             ref.invalidate(liveDealsProvider);
             ref.invalidate(platformStatsProvider);
+            ref.invalidate(alertFeedProvider);
             // Same contract as the demo-mode toggle and the login/register
             // pages: `chatConversationProvider`'s doc says to invalidate it on
             // logout so the next account starts with an empty chat. Without

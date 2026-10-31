@@ -22,6 +22,7 @@ import '../../data/repositories/affiliate_repository.dart';
 const String sourceDealFeed = 'deal_feed';
 const String sourceSearchResult = 'search_result';
 const String sourceTrackerCard = 'tracker_card';
+const String sourceAlertCard = 'alert_card';
 
 class MerchantLink {
   /// Builds a link. Tests inject [repository] and [launcher]; production

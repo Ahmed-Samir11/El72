@@ -506,4 +506,7 @@ class AppLocalizationsAr extends AppLocalizations {
   String alertWhenDaysAgo(String days) {
     return '$days يوم';
   }
+
+  @override
+  String get alertNoLink => 'لا رابط تنبيهات.';
 }
