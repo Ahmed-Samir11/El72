@@ -383,3 +383,24 @@ REQUEST_CHANGES, 1 CRITICAL / 6 WARNING / 2 INFO, 1094 s.
 | 8 | Phone detector misses dots, slashes, commas | Valid | Those separators (and underscores) are stripped before the scan. |
 | 9 | Tests read a private Prometheus attribute | Valid | `REGISTRY.get_sample_value(...)`. |
 
+### After MS1 — live database check (PR #53 merged 2026-10-31)
+
+Until now CI only parsed the SQL (`services/common/test_migration_files.py`), and the
+ingest tests used a SQLite stand-in, so `create_hypertable`, the retention policy and the
+JSONB insert had never run on a real engine. The `db-bootstrap` CI job starts
+`postgres:15` and `timescale/timescaledb:2.14.2-pg15` (the compose images) and runs
+`scripts/db-bootstrap.sh`. It then runs `services/api/test_events_live_timescale.py`,
+which checks these things:
+
+- `app_events` is a hypertable.
+- There is exactly one retention job, and its window equals the interval declared in
+  `0003_app_events.sql`. So when H9 changes the window, the test follows the migration.
+- The CHECK, read back with `pg_get_constraintdef`, lists exactly `EVENT_TYPES`; it
+  accepts every one of them and refuses an unknown name.
+- `POST /events` stores rows with JSONB properties (numbers stay numbers) and a
+  server-set `ts`.
+
+Bootstrap applies the `app_events` block twice (schema file, then migration), so its
+success also shows the block can be re-run. Locally the tests skip unless
+`EL72_LIVE_TIMESCALE_URL` is set; CI sets `EL72_LIVE_DB_REQUIRED=1` so the job cannot
+pass by skipping.
