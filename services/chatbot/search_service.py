@@ -697,6 +697,10 @@ def _focus_on_budget(
     return "\n...\n".join(pieces)
 
 
+# What may separate two elements of a JSON array: whitespace and one comma.
+_ELEMENT_GAP = re.compile(r"\s*,?\s*")
+
+
 def _salvage_products_json(text: str) -> Optional[str]:
     """Recover the complete products from a truncated extraction response.
 
@@ -713,11 +717,14 @@ def _salvage_products_json(text: str) -> Optional[str]:
     products: List[Any] = []
     pos = array.end()
     while True:
-        brace = text.find("{", pos)
-        if brace == -1:
+        # Only array elements count: stop at the closing bracket, or at anything
+        # that is not the next element, so an object written after the array
+        # (pagination, say) is never taken for a product.
+        pos = _ELEMENT_GAP.match(text, pos).end()
+        if pos >= len(text) or text[pos] != "{":
             break
         try:
-            obj, pos = decoder.raw_decode(text, brace)
+            obj, pos = decoder.raw_decode(text, pos)
         except json.JSONDecodeError:
             break  # The truncated last object.
         if isinstance(obj, dict):

@@ -320,6 +320,50 @@ def test_salvage_products_from_truncated_json():
     assert _salvage_products_json('{"products": [{"title": "cut') is None
 
 
+@pytest.mark.parametrize(
+    "malformed",
+    [
+        "",
+        "not json at all",
+        '{"items": [{"title": "A", "url": "/a"}]}',
+        '{"products": []',
+        '{"products": [',
+        '{"products": ["A", "B"',
+        '{"products": [{"title": "A", "url": "/a"',
+    ],
+)
+def test_salvage_refuses_output_with_no_complete_product(malformed):
+    from services.chatbot.search_service import _salvage_products_json
+
+    assert _salvage_products_json(malformed) is None
+
+
+def test_salvage_stops_at_the_end_of_the_products_array():
+    from services.chatbot.search_service import _salvage_products_json
+
+    # Valid up to the array, broken afterwards: the pagination object written
+    # after "]" must not be recovered as a product.
+    text = (
+        '{"products": [{"title": "A", "url": "/a"}], '
+        '"pagination": {"current_page": 1}, "total": '
+    )
+    salvaged = json.loads(_salvage_products_json(text))
+    assert salvaged == {"products": [{"title": "A", "url": "/a"}]}
+
+
+def test_salvage_keeps_nested_objects_inside_a_product():
+    from services.chatbot.search_service import _salvage_products_json
+
+    text = (
+        '{"products": [{"title": "A", "url": "/a", "offers": {"price": 10}},'
+        ' {"title": "B", "url": "/b", "off'
+    )
+    salvaged = json.loads(_salvage_products_json(text))
+    assert salvaged["products"] == [
+        {"title": "A", "url": "/a", "offers": {"price": 10}}
+    ]
+
+
 def test_focus_on_listings_skips_menu_prices_to_densest_block():
     from services.chatbot.search_service import LLM_INPUT_CHARS, _focus_on_listings
 
