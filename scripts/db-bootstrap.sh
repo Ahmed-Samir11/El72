@@ -90,5 +90,9 @@ apply_file "$TIMESCALE_URL" \
 apply_file "$TIMESCALE_URL" \
     infra/sql/migrations/timescaledb/0002_monitor_role.sql
 
+# First-party app funnel events + retention policy (plans/p4 MS1).
+apply_file "$TIMESCALE_URL" \
+    infra/sql/migrations/timescaledb/0003_app_events.sql
+
 echo "Canonical database bootstrap completed."
 echo "Provision monitoring passwords separately."
