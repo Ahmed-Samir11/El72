@@ -46,6 +46,7 @@ TIMESCALE_MIGRATIONS = [
     "migrations/timescaledb/0000_baseline.sql",
     "migrations/timescaledb/0001_price_history_advertised_price.sql",
     "migrations/timescaledb/0002_monitor_role.sql",
+    "migrations/timescaledb/0003_app_events.sql",
 ]
 
 _TX_CONTROL = re.compile(

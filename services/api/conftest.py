@@ -50,6 +50,7 @@ def _reset_rate_limiter(monkeypatch):
     from services.api.payment_security import security_monitor
     from services.api.routers.affiliate import limiter as affiliate_limiter
     from services.api.routers.alerts import limiter as alerts_limiter
+    from services.api.routers.events import limiter as events_limiter
     from services.api.routers.payment import limiter
     from services.api.usage_limits import reset_creation_times
 
@@ -59,10 +60,12 @@ def _reset_rate_limiter(monkeypatch):
     limiter.reset()
     affiliate_limiter.reset()
     alerts_limiter.reset()
+    events_limiter.reset()
     security_monitor.reset()
     yield
     limiter.reset()
     affiliate_limiter.reset()
     alerts_limiter.reset()
+    events_limiter.reset()
     security_monitor.reset()
     reset_creation_times()
