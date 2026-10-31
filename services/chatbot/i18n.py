@@ -23,6 +23,8 @@ MESSAGES = {
         ),
         "empty_query": "Please enter a product to search for.",
         "price_filter": " under {max_price:g} EGP",
+        "price_min": " over {min_price:g} EGP",
+        "price_range": " between {min_price:g} and {max_price:g} EGP",
     },
     "ar": {
         "no_results": 'مش لاقي منتجات لـ "{query}"{price_filter}. جرب كلمات تانية.',
@@ -33,6 +35,8 @@ MESSAGES = {
         "insufficient_credits": "رصيدك مش كفاية: {detail}. ممكن تطور باقتك.",
         "empty_query": "اكتب اسم المنتج اللي عايز تدور عليه.",
         "price_filter": " بأقل من {max_price:g} جنيه",
+        "price_min": " بأكتر من {min_price:g} جنيه",
+        "price_range": " من {min_price:g} لـ {max_price:g} جنيه",
     },
 }
 

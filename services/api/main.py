@@ -33,9 +33,9 @@ from services.common.redis_client import RedisStreamClient
 
 logger = logging.getLogger(__name__)
 
-# Configuration
-SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key")
-ALGORITHM = "HS256"
+# Configuration. The JWT signing key is resolved in services.api.dependencies
+# (no default, so a missing SECRET_KEY fails at startup rather than silently
+# signing tokens with a well-known key).
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./elhaq.db")

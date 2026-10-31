@@ -213,6 +213,18 @@
 
   "priceRefreshFailed": "Couldn't refresh the price right now - try again in a moment.",
 
+  "deleteTrackerTitle": "Delete tracker?",
+  "deleteTrackerBody": "Stop tracking \"{title}\"? Its price history will be removed.",
+  "@deleteTrackerBody": {
+    "placeholders": {
+      "title": { "type": "String" }
+    }
+  },
+  "deleteTrackerConfirm": "Delete",
+  "trackerDeleted": "Tracker deleted",
+  "retry": "Retry",
+  "trackerDeleteFailed": "Couldn't delete the tracker - try again.",
+
   "genericLoadError": "Failed to load.\n{error}",
   "@genericLoadError": {
     "placeholders": {
