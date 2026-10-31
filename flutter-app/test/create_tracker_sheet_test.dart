@@ -67,6 +67,9 @@ class _AtCapRepository implements TrackedItemsRepository {
 
   @override
   Future<void> refreshPrice(int itemId) async {}
+
+  @override
+  Future<void> deleteTrackedItem(int itemId) async {}
 }
 
 /// Stub for the creation-window refusal (HTTP 429), carrying the original
@@ -90,6 +93,53 @@ class _RateLimitedRepository implements TrackedItemsRepository {
 
   @override
   Future<void> refreshPrice(int itemId) async {}
+
+  @override
+  Future<void> deleteTrackedItem(int itemId) async {}
+}
+
+/// A cap refusal whose numbers were malformed, so the client knows neither.
+class _AtUnknownCapRepository implements TrackedItemsRepository {
+  @override
+  Future<List<TrackedItem>> getTrackedItems({
+    bool includeInactive = false,
+  }) async => const [];
+
+  @override
+  Future<void> createFromUrl(String url, {double? targetPrice}) async {
+    throw const FairUseCapException(activeTrackers: null, cap: null);
+  }
+
+  @override
+  Future<void> refreshPrice(int itemId) async {}
+
+  @override
+  Future<void> deleteTrackedItem(int itemId) async {}
+}
+
+/// A 429 with no usable countdown (`Retry-After` sent as an HTTP date).
+class _RateLimitedNoCountRepository implements TrackedItemsRepository {
+  @override
+  Future<List<TrackedItem>> getTrackedItems({
+    bool includeInactive = false,
+  }) async => const [];
+
+  @override
+  Future<void> createFromUrl(String url, {double? targetPrice}) async {
+    throw RateLimitedException(
+      retryAfterSeconds: 0,
+      cause: DioException(
+        requestOptions: RequestOptions(path: '/tracked-items/from-url'),
+        type: DioExceptionType.badResponse,
+      ),
+    );
+  }
+
+  @override
+  Future<void> refreshPrice(int itemId) async {}
+
+  @override
+  Future<void> deleteTrackedItem(int itemId) async {}
 }
 
 /// Repository stub whose `createFromUrl` always succeeds.
@@ -213,56 +263,93 @@ void main() {
     expect(find.byType(SubscriptionScreen), findsNothing);
   });
 
-  testWidgets(
-    'the fair-use cap shows the localized limit line, never the internals',
-    (tester) async {
-      await tester.pumpWidget(
-        _wrap(
-          Scaffold(body: const CreateTrackerSheet()),
-          repository: _AtCapRepository(),
-        ),
-      );
+  Future<void> submit(WidgetTester tester, TrackedItemsRepository repo) async {
+    await tester.pumpWidget(
+      _wrap(Scaffold(body: const CreateTrackerSheet()), repository: repo),
+    );
+    await tester.enterText(
+      find.byType(TextField).first,
+      'https://example.com/x',
+    );
+    await tester.tap(find.text('Start Tracking'));
+    await tester.pumpAndSettle();
+  }
 
-      await tester.enterText(
-        find.byType(TextField).first,
-        'https://example.com/x',
-      );
-      await tester.tap(find.text('Start Tracking'));
-      await tester.pumpAndSettle();
+  testWidgets('the fair-use cap explains the ceiling and the way out', (
+    tester,
+  ) async {
+    await submit(tester, _AtCapRepository());
 
-      // A bilingual line the app already has, in both postures. The full cap
-      // dialog (count + "close one") is MS2's blocked-copy work; what must NOT
-      // happen meanwhile is leaking the exception's internals or offering an
-      // upgrade the free product does not have.
-      expect(find.text("You've reached your limit"), findsOneWidget);
-      expect(find.textContaining('FairUseCapException'), findsNothing);
-      expect(find.text('Upgrade plan'), findsNothing);
-      expect(find.byType(SubscriptionScreen), findsNothing);
-    },
-  );
+    expect(find.byType(AlertDialog), findsOneWidget);
+    expect(find.text("You've reached your limit"), findsOneWidget);
+    expect(
+      find.text(
+        'You already have 100 trackers running, which is the maximum. '
+        'Delete one to make room, or tap Not now.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('Trackers'), findsOneWidget);
+    expect(find.text('Not now'), findsOneWidget);
+    // Never the internals, and never an upgrade the free product lacks.
+    expect(find.textContaining('FairUseCapException'), findsNothing);
+    expect(find.text('Upgrade plan'), findsNothing);
+    expect(find.byType(SubscriptionScreen), findsNothing);
+  });
 
-  testWidgets(
-    'the creation window falls back to the generic line, no class name',
-    (tester) async {
-      await tester.pumpWidget(
-        _wrap(
-          Scaffold(body: const CreateTrackerSheet()),
-          repository: _RateLimitedRepository(),
-        ),
-      );
+  testWidgets('"Not now" on the cap dialog keeps the sheet open', (
+    tester,
+  ) async {
+    await submit(tester, _AtCapRepository());
+    await tester.tap(find.text('Not now'));
+    await tester.pumpAndSettle();
 
-      await tester.enterText(
-        find.byType(TextField).first,
-        'https://example.com/x',
-      );
-      await tester.tap(find.text('Start Tracking'));
-      await tester.pumpAndSettle();
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(find.byType(CreateTrackerSheet), findsOneWidget);
+  });
 
-      expect(find.byType(SnackBar), findsOneWidget);
-      expect(find.textContaining('RateLimitedException'), findsNothing);
-      expect(find.text('Upgrade plan'), findsNothing);
-    },
-  );
+  testWidgets('a cap the server did not number is not invented', (
+    tester,
+  ) async {
+    await submit(tester, _AtUnknownCapRepository());
+
+    expect(find.text("You've reached your limit"), findsOneWidget);
+    expect(find.textContaining('trackers running'), findsNothing);
+    expect(find.textContaining('0'), findsNothing);
+  });
+
+  testWidgets('the creation window shows the countdown, rounded up', (
+    tester,
+  ) async {
+    // 2.76 s must read as 3: rounding down would invite a refused retry.
+    await submit(tester, _RateLimitedRepository());
+
+    expect(find.text('One tracker at a time'), findsOneWidget);
+    expect(
+      find.text(
+        'You just added a tracker. Wait 3 seconds before adding the next one.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.textContaining('RateLimitedException'), findsNothing);
+    expect(find.byType(SnackBar), findsNothing);
+  });
+
+  testWidgets('a wait with no usable countdown says so without a number', (
+    tester,
+  ) async {
+    await submit(tester, _RateLimitedNoCountRepository());
+
+    expect(
+      find.text(
+        'One tracker at a time. Tap Start Tracking again when you are ready.',
+      ),
+      findsOneWidget,
+    );
+    await tester.tap(find.text('Close'));
+    await tester.pumpAndSettle();
+    expect(find.byType(AlertDialog), findsNothing);
+  });
 
   testWidgets('a non-402 failure keeps the generic SnackBar (no dialog)', (
     tester,

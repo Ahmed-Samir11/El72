@@ -482,4 +482,54 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get noMessagesYet => 'لا توجد رسائل بعد. ابدأ محادثة.';
+
+  @override
+  String get fairUseTitle => 'متتبعاتك';
+
+  @override
+  String fairUseChip(int count, int cap) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'لديك $count متتبعًا نشطًا من أصل $cap كحد أقصى',
+      many: 'لديك $count متتبعًا نشطًا من أصل $cap كحد أقصى',
+      few: 'لديك $count متتبعات نشطة من أصل $cap كحد أقصى',
+      two: 'لديك متتبعان نشطان من أصل $cap كحد أقصى',
+      one: 'لديك متتبع واحد نشط من أصل $cap كحد أقصى',
+      zero: 'لا توجد متتبعات بعد. حتى $cap متتبع في وقت واحد',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String fairUseUncapped(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'لديك $count متتبعًا نشطًا، بلا حد في هذا الإصدار',
+      many: 'لديك $count متتبعًا نشطًا، بلا حد في هذا الإصدار',
+      few: 'لديك $count متتبعات نشطة، بلا حد في هذا الإصدار',
+      two: 'لديك متتبعان نشطان، بلا حد في هذا الإصدار',
+      one: 'لديك متتبع واحد نشط، بلا حد في هذا الإصدار',
+      zero: 'لا توجد متتبعات بعد',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String fairUseCapBody(int cap) {
+    return 'لديك بالفعل $cap متتبعًا نشطًا، وهذا هو الحد الأقصى. احذف واحدًا لإفساح المجال، أو اضغط «ليس الآن».';
+  }
+
+  @override
+  String get creationWaitTitle => 'متتبع واحد في كل مرة';
+
+  @override
+  String creationWaitBody(int seconds) {
+    return 'لقد أضفت متتبعًا للتو. انتظر $seconds ثانية قبل إضافة التالي.';
+  }
+
+  @override
+  String get creationWaitBodyNoCount =>
+      'متتبع واحد في كل مرة. اضغط «ابدأ التتبع» مرة أخرى عندما تكون جاهزًا.';
 }

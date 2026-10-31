@@ -153,28 +153,62 @@ class _CreateTrackerSheetState extends ConsumerState<CreateTrackerSheet> {
                     ],
                   ),
                 );
-              } on FairUseCapException {
-                // The ceiling is the free product's main refusal. MS2's cap
-                // dialog (with the number and the close-one affordance) needs
-                // copy that has no Arabic twin yet, so until that lands this
-                // states only what the app already says in both locales - never
-                // the exception's internals.
+              } on FairUseCapException catch (failure) {
+                // The ceiling is the free product's main refusal: say what it
+                // is and point at the way out (delete a tracker from the list).
+                // A cap the server did not report as a number is not invented:
+                // the dialog then carries the title alone.
                 if (!context.mounted) return;
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(
-                      AppLocalizations.of(context).reachedLimitTitle,
-                    ),
-                    backgroundColor: context.appTokens.error,
+                final nav = Navigator.of(context);
+                final l10n = AppLocalizations.of(context);
+                final cap = failure.cap;
+                showDialog<void>(
+                  context: context,
+                  builder: (dialogContext) => AlertDialog(
+                    title: Text(l10n.reachedLimitTitle),
+                    content: cap == null
+                        ? null
+                        : Text(l10n.fairUseCapBody(cap)),
+                    actions: [
+                      TextButton(
+                        onPressed: () {
+                          Navigator.pop(dialogContext);
+                          nav.pop(); // back to the tracker list
+                        },
+                        child: Text(l10n.navTrackers),
+                      ),
+                      TextButton(
+                        onPressed: () => Navigator.pop(dialogContext),
+                        child: Text(l10n.notNow),
+                      ),
+                    ],
                   ),
                 );
               } on RateLimitedException catch (failure) {
-                // The creation window has not elapsed. MS2's countdown line is
-                // part of the same blocked copy, so the honest interim is the
-                // line any transport failure already gets - rendered from the
-                // original DioException so no class name reaches the screen.
+                // The creation window has not elapsed. The server rounds its
+                // wait up, so rounding the countdown up again here can only make
+                // the user wait a little longer, never get refused once more.
+                // A wait of 0 means no usable countdown (an HTTP-date header).
                 if (!context.mounted) return;
-                _showGenericError(context, failure.cause ?? failure);
+                final l10n = AppLocalizations.of(context);
+                final seconds = failure.retryAfterSeconds.ceil();
+                showDialog<void>(
+                  context: context,
+                  builder: (dialogContext) => AlertDialog(
+                    title: Text(l10n.creationWaitTitle),
+                    content: Text(
+                      seconds > 0
+                          ? l10n.creationWaitBody(seconds)
+                          : l10n.creationWaitBodyNoCount,
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(dialogContext),
+                        child: Text(l10n.close),
+                      ),
+                    ],
+                  ),
+                );
               } catch (e) {
                 if (context.mounted) _showGenericError(context, e);
               }

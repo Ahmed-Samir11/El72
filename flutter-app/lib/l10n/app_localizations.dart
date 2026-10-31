@@ -758,8 +758,7 @@ abstract class AppLocalizations {
   /// **'Target: {price}'**
   String targetLabel(String price);
 
-  /// Secondary action on a tracker card that opens the tracked product page
-  /// at the merchant (the tap is affiliate-attributed; plans/p1).
+  /// Secondary action on a tracker card that opens the tracked product page at the merchant; the tap is affiliate-attributed (plans/p1).
   ///
   /// In en, this message translates to:
   /// **'Open product'**
@@ -938,6 +937,48 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'No messages yet. Start a conversation.'**
   String get noMessagesYet;
+
+  /// Profile card heading in a free (payments-off) build.
+  ///
+  /// In en, this message translates to:
+  /// **'Your trackers'**
+  String get fairUseTitle;
+
+  /// Profile card line from GET /usage/limits when a cap applies.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =0{No trackers yet. Up to {cap} at once} =1{Tracking 1 of up to {cap}} other{Tracking {count} of up to {cap}}}'**
+  String fairUseChip(int count, int cap);
+
+  /// Profile card line when the server reports no cap (CREDITS_ENFORCEMENT=off).
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =0{No trackers yet} =1{Tracking 1 tracker, no limit in this build} other{Tracking {count} trackers, no limit in this build}}'**
+  String fairUseUncapped(int count);
+
+  /// Body of the dialog shown when tracker creation is refused at the fair-use cap (HTTP 409).
+  ///
+  /// In en, this message translates to:
+  /// **'You already have {cap} trackers running, which is the maximum. Delete one to make room, or tap Not now.'**
+  String fairUseCapBody(int cap);
+
+  /// Title of the dialog shown when trackers are created too fast (HTTP 429).
+  ///
+  /// In en, this message translates to:
+  /// **'One tracker at a time'**
+  String get creationWaitTitle;
+
+  /// Body of the HTTP 429 dialog when the server gave a usable countdown.
+  ///
+  /// In en, this message translates to:
+  /// **'You just added a tracker. Wait {seconds} seconds before adding the next one.'**
+  String creationWaitBody(int seconds);
+
+  /// Body of the HTTP 429 dialog when no usable countdown was given (Retry-After as an HTTP date).
+  ///
+  /// In en, this message translates to:
+  /// **'One tracker at a time. Tap Start Tracking again when you are ready.'**
+  String get creationWaitBodyNoCount;
 }
 
 class _AppLocalizationsDelegate
