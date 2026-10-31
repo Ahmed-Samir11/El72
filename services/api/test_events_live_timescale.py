@@ -37,11 +37,13 @@ from services.api.main import app
 from services.api.models import Base
 from services.api.test_events import MIGRATION_SQL, _engine, _override
 
+# Captured now: test_events.py, imported above, sets DATABASE_URL again.
+_DB_FILE = f"test_events_live_{os.getpid()}.db"
+
 
 def _remove_db_file() -> None:
-    name = os.environ["DATABASE_URL"].split("///", 1)[-1].lstrip("./")
     try:
-        os.remove(name)
+        os.remove(_DB_FILE)
     except OSError:
         pass
 
@@ -116,7 +118,20 @@ def test_retention_policy_matches_the_migration(live_engine):
     assert jobs == [True]
 
 
-def test_event_check_accepts_exactly_the_code_taxonomy(live_engine):
+def test_event_check_lists_exactly_the_code_taxonomy(live_engine):
+    # Read the constraint as the server stores it, so a name added on one side
+    # only (SQL or EVENT_TYPES) fails here, not just an arbitrary unknown name.
+    with live_engine.connect() as conn:
+        definition = conn.execute(
+            text(
+                "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+                "WHERE conname = 'app_events_event_allowlist'"
+            )
+        ).scalar_one()
+    assert set(re.findall(r"'([a-z_]+)'", definition)) == EVENT_TYPES
+
+
+def test_event_check_accepts_the_taxonomy_and_refuses_others(live_engine):
     session_id = _session_id()
     insert = text("INSERT INTO app_events (session_id, event) VALUES (:sid, :event)")
     with live_engine.connect() as conn:
@@ -133,8 +148,12 @@ def test_event_check_accepts_exactly_the_code_taxonomy(live_engine):
 
 def test_ingest_writes_jsonb_rows_to_the_hypertable(live_engine, pg_engine):
     session_id = _session_id()
-    app.dependency_overrides[get_db] = _override(pg_engine)
-    app.dependency_overrides[get_optional_timescale_db] = _override(live_engine)
+    overrides = {
+        get_db: _override(pg_engine),
+        get_optional_timescale_db: _override(live_engine),
+    }
+    previous = {dep: app.dependency_overrides.get(dep) for dep in overrides}
+    app.dependency_overrides.update(overrides)
     try:
         with TestClient(app) as client:
             resp = client.post(
@@ -175,7 +194,12 @@ def test_ingest_writes_jsonb_rows_to_the_hypertable(live_engine, pg_engine):
         assert rows[1].results == 7
         assert all(r.user_id is None and r.fresh for r in rows)
     finally:
-        app.dependency_overrides.clear()
+        # Restore only what this test set; other fixtures may own the rest.
+        for dep, old in previous.items():
+            if old is None:
+                app.dependency_overrides.pop(dep, None)
+            else:
+                app.dependency_overrides[dep] = old
         with live_engine.begin() as conn:
             conn.execute(
                 text("DELETE FROM app_events WHERE session_id = :sid"),

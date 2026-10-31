@@ -390,12 +390,13 @@ ingest tests used a SQLite stand-in, so `create_hypertable`, the retention polic
 JSONB insert had never run on a real engine. The `db-bootstrap` CI job starts
 `postgres:15` and `timescale/timescaledb:2.14.2-pg15` (the compose images) and runs
 `scripts/db-bootstrap.sh`. It then runs `services/api/test_events_live_timescale.py`,
-which checks four things:
+which checks these things:
 
 - `app_events` is a hypertable.
 - There is exactly one retention job, and its window equals the interval declared in
   `0003_app_events.sql`. So when H9 changes the window, the test follows the migration.
-- The CHECK accepts every name in `EVENT_TYPES` and refuses an unknown one.
+- The CHECK, read back with `pg_get_constraintdef`, lists exactly `EVENT_TYPES`; it
+  accepts every one of them and refuses an unknown name.
 - `POST /events` stores rows with JSONB properties (numbers stay numbers) and a
   server-set `ts`.
 
