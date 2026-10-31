@@ -68,3 +68,43 @@ Mitigation:
 ---
 
 If you want, I can also add a simple `scripts/replay_dlq.py` helper and an automated Kubernetes Job manifest to replay DLQ items safely.
+
+## AppEventsRejectionSpike (severity: warning)
+Symptom: more than 20% of event rows received by `POST /events` were refused over 15m.
+
+Immediate checks:
+- Break the refusals down by reason: `sum by (reason) (rate(el72_events_rejected_total[15m]))`.
+- `unknown_event`: a client build sends an event name outside the taxonomy in `services/api/events.py` (and the `app_events_event_allowlist` CHECK). Find the build that added it.
+- `malformed`: rows carry an unexpected key or an id outside the opaque-token charset; compare the client's payload with `ALLOWED_KEYS`.
+- `pii`: a client is putting a phone-shaped value into an event. Treat as a privacy bug in the app, not as noise.
+
+Mitigation:
+- Fix the client, or add the event to the taxonomy through a reviewed change to both `EVENT_TYPES` and the TimescaleDB CHECK (migration plus canonical schema).
+
+## AppEventsStoreUnavailable (severity: warning)
+Symptom: `POST /events` answered 503 (`reason="store_unavailable"`).
+
+Immediate checks:
+- Confirm `TIMESCALE_URL` is set for the api container and that TimescaleDB is reachable from it.
+
+Mitigation:
+- Restore the connection. The app drops batches it cannot send, so events from the outage window are lost, not delayed; note the window when reading funnel numbers.
+
+## AppEventsSilent (severity: warning)
+Symptom: no `app_events` rows stored for 6h, after a day that had traffic.
+
+Immediate checks:
+- Check whether requests reach the route at all: `el72_http_requests_total{endpoint="/events"}`.
+- Check the latest app release for a disabled or broken analytics client.
+
+Mitigation:
+- Fix the client or the route. Like the outage case, the gap cannot be backfilled.
+
+## app_events retention (no alert)
+Rows older than the retention window are dropped by the TimescaleDB job created in `infra/sql/migrations/timescaledb/0003_app_events.sql` (`add_retention_policy`, 180 days pending the owner's decision in plans/p4 H9).
+
+Checks:
+- The policy exists: `SELECT * FROM timescaledb_information.jobs WHERE hypertable_name = 'app_events';`
+- It runs: `SELECT * FROM timescaledb_information.job_stats WHERE hypertable_name = 'app_events';`
+- Changing the window: `SELECT remove_retention_policy('app_events'); SELECT add_retention_policy('app_events', INTERVAL '<n> days');`, then update the migration, the canonical schema and the privacy policy together.
+
