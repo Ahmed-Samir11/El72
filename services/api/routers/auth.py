@@ -101,6 +101,11 @@ def delete_account(
     detach runs first, so if it fails the request fails before anything is
     anonymized and the user can retry, rather than being told the account is
     gone while a funnel trail still points at it.
+
+    The two databases cannot commit atomically. The order is chosen so the
+    only partial state is the privacy-safe one: if the PostgreSQL commit fails
+    after the detach, the account is still active but its past events are
+    already unlinked, and retrying the deletion completes it.
     """
     if ts_db is not None:
         try:

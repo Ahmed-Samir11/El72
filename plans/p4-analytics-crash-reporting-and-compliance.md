@@ -367,3 +367,19 @@ call sites (MS4), and the policy, data-safety and in-app deletion work (MS5). Th
 "ingest lag" alert is dropped: ingest is synchronous, so there is no server-side queue to lag.
 H9 (retention window) is still open; 180 days is the default until the owner decides.
 
+### Review round 1 (HGM on local Qwen 3.8 Flash Next, PR #53) — verdicts
+
+REQUEST_CHANGES, 1 CRITICAL / 6 WARNING / 2 INFO, 1094 s.
+
+| # | Finding | Verdict | Action |
+|---|---|---|---|
+| 1 | CRITICAL: a list or dict `channel` raises `TypeError` (unhashable) → 500 for the batch | Valid | `channel` is checked with `isinstance(str)` first and degrades to NULL; unit and endpoint tests. |
+| 2 | Property strings can carry free text (`{"query": "gaming laptop"}`) | Valid | Property strings must be enum-like tokens (`[A-Za-z0-9._:+-]{1,64}`, no spaces); free text is malformed. |
+| 3 | `session_id`/`event_id` skip the phone scan | Partly valid | The exemption stays (a random id can hold a phone-shaped run by chance), but both must now contain a letter, which a phone number pasted into either never does. |
+| 4 | Numeric property values skip the phone scan | Valid | Property integers must be below 10^9: counts and codes fit, a phone number sent as a number does not. |
+| 5 | A failed insert returns 500 and is not counted as `store_unavailable` | Valid | 503, logged, and counted, so `AppEventsStoreUnavailable` sees real outages. |
+| 6 | Rate-limit key holds the raw token subject (a phone number) | Valid | The key is `user:<sha256 prefix>`; tested. |
+| 7 | Cross-database erasure is not atomic | Inherent, documented | Two databases cannot commit together. The order leaves only the privacy-safe partial state (events unlinked, account still active), and a retry completes the deletion; stated in the `delete_account` docstring. |
+| 8 | Phone detector misses dots, slashes, commas | Valid | Those separators (and underscores) are stripped before the scan. |
+| 9 | Tests read a private Prometheus attribute | Valid | `REGISTRY.get_sample_value(...)`. |
+

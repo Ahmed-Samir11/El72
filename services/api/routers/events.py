@@ -12,6 +12,7 @@ only and never echoes event content back.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -61,7 +62,8 @@ def _events_rate_key(request: Request) -> str:
 
     Behind a shared proxy every client has one address, so keying on it alone
     would let one busy install starve the rest; the token subject follows the
-    user instead.
+    user instead. The subject is a phone number, so the key carries a digest of
+    it, never the number itself.
     """
     token = bearer_token(request.headers.get("Authorization"))
     if token:
@@ -70,7 +72,8 @@ def _events_rate_key(request: Request) -> str:
         except TokenDecodeError:
             subject = None
         if subject:
-            return f"user:{subject}"
+            digest = hashlib.sha256(subject.encode("utf-8")).hexdigest()[:24]
+            return f"user:{digest}"
     return get_remote_address(request)
 
 
@@ -155,7 +158,8 @@ def ingest_events(
 
     Raises:
         HTTPException: 400 when any row names an event outside the taxonomy
-            (nothing is stored), 503 when no event store is configured.
+            (nothing is stored), 503 when no event store is configured or
+            the write fails (logged, nothing stored).
     """
     APP_EVENTS_RECEIVED_TOTAL.inc(len(rows))
 
@@ -211,7 +215,15 @@ def ingest_events(
                 "Failed to store app events",
                 extra={"rows": len(accepted)},
             )
-            raise
+            # Same outcome as an unconfigured store: the batch is lost, and
+            # the AppEventsStoreUnavailable alert must see it.
+            APP_EVENTS_REJECTED_TOTAL.labels(reason=REASON_STORE_UNAVAILABLE).inc(
+                len(accepted)
+            )
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="The event store is unavailable",
+            ) from None
         APP_EVENTS_STORED_TOTAL.inc(len(accepted))
 
     return {"accepted": len(accepted), "rejected": rejected}

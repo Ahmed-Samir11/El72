@@ -20,6 +20,7 @@ os.environ.setdefault("APP_ENV", "dev")
 
 import pytest
 from fastapi.testclient import TestClient
+from prometheus_client import REGISTRY
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -33,7 +34,6 @@ from services.api.dependencies import (
 from services.api.events import EVENT_TYPES, EventRejected, validate_event
 from services.api.main import app
 from services.api.models import User
-from services.api.monitoring.metrics import APP_EVENTS_REJECTED_TOTAL
 from services.api.routers import events as events_router
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -148,7 +148,8 @@ def _event(**overrides):
 
 
 def _rejected(reason):
-    return APP_EVENTS_REJECTED_TOTAL.labels(reason=reason)._value.get()
+    value = REGISTRY.get_sample_value("el72_events_rejected_total", {"reason": reason})
+    return value or 0.0
 
 
 # --- schema and taxonomy ------------------------------------------------------
@@ -239,6 +240,38 @@ def test_phone_shaped_values_are_refused_as_pii(raw):
     with pytest.raises(EventRejected) as exc:
         validate_event(raw)
     assert exc.value.reason == events_rules.REASON_PII
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        _event(properties={"query": "gaming laptop"}),
+        _event(properties={"note": "<b>hi</b>"}),
+        _event(properties={"phone": 1012345678}),
+        _event(properties={"big": -(10**9)}),
+        _event(session_id="01012345678"),
+        _event(event_id="20101234567890"),
+    ],
+)
+def test_free_text_large_numbers_and_digit_only_tokens_are_refused(raw):
+    # Free text has no place in properties, a number this large is an
+    # identifier rather than a count, and a digit-only "random" token is what a
+    # phone number looks like when it lands in an id field.
+    with pytest.raises(EventRejected) as exc:
+        validate_event(raw)
+    assert exc.value.reason == events_rules.REASON_MALFORMED
+
+
+@pytest.mark.parametrize("value", ["010.1234.5678", "010/1234/5678", "010,1234,5678"])
+def test_common_phone_separators_do_not_hide_a_number(value):
+    with pytest.raises(EventRejected) as exc:
+        validate_event(_event(properties={"note": value}))
+    assert exc.value.reason == events_rules.REASON_PII
+
+
+@pytest.mark.parametrize("channel", [[], {}, ["in_app"], 5])
+def test_a_non_string_channel_degrades_to_null_instead_of_crashing(channel):
+    assert validate_event(_event(channel=channel))["channel"] is None
 
 
 def test_random_client_tokens_are_never_mistaken_for_phones():
@@ -375,6 +408,40 @@ def test_without_an_event_store_nothing_is_pretended(client):
     app.dependency_overrides[get_optional_timescale_db] = no_store
     resp = client.post("/events", json={"events": [_event()]})
     assert resp.status_code == 503
+
+
+def test_a_failed_write_is_a_503_and_counts_as_store_unavailable(client, ts_engine):
+    with ts_engine.begin() as conn:
+        conn.execute(text("DROP TABLE app_events"))
+    before = _rejected(events_rules.REASON_STORE_UNAVAILABLE)
+
+    resp = client.post("/events", json={"events": [_event(), _event()]})
+
+    assert resp.status_code == 503
+    assert _rejected(events_rules.REASON_STORE_UNAVAILABLE) == before + 2
+
+
+def test_a_row_with_a_list_for_channel_is_stored_not_a_server_error(client, ts_engine):
+    resp = client.post("/events", json={"events": [_event(channel={})]})
+    assert resp.status_code == 202
+    assert _stored(ts_engine)[0]["channel"] is None
+
+
+def test_the_rate_limit_key_never_carries_the_phone_number(pg_engine):
+    from starlette.requests import Request
+
+    phone = "+201000000009"
+    token, _ = _token(pg_engine, phone)
+    request = Request(
+        {
+            "type": "http",
+            "headers": [(b"authorization", f"Bearer {token}".encode())],
+            "client": ("10.0.0.1", 1234),
+        }
+    )
+    key = events_router._events_rate_key(request)
+    assert key.startswith("user:")
+    assert phone not in key and phone.lstrip("+") not in key
 
 
 def test_the_ingest_is_rate_limited(client, monkeypatch):
