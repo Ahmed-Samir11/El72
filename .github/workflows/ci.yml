@@ -148,6 +148,62 @@ jobs:
             exit 1
           fi
 
+  # Bootstrap real PostgreSQL + TimescaleDB containers (same images as
+  # docker-compose.yml) with scripts/db-bootstrap.sh, then run the live checks
+  # in services/api/test_events_live_timescale.py. The other jobs only parse the
+  # SQL; this is where create_hypertable, the retention policy and the JSONB
+  # insert path run on the real engines.
+  db-bootstrap:
+    name: Bootstrap databases (live PostgreSQL + TimescaleDB)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: elhaq
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: elhaq
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U elhaq -d elhaq"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+      timescaledb:
+        image: timescale/timescaledb:2.14.2-pg15
+        env:
+          POSTGRES_USER: elhaq
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: elhaq_ts
+        ports: ['5433:5432']
+        options: >-
+          --health-cmd "pg_isready -U elhaq -d elhaq_ts"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      DATABASE_URL: postgresql://elhaq:ci@localhost:5432/elhaq
+      TIMESCALE_URL: postgresql://elhaq:ci@localhost:5433/elhaq_ts
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run scripts/db-bootstrap.sh against both databases
+        run: bash scripts/db-bootstrap.sh
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest
+          pip install -r requirements-test.txt
+
+      - name: Run the live database tests
+        env:
+          EL72_LIVE_TIMESCALE_URL: ${{ env.TIMESCALE_URL }}
+          # Fail instead of skipping if the URL above ever goes missing.
+          EL72_LIVE_DB_REQUIRED: '1'
+        run: pytest services/api/test_events_live_timescale.py -v -rs
+
   # MS4: Flutter quality gate + signed App Bundle on PRs to main and v* tags.
   flutter-ci:
     name: Flutter - analyze, test, signed bundle
