@@ -19,6 +19,26 @@ HTTP_REQUEST_DURATION_SECONDS = Histogram(
 )
 
 
+# First-party app events (plans/p4 MS1). Ingest is fire-and-forget for the
+# client, so these counters are the only place a dropped batch is visible:
+# "no events" must be distinguishable from "events rejected" and from "the
+# event store is down". The reason label is a closed set owned by
+# services/api/events.py, never a client-supplied string.
+APP_EVENTS_RECEIVED_TOTAL = Counter(
+    "el72_events_received_total",
+    "Total event rows received by POST /events, before validation.",
+)
+APP_EVENTS_STORED_TOTAL = Counter(
+    "el72_events_stored_total",
+    "Total app_events rows written by POST /events.",
+)
+APP_EVENTS_REJECTED_TOTAL = Counter(
+    "el72_events_rejected_total",
+    "Total event rows or batches refused by POST /events, labelled by reason "
+    "(unknown_event, malformed, pii, batch_too_large, store_unavailable).",
+    ["reason"],
+)
+
 # Alert-event pipeline (plans/p2 MS1). The consumer runs inside this service,
 # so its counters ride the same /metrics scrape as the HTTP metrics. The reason
 # label is the consumer's own outcome set, which is what lets "no new alerts"

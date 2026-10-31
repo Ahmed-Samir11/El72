@@ -67,6 +67,23 @@ def get_timescale_db():
         db.close()
 
 
+def get_optional_timescale_db():
+    """Yield a TimescaleDB session, or ``None`` when ``TIMESCALE_URL`` is unset.
+
+    For callers that must behave correctly either way: event ingest answers
+    503 instead of crashing, and account deletion knows there is no event
+    store whose rows could still point at the user.
+    """
+    if TimescaleSessionLocal is None:
+        yield None
+        return
+    db = TimescaleSessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
 def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)
 

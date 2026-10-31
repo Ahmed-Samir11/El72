@@ -1,8 +1,10 @@
+import logging
 import secrets
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, validator
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from services.api.dependencies import (
@@ -10,11 +12,14 @@ from services.api.dependencies import (
     create_access_token,
     get_current_user,
     get_db,
+    get_optional_timescale_db,
     get_password_hash,
     pwd_context,
 )
-from services.api.models import Alert, User
+from services.api.models import AffiliateClick, Alert, User
 from services.api.tracked_items_models import TrackedItem
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -84,9 +89,45 @@ def login(user: UserRegister, db: Session = Depends(get_db)):
 
 @router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
 def delete_account(
-    current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    ts_db: Session | None = Depends(get_optional_timescale_db),
 ):
-    """Anonymize the operational account while preserving its analytical identity."""
+    """Anonymize the account and detach its behavior history (plans/p4 WS1).
+
+    The ``users`` row is kept (anonymized) so foreign keys stay valid, which
+    is exactly why behavior facts must be detached explicitly: their
+    ``ON DELETE SET NULL`` never fires on a soft delete. The TimescaleDB
+    detach runs first, so if it fails the request fails before anything is
+    anonymized and the user can retry, rather than being told the account is
+    gone while a funnel trail still points at it.
+
+    The two databases cannot commit atomically. The order is chosen so the
+    only partial state is the privacy-safe one: if the PostgreSQL commit fails
+    after the detach, the account is still active but its past events are
+    already unlinked, and retrying the deletion completes it.
+    """
+    if ts_db is not None:
+        try:
+            ts_db.execute(
+                text("UPDATE app_events SET user_id = NULL WHERE user_id = :uid"),
+                {"uid": str(current_user.id)},
+            )
+            ts_db.commit()
+        except Exception:
+            ts_db.rollback()
+            logger.exception(
+                "Account deletion stopped: app_events could not be detached",
+                extra={"user_id": current_user.id},
+            )
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Account deletion is temporarily unavailable; try again",
+            ) from None
+
+    db.query(AffiliateClick).filter(AffiliateClick.user_id == current_user.id).update(
+        {AffiliateClick.user_id: None}, synchronize_session=False
+    )
     db.query(Alert).filter(Alert.user_id == current_user.id).delete(
         synchronize_session=False
     )

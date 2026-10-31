@@ -52,3 +52,40 @@ spec:
           annotations:
             summary: "DB pool waiters high"
             description: "Combined Postgres/Timescale pool waiters is {{ $value }} (>10) for 5m — consider increasing DB pool sizes or throttling producers."
+
+    # First-party app events (plans/p4 MS1). POST /events is fire-and-forget for
+    # the client, so these counters are the only place a lost batch shows up.
+    # Ingest is synchronous (no queue), so there is no server-side lag to alert on.
+    - name: elhaq-api-events.rules
+      rules:
+        - alert: AppEventsRejectionSpike
+          expr: |
+            sum(rate(el72_events_rejected_total[15m]))
+              / clamp_min(sum(rate(el72_events_received_total[15m])), 1e-9) > 0.2
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "App event rejections above 20%"
+            description: "{{ $value | humanizePercentage }} of received event rows were refused over 15m. Usually a client build out of contract with the taxonomy; check el72_events_rejected_total by reason."
+
+        - alert: AppEventsStoreUnavailable
+          expr: increase(el72_events_rejected_total{reason="store_unavailable"}[10m]) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Event store unavailable to the API"
+            description: "POST /events answered 503 for {{ $value }} rows in 10m: TIMESCALE_URL is unset or TimescaleDB is unreachable from the API. Funnel data is being dropped."
+
+        - alert: AppEventsSilent
+          expr: |
+            sum(increase(el72_events_stored_total[6h])) == 0
+              and sum(increase(el72_events_stored_total[1d] offset 6h)) > 0
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: "No app events stored for 6h"
+            description: "No app_events rows were stored in 6h after a day that had traffic. A client release may have stopped sending, or the ingest route is failing before it counts."
+
