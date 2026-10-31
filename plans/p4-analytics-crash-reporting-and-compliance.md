@@ -413,7 +413,9 @@ pass by skipping.
   retention) needs at most 90 days of history, so 180 days leaves room without keeping each
   person's trail longer than the funnel needs. MS3's daily rollups carry no `user_id` and
   may be kept longer, so seasonal comparisons (Ramadan, White Friday) survive a 180-day
-  raw window. Account deletion still unlinks events immediately, whatever the window. The
+  raw window. Account deletion still unlinks events immediately, whatever the window.
+  Rollups kept past 180 days suppress any cell under 5 distinct sessions, so a small
+  cohort cannot be picked out of the aggregates. The
   migration already applies 180 days, so no SQL change is needed; the live CI test pins
   the job to the migration's interval.
 - **H2, crash reporting: our own endpoint (revised the same day).** Sentry was the first
@@ -437,8 +439,14 @@ themselves live in the database.
 
 **Server (`POST /crashes`, `services/api/routers/crashes.py`).**
 - Body `{"reports": [...]}`, at most 5 reports and 16 KB. Authentication is optional and
-  never stored: a crash report carries the client `session_id`, not a `user_id`, so
-  account deletion has nothing to detach. Rate limit `CRASHES_RATE_LIMIT`, default
+  never stored: a crash report carries the client `session_id`, not a `user_id`.
+  `session_id` follows the `/events` rules exactly (`normalize_opaque_token`, must contain
+  a letter).
+- **Erasure:** the session id is shared with `app_events`, so a crash report could be
+  linked to a user through that table. `DELETE /auth/me` therefore deletes the user's
+  crash reports, `DELETE FROM app_crashes WHERE session_id IN (SELECT session_id FROM
+  app_events WHERE user_id = :uid)`, in the same TimescaleDB step and *before*
+  `app_events.user_id` is set to NULL (afterwards the link is gone). Rate limit `CRASHES_RATE_LIMIT`, default
   `10/minute`, keyed like `/events`.
 - Fields: `session_id`, `app_version` (`^\d+\.\d+\.\d+(\+\d+)?$`), `platform`
   (`android`/`ios`), `os_version` (≤ 64 chars), `error_type` (≤ 128, identifier
@@ -448,7 +456,14 @@ themselves live in the database.
 - **Redaction on the server, whatever the client did:** phone numbers (the
   `_looks_like_phone` rule from `services/api/events.py`), email addresses, JWT-shaped
   tokens (`eyJ...`) and URL query strings are replaced with `[phone]`, `[email]`,
-  `[token]` and `?[query]` in `message` and `stack` before the insert. Tests pin each one.
+  `[token]` and `?[query]` in `message` and `stack` before the insert. IPv4 addresses
+  and runs of 9 or more digits (card or national-id shaped) become `[ip]` and
+  `[number]`. Redaction runs on the full text *before* the size caps, so truncation can
+  never leave half a secret. The raw payload is never logged; a rejected report is logged
+  by reason only. Tests pin each rule.
+- **Stack content:** Dart release traces name frames as `package:el72/...` URIs, not
+  device file paths, so readable traces expose only our own code layout, which is
+  acceptable for a first-party store. Frames beyond the cap are dropped, not summarised.
 - **Grouping:** `fingerprint` = first 16 hex characters of the SHA-256 of `error_type` plus
   the top 5 stack frames with line numbers removed, so one bug across builds is one
   group.
