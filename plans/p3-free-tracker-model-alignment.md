@@ -344,7 +344,7 @@ Round 2 came back **APPROVE** (5 WARNING, 4 INFO). Handled:
 
 ### MS2/MS3 (PR B) - what landed, and where it stops
 
-Branch `feat/free-tracker-fair-use-limits-client`, stacked on PR #50 (merge after it).
+Branch `feat/free-tracker-fair-use-limits-client`, stacked on PR #50 (merge after it) ∞ **PR #52**: https://github.com/Ahmed-Samir11/El72/pull/52
 
 | File | Change |
 |---|---|---|
