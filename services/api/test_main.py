@@ -310,6 +310,9 @@ def test_release_build_mounts_no_payment_surface():
     # The free-tracker surface is mounted, and it is auth-gated.
     assert "/usage/limits" in paths
     assert probe.get("/usage/limits").status_code == 401
+    # The alert surface (plans/p2) is part of the free product, not of the
+    # payment rails: a release build serves it.
+    assert "/alerts/recent" in paths
 
 
 def test_payment_surface_mounts_when_it_is_asked_for():

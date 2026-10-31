@@ -353,7 +353,7 @@ abstract class AppLocalizations {
   /// No description provided for @trackerCreated.
   ///
   /// In en, this message translates to:
-  /// **'✅ Tracker created! You\'ll get a WhatsApp notification when we find a deal.'**
+  /// **'✅ Tracker created! Price alerts for this product appear in the Alerts tab.'**
   String get trackerCreated;
 
   /// No description provided for @startTracking.
@@ -938,6 +938,78 @@ abstract class AppLocalizations {
   /// **'No messages yet. Start a conversation.'**
   String get noMessagesYet;
 
+  /// No description provided for @navAlerts.
+  ///
+  /// In en, this message translates to:
+  /// **'Alerts'**
+  String get navAlerts;
+
+  /// No description provided for @alertsTabTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Alerts'**
+  String get alertsTabTitle;
+
+  /// No description provided for @alertsTabHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Price alerts for your products. Press one to open it at the store.'**
+  String get alertsTabHint;
+
+  /// No description provided for @alertsEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No price alerts yet.'**
+  String get alertsEmpty;
+
+  /// No description provided for @alertsLoadFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to load alerts.\n{error}'**
+  String alertsLoadFailed(String error);
+
+  /// No description provided for @alertsUnopenedBadge.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} active alerts'**
+  String alertsUnopenedBadge(String count);
+
+  /// No description provided for @alertPreviousPrice.
+  ///
+  /// In en, this message translates to:
+  /// **'Previous price: {price}'**
+  String alertPreviousPrice(String price);
+
+  /// No description provided for @alertCurrentPrice.
+  ///
+  /// In en, this message translates to:
+  /// **'Current price: {price}'**
+  String alertCurrentPrice(String price);
+
+  /// No description provided for @alertDiscountLine.
+  ///
+  /// In en, this message translates to:
+  /// **'Discount: {percent}%'**
+  String alertDiscountLine(String percent);
+
+  /// No description provided for @alertWhenToday.
+  ///
+  /// In en, this message translates to:
+  /// **'Today'**
+  String get alertWhenToday;
+
+  /// No description provided for @alertWhenDaysAgo.
+  ///
+  /// In en, this message translates to:
+  /// **'{days, plural, =1{1 day ago} other{{days} days ago}}'**
+  String alertWhenDaysAgo(int days);
+
+  /// No description provided for @alertNoLink.
+  ///
+  /// In en, this message translates to:
+  /// **'No merchant link for this alert.'**
+  String get alertNoLink;
+
   /// Profile card heading in a free (payments-off) build.
   ///
   /// In en, this message translates to:
@@ -959,7 +1031,7 @@ abstract class AppLocalizations {
   /// Body of the dialog shown when tracker creation is refused at the fair-use cap (HTTP 409).
   ///
   /// In en, this message translates to:
-  /// **'You already have {cap} trackers running, which is the maximum. Delete one to make room, or tap Not now.'**
+  /// **'{cap, plural, =1{You already have 1 tracker running, which is the maximum. Delete it to make room, or tap Not now.} other{You already have {cap} trackers running, which is the maximum. Delete one to make room, or tap Not now.}}'**
   String fairUseCapBody(int cap);
 
   /// Title of the dialog shown when trackers are created too fast (HTTP 429).
@@ -971,7 +1043,7 @@ abstract class AppLocalizations {
   /// Body of the HTTP 429 dialog when the server gave a usable countdown.
   ///
   /// In en, this message translates to:
-  /// **'You just added a tracker. Wait {seconds} seconds before adding the next one.'**
+  /// **'{seconds, plural, =1{You just added a tracker. Wait 1 second before adding the next one.} other{You just added a tracker. Wait {seconds} seconds before adding the next one.}}'**
   String creationWaitBody(int seconds);
 
   /// Body of the HTTP 429 dialog when no usable countdown was given (Retry-After as an HTTP date).

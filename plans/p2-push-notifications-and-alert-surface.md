@@ -1,0 +1,431 @@
+# Plan: P2 — Push Notifications and the Alert Surface
+
+**Branch:** `feat/push-notifications-and-alert-surface` (off `main`)
+**Date:** 2026-10-29
+**Status:** In implementation — MS1 backend shipped on `feat/push-notifications-and-alert-surface` (PR #49,
+HGM rounds 1-4 findings addressed); MS2 copy surface enumerated for translation (§7) — `alert_events` + stream consumer + `GET /alerts/recent` + `POST /alerts/{id}/open`
++ store-facing copy truth; MS2 copy now LANDS in both locales (§7), MS2 widgets (repository, Alerts
+tab, nav slot) SHIP on the same branch (repository, card, tab, the fifth nav slot ahead of Deals, sourceAlertCard in the click-source allowlist), MS3 blocked on H2 + H3 (see §7 and the Implementation Record at §9).
+**Arabic review status (FACT):** token-composed from Arabic this repo already ships, NOT native-reviewed.
+**Series:** 2 of 5 release-priority plans (P1 affiliate clicks → **P2** → P3 free-tracker model, P4 analytics, P5 activation/trust).
+
+---
+
+## 1. Goal
+
+Close the `WAIT → ALERT → RETURN → BUY` leg of the economic loop, honestly:
+
+1. **Alerts exist in the app** — a durable per-user alert-event history and an Alerts
+   surface, so a price event is visible the next time the app is opened even with
+   zero notification infrastructure.
+2. **Alerts reach a closed app** — OS push on Android is the default, low-cost channel
+   (report §8 hierarchy: *push notification → secondary → email → WhatsApp*).
+3. **Copy stops promising what the build cannot do** — the "you'll get a WhatsApp
+   notification" promise and the listing's "Elhaq lets you know" become true, or
+   they are removed until the channel ships.
+
+Non-goals: WhatsApp cost optimization beyond keeping it as the *secondary* channel,
+iOS notifications (v1 is Android-only per `plans/flutter-android-release.md`), email
+channel, per-product notification scheduling beyond the existing target-price logic.
+
+---
+
+## 2. Current State — Evidence
+
+| # | Finding | Evidence |
+|---|---|---|
+| N1 | No OS notifications: permission explicitly removed, no notification package | `flutter-app/android/app/src/main/AndroidManifest.xml:4` ("POST_NOTIFICATIONS is deferred to v1.1"); `pubspec.yaml` has no `firebase_messaging` / `flutter_local_notifications` / web-push |
+| N2 | The alert path in the client is dead code: write-only, no read, never called | `flutter-app/lib/src/data/repositories/alerts_repository.dart` (only `createAlert`, provider defined in the file itself, zero references in `lib/src/ui/**`) |
+| N3 | No Alerts screen: the dashboard has exactly four tabs | `flutter-app/lib/l10n/app_en.arb` (`navTrackers`, `navDeals`, `navChat`, `navProfile`) |
+| N4 | The app promises WhatsApp delivery it cannot deliver | `lib/l10n/app_en.arb:68` `"trackerCreated": "✅ Tracker created! You'll get a WhatsApp notification when we find a deal."` |
+| N5 | The store listing promises alerting too | `flutter-app/docs/play-store/store-listing.md` §3 "Get alerted on drops… Elhaq lets you know" |
+| N6 | Server-side delivery is WhatsApp-only, and events are not persisted per user | `services/whatsapp/sender.py` (consumes `stream:confirmed_deals`, group `cg_whatsapp`; `docker-compose.yml:220-238`), `services/notification/src/index.ts` (legacy 360dialog path); `services/api/models.py:106` `Alert` = the user's *tracker* row (`notify_channel` default `"whatsapp"`), no event history table |
+| N7 | The report's own cost model warns against WhatsApp-first | report §8 "Recommended notification hierarchy: Push notification (default)… WhatsApp"; §28 checklist item 13 "Why should push notifications be the default before WhatsApp?" |
+| N8 | Gate 3 has no instrumentation | report §26 Gate 3 = "Do users click merchants?" preceded by "Do alerts bring users back?"; nothing in the client records an alert being opened |
+
+---
+
+## 3. Approach
+
+### WS1 — Persist alert events, then show them (works with no third-party infra)
+
+1. **New table (canonical schema first)** — `services/api` owns `alerts`, so it owns
+   the event history too (`infra/sql/schema/postgres.sql`, `update_updated_at_column()`
+   trigger, UUID PK, `ON DELETE CASCADE` to `users`):
+   ```sql
+   CREATE TABLE IF NOT EXISTS alert_events (
+     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+     user_id  UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+     tracked_item_id TEXT NOT NULL,
+     sku      TEXT, store_id TEXT, category TEXT,
+     event_type TEXT NOT NULL,      -- price_drop | threshold_crossed | lowest_price_changed | back_in_stock
+     price_egp NUMERIC(12,2), reference_price_egp NUMERIC(12,2), discount_pct NUMERIC(6,2),
+     channel  TEXT NOT NULL,        -- push | whatsapp | in_app
+     opened_at TIMESTAMP WITH TIME ZONE,   -- set when the user sees it in-app or taps it
+     created_at ..., updated_at ...
+   );
+   -- indexes: (user_id, created_at DESC), (tracked_item_id, created_at)
+   ```
+2. **Consumer in `services/api`** (new `services/api/alert_events_consumer.py`, started from
+   `main.py` startup, Redis **Streams only**, `ensure_group("stream:alerts", "cg_alerts_api")`,
+   `XACK` after each successful insert per `AGENTS.md` rule). Fans one event out to the
+   owning user's rows via `tracked_items.user_id`. Dedupe: skip when an event for the same
+   `(tracked_item_id, event_type)` exists today (the Skill 7 rate rule: *max 1 alert per
+   item per day*).
+3. **Read endpoint**: `GET /alerts/recent` (auth, `slowapi` limited, bounded `limit`/`since`)
+   returning the last N events with `opened_at` null-or-set. Also `POST /alerts/{id}/open`
+   (idempotent) so an in-app view of an alert is *measured*, which is exactly report §23's
+   `alert_opened` event and Gate 3's evidence.
+4. **Client**: `lib/src/data/repositories/alert_events_repository.dart` +
+   `providers.dart` provider + `lib/src/ui/alerts/alerts_tab.dart` (card list: product
+   image, store, delta %, "when", tap → `merchant_link` from P1). Add the fifth dashboard
+   tab (`navAlerts`) ahead of Deals, since returning users should land on *what changed*.
+5. Delete `alerts_repository.dart`'s dead `createAlert` path: tracker creation already
+   creates the target (`POST /tracked-items/from-url` pushes to `stream:targets`), so the
+   second, parallel alert-creation path is removed rather than wired (one mechanism).
+
+### WS2 — OS push on Android (default channel)
+
+**Decision framing** (needs H2 + H3): for a native Android app there is no
+self-hosted push primitive; the standards are FCM/GCM (Firebase), or a third-party
+broker (OneSignal et al.). Recommendation: **FCM**, because the same Firebase project
+also satisfies P4's crash-reporting need (H2 is one decision, two features).
+
+1. **Storage** (`services/api` owns it): `push_tokens(user_id UUID REFERENCES users …,
+   token TEXT UNIQUE, platform TEXT, push_application TEXT, revoked_at TIMESTAMPTZ,
+   created_at, updated_at)` — canonical schema addition.
+2. **Client registration**: `flutter-app/lib/src/data/services/push_registration.dart`
+   + `main.dart` bootstrap: obtain the FCM registration token after login,
+   `POST /push/register` / `DELETE /push/register` on logout, revoke-and-clear on
+   `410 Not Found` from the sender. Store nothing user-identifying in the token row.
+3. **Sender** as its own service (service-isolation rule — no cross-service imports):
+   `services/push/` (Python worker, Dockerfile, `docker-compose.yml` entry) consuming
+   `stream:alerts` with consumer group **`cg_push`**, authenticating FCM HTTP v1 with a
+   service-account JSON from env (`FCM_SERVICE_ACCOUNT_JSON`, `FCM_PROJECT_ID`), sending
+   a collapse key per `(user_id, tracked_item_id)` so burst price changes become **one**
+   notification (report §8: "Batch low-value events instead of sending repeated messages").
+   Metrics: counters `el72_push_sent_total / failed / skipped / cost_estimate` in the
+   same Prometheus style as `services/notification/src/index.ts:20-60`.
+4. **Permission & dependency land together**: re-add `POST_NOTIFICATIONS` to the manifest
+   in the *same* PR as the notification package and the data-safety/privacy update, with
+   the justification row (`docs/play-store/privacy-policy.md` + `store-listing.md` §4).
+   Until then the permission stays removed — no orphan permission again.
+5. **Notification preference per user and product** (report §8: "notification
+   preferences per user and per product"): reuse `alerts.notify_channel`
+   (`services/api/models.py:119`) — the tracker creation UI writes the chosen channel
+   (`push`, `whatsapp`, `in_app`) and the sender/push consumer honor it.
+6. **Android-only guard**: keep iOS out of v1 — `pubspec.yaml` deps stay, but
+   `flutter-app/pubspec.yaml` `flutter: uses-material-design` plus
+   `firebase_messaging` init guarded by `Platform.isAndroid`; note the iOS
+   `Entitlements`/`aps` work as a later release (the current plan explicitly excludes it).
+
+### WS3 — Make the promises true, in both locales
+
+1. Rewrite `trackerCreated` so it states what actually happens for the chosen channel
+   (`push` → "we'll notify you when the price drops"; when notifications are not
+   configured → "it will appear in your Alerts tab"). **The English and Arabic values
+   come from the owner** (Arabic hard rule, see §7); this plan only specifies the key
+   names and the truth condition.
+2. `docs/play-store/store-listing.md` §3: change "Get alerted on drops" to the channel
+   that actually ships, and remove the WhatsApp-first framing (report §8).
+3. Add keys for: Alerts tab label, alert card ("was {price} → now {price}",
+   "{n}% under its 90-day low"), notification-channel picker, "N newer alerts" badge.
+
+### WS4 — Cost and fatigue guardrails (report §8, §25 risk "WhatsApp cost")
+
+1. Meaningful-event gate before send: only emit when the deal-score change crosses
+   the existing analyzer threshold — do not push every scrape delta.
+2. Daily dedupe per item per type; collapse keys; 1-per-day ceiling for the free tier
+   (Skill 7).
+3. A per-user `notifications_sent / opened / tapped` rollup available to the KPI
+   endpoint (`/stats/notifications`), so the report's question *"does WhatsApp create
+   more contribution than it costs?"* can be answered per channel — incremental
+   affiliate revenue by `channel` joins P1's `affiliate_clicks.source/channel` to
+   `alert_events.channel`.
+
+---
+
+## 4. Files Touched
+
+**New**
+```
+services/api/alert_events_consumer.py
+services/api/routers/alerts.py            -- GET /alerts/recent, POST /alerts/{id}/open, /push/register
+services/api/push_models.py               -- PushToken ORM
+services/push/{main.py,sender.py,Dockerfile,requirements.txt,test_sender.py}
+flutter-app/lib/src/data/repositories/alert_events_repository.dart
+flutter-app/lib/src/data/services/push_registration.dart
+flutter-app/lib/src/ui/alerts/alerts_tab.dart
+flutter-app/lib/src/ui/alerts/alert_card.dart
+flutter-app/test/alerts_tab_test.dart
+flutter-app/test/push_registration_test.dart
+```
+**Modified**
+```
+infra/sql/schema/postgres.sql                     -- alert_events, push_tokens
+services/api/models.py                     -- AlertEvent, PushToken
+services/api/main.py                  -- include alerts router, start consumer
+services/api/dependencies.py      -- (reuse get_current_user)
+docker-compose.yml             -- push service + FCM env
+services/api/main.py, .env.example              -- FCM_SERVICE_ACCOUNT_JSON, FCM_PROJECT_ID
+flutter-app/pubspec.yaml                 -- firebase_messaging, firebase_flutter (+ flutter_local_notifications if offline alert echo is kept)
+flutter-app/android/app/src/main/AndroidManifest.xml      -- POST_NOTIFICATIONS re-added with justification
+flutter-app/lib/main.dart, lib/src/data/providers.dart, lib/src/ui/dashboard/dashboard_page.dart
+flutter-app/lib/src/ui/create_tracker_sheet.dart          -- channel picker + truthful confirmation
+flutter-app/lib/l10n/app_en.arb + app_ar.arb
+flutter-app/docs/play-store/{privacy-policy.md,store-listing.md}
+flutter-app/docs/release-checklist.md
+```
+
+---
+
+## 5. Test Strategy
+
+| Layer | Test file | Asserts |
+|---|---|---|
+| Backend consumer | `services/api/test_alert_events_consumer.py` | `ensure_group` before first read; every processed id is `xack`ed; fan-out to the owning user only; same-day dedupe; unknown `tracked_item_id` → skipped and counted, not crashed |
+| Backend API | `services/api/test_alerts_api.py` | `/alerts/recent` auth-gated, bounded, ordered; `/alerts/{id}/open` idempotent and rejects another user's id (404); `/push/register` upsert + revoke |
+| Push sender | `services/push/test_sender.py` | collapse key per (user, item); `MOCK_PUSH=true` path; 410 from FCM revokes the stored token; counters increment; no promotional wording in the payload (Meta-style classifier rule from Skill 7 applies to WhatsApp templates, mirrored here for neutrality) |
+| Flutter unit | `test/alert_events_repository_test.dart` | demo fallback pattern (mirrors `deals_repository.dart`), rethrow in live mode |
+| Flutter widget | `test/alerts_tab_test.dart`, `test/dashboard_credits_test.dart` siblings | Alerts tab renders light+dark, AR RTL + EN, tap resolves through `merchant_link`, "N newer alerts" badge; new tab does not break `test/system_ui_test.dart` |
+| Copy truth | extend `test/l10n_hardcoded_strings_test.dart` allow-list shrink + a guard test asserting no shipped string mentions WhatsApp while the WhatsApp channel is not selected |
+| Manual (release checklist §6) | signed AAB on a device: receive one push while the app is closed; tap → merchant opens tagged (P1); `Alerts` tab shows the event when push is disabled |
+
+Run before PR: `pytest services/api/test_alert*.py services/push/test_*.py -v`,
+`cd flutter-app && flutter test` (66 existing tests stay green), `flutter analyze`,
+`dart format --set-exit-if-changed lib test`.
+
+---
+
+## 6. Milestones
+
+| MS | Scope | Depends on | Est. |
+|----|-------|-----------|------|
+| MS1 | `alert_events` + consumer + `/alerts/recent` + `/alerts/{id}/open` (backend) | — | 1-2 d |
+| MS2 | Alerts tab in the client (pull model) + copy truthfulness in both locales + listing fix | MS1 | 1-2 d |
+| MS3 | `push_tokens` + register/revoke + FCM sender service + permission/dep/data-safety landed together | **H2 + H3** | 2-3 d |
+| MS4 | Channel preference per product + per-channel contribution rollup | MS3, P1 (click source/channel) | 1 d |
+
+**MS1+MS2 are unblocked and are the release-critical half**: they make alerts real
+without any Google/Firebase dependency. MS3 can slip to v1.1 exactly as
+`plans/flutter-android-release.md` anticipated ("defer notifications, remove the
+permission now") — but only **if** MS2 removes the false promise, which today it does not.
+
+---
+
+## 7. Risks & Open Questions
+
+| Risk / Question | Mitigation / Needed decision |
+|---|---|
+| **H2** — Firebase project + `google-services.json` (+ service account JSON) | cannot be generated in-repo; blocks MS3 only |
+| **H3** — "are OS notifications in v1?" | now a *costed* decision: MS1/MS2 deliver the loop without it; if H3 = no, MS2's copy fix is mandatory, not optional |
+| Notification fatigue → uninstalls (report §25 "Low retention: Very high") | dedupe + collapse keys + meaningful-delta gate (WS4), user-visible channel preference |
+| Push cost becomes an unbounded variable cost (report §13 break-even math) | per-channel cost counters from WS4 so contribution margin stays computable |
+| Dead-person risk: a stale registration token looks like a working subscription | revoke-on-410 + a `push_tokens` health gauge exposed to `/stats` |
+| Consumer lag between `stream:alerts` and `alert_events` | XACK only after commit; consumer lag already observable via existing Prometheus/`infra/monitoring` patterns |
+| Two alert pipelines (legacy `services/notification` Node service vs `services/whatsapp`) — a third must not appear by accident | `AGENTS.md` labels `services/notification` legacy; the new `services/push` worker consumes the same stream with its own group; document in the Streams table in `.agents/AGENTS.md` **from a maintainer session** (`scripts/check_agents.py` blocks agent-dir edits otherwise) |
+
+### ⚠️ Human input required
+| # | Item | Why |
+|---|---|---|
+| H2 | Firebase project, `google-services.json`, service-account JSON (shared with P4 crash reporting) | external account creation |
+| H3 | Whether OS push ships in v1.0 or v1.1 | product decision; determines whether MS3 is release-blocking |
+| — | Arabic strings for every new/changed UI key | `PI_MODEL=qwen3.8-flash-next-coder-iq1_m`: per `.agents/AGENTS.md` + Skill 10 the Arabic locale is authored by the owner; land `app_en.arb` and `app_ar.arb` in the same commit, never English alone |
+
+### MS2 copy surface — ready to translate (Arabic column is the owner's)
+
+English values are decided here; the Arabic column is the owner's to fill. `flutter-app/test/l10n_coverage_test.dart` enforces four things, so a partial
+landing cannot slip through: every English key needs a non-empty Arabic value, no Arabic-only keys,
+placeholder declarations must match in both files, and no Arabic value may be a copy of the English
+one or lack Arabic script. Keys marked *rewrite* already exist in both files, so their Arabic changes too
+— `trackerCreated`'s current Arabic value promises a WhatsApp message this build does not send.
+
+| Key | English (final) | Where / constraint | Arabic |
+|---|---|---|---|
+| `navAlerts` | `Alerts` | bottom-nav label, 5th tab placed ahead of Deals; keep it as short as `navDeals`/`navChat` | |
+| `alertsTabTitle` | `Alerts` | tab header | |
+| `alertsTabHint` | `Price changes on the products you track. Tap one to open it at the store.` | sub-header under the tab; states the pull model, promises no channel | |
+| `alertsEmpty` | `No alerts yet.\nA price change on a tracked product appears here.` | empty state (mirrors `noTrackersEmpty` two-line style) | |
+| `alertsLoadFailed` | `Failed to load alerts.\n{error}` | mirrors `failedToLoadDeals`; `{error}` is a `String` placeholder | |
+| `alertsUnopenedBadge` | `{count} unread` | the `unopened_total` badge; every placeholder in this file is declared `String` and pre-formatted in Dart (see `targetLabel`), so keep that convention | |
+| `alertTypePriceDrop` | `Price dropped` | card label for `event_type = price_drop` | |
+| `alertTypeThresholdCrossed` | `Below your target` | `event_type = threshold_crossed` | |
+| `alertTypeLowestPriceChanged` | `New lowest price` | `event_type = lowest_price_changed` | |
+| `alertTypeBackInStock` | `Back in stock` | `event_type = back_in_stock` | |
+| `alertPriceFromTo` | `{from} → {to}` | card line; both placeholders are pre-formatted EGP strings (same pattern as `targetLabel`) | |
+| `alertDeltaDown` | `{percent}% lower` | shown when `discount_pct` is not null; `{percent}` is a pre-formatted `String` (no currency unit in the string itself) | |
+| `alertWhenToday` | `Today` | relative stamp for an event dated today | |
+| `alertWhenYesterday` | `Yesterday` | … yesterday | |
+| `alertWhenDaysAgo` | `{days} days ago` | … older; `{days}` is a pre-formatted `String` | |
+| `alertOpenHint` | `Tap to open at {store}` | affordance on the card; `{store}` is a `String` placeholder (server's `store_id` mapped to a label) | |
+| `trackerCreated` *(rewrite)* | `✅ Tracker created! Price changes for this product will appear in the Alerts tab.` | replaces the string that promises a WhatsApp notification; existing Arabic value promises it too, so both locales change in one commit | |
+
+Not included, deliberately: any OS-push or WhatsApp wording (channel picker, permission copy) — that copy belongs
+with MS3 and only exists once H3 answers that OS push ships in v1.0.
+
+---
+
+## 8. Definition of Done
+
+- [ ] A price event is visible in the app's Alerts tab on next open, with or without push
+      configured, in AR (RTL) and EN, light and dark.
+- [ ] Opening an alert records `alert_opened`; tapping records a merchant click (P1 path).
+- [ ] When the app is closed, a meaningful price event produces **exactly one** push
+      (dedupe + collapse key), on the channel the user chose.
+- [ ] No shipped string or store copy promises a channel the build cannot deliver.
+- [ ] `POST_NOTIFICATIONS` exists only alongside a notification dependency, sender service,
+      privacy-policy row and data-safety row that all describe it.
+- [ ] `alert_events` and `push_tokens` exist in `infra/sql/schema/postgres.sql` with the
+      trigger/index conventions; services talk over Redis Streams only.
+- [ ] All backend and Flutter suites green; review agent reports no CRITICAL/WARNING.
+
+---
+
+## 9. Implementation Record (deviations actually shipped)
+
+| Planned | Shipped | Why |
+|---|---|---|
+| `user_id UUID NOT NULL REFERENCES users(id)` | `user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE` | `users.id` is `SERIAL` in the canonical schema (reconciled; see the header note in `infra/sql/schema/postgres.sql`) and the ORM mirrors it with `OperationalIdType` — P1 hit the same correction |
+| `tracked_item_id TEXT` | `tracked_item_id INTEGER NOT NULL`, **no FK** | `tracked_items.id` is `SERIAL`; the FK is left out deliberately because `tracked_items` is scraper-owned (service isolation) and gets `idx_alert_events_item_time` instead |
+| `channel TEXT NOT NULL` (free text) | `channel TEXT NOT NULL DEFAULT 'in_app' CHECK (channel IN ('in_app','push','whatsapp'))` | WS3's truth rule applies to data too: a row must not claim a push/WhatsApp send that never happened, so the only value written today is `in_app` and the CHECK widens with the sender that ships |
+| `POST /alerts/{id}/open` also wired for push taps | in-app open only | the push channel is MS3 and blocked on H2; `opened_at` semantics are identical when a push tap later reuses it |
+| `routers/alerts.py` also serves `/push/register` | not shipped in MS1 | the endpoint is meaningless before `push_tokens` and the FCM sender exist (MS3, H2); landing it early would be a contract with no implementation |
+| consumer "started from `main.py` startup" | an `asyncio` task created in the API's startup hook, Redis connected **lazily** inside the loop, guarded by `ALERT_EVENTS_CONSUMER` (default true) + `el72_alert_events_consumer_up` gauge + `el72_alert_events_read_errors_total` | a Redis outage must not stop the API from serving alert reads; it must be observable instead (§7 "consumer lag" row), which is what the gauge and the separate read-error counter are for |
+| migration for deployed trees | `infra/sql/migrations/0013_alert_events.sql`, applied by `scripts/db-bootstrap.sh`, registered in `services/common/test_migration_files.py` | the canonical file is the baseline only; deployed trees need the migration (Skill 4: canonical schema + migration + owning model move together) |
+| `alert_events` backfilled from `current_prices` on upgrade | **no backfill** | an `alert_events` row asserts "a price event happened for this user"; synthesizing rows from current prices would invent events and inflate the opened/unopened ratio Gate 2 measures (§13 note in the migration file) |
+| drift guard: a comment noting model↔schema parity | `services/api/test_alert_events_schema_sync.py` | AGENTS: a pair that must stay in lockstep gets a test — it pins columns (schema ↔ migration ↔ ORM), the CHECK value sets (↔ the consumer's `VALID_EVENT_TYPES`), index names, the updated_at trigger, the CASCADE retention rule and the bootstrap reference |
+| Streams table gains a `cg_alerts_api` row | **not edited here** | rewriting `.agents/` rules is a maintainer-session act (§7 last risk row); this PR states the need, the edit belongs in its own PR |
+
+### Round 1 — HGM review findings on PR #49 (CRITICAL + every WARNING addressed)
+
+| Finding | Fix | Where |
+|---|---|---|
+| **CRITICAL** a payload with non-object `metadata` (list/string/number) raised inside the write, leaving the message pending forever | `_event_metadata()` yields `{}` unless metadata is an object — display context, never identity | `alert_events_consumer.py`, test `test_non_object_metadata_never_crashes_the_write` |
+| WARNING the ORM wrote naive values into `TIMESTAMP WITH TIME ZONE` columns: comparisons break once psycopg2 reads them back tz-aware, while SQLite tests stay green | `alert_events` timestamps are `TIMESTAMP WITHOUT TIME ZONE`, defaulted **and** triggered in UTC (`NOW() AT TIME ZONE 'UTC'` through a dedicated trigger function, so a naive column cannot inherit the session timezone); one timestamp kind from SQL default → trigger → Python | `schema/postgres.sql`, `0013_alert_events.sql`, `models.py::_utc_naive_now`, test `test_alert_events_timestamps_are_naive_utc_everywhere` |
+| WARNING `since` accepted offset-carrying bounds against naive rows | converted to UTC and stripped at one normalization point, so a client in another zone sees the same rows | `routers/alerts.py::_parse_since`, test `test_since_normalizes_an_offset_to_utc` |
+| WARNING messages left pending were never reclaimed by this consumer | the loop reads its **own pending list (`0`) before** asking for new messages (`>`), and bounds redelivery: after `MAX_DELIVERY_ATTEMPTS` = 3 failures the entry is acked into `el72_alert_events_discarded_total` | `consume_loop` / `_process_with_retry`, test `test_broken_write_is_reclaimed_then_discarded_and_the_gauge_drops` |
+| WARNING one fixed consumer name collides across API workers/replicas | default `alerts_api_<host>-<pid>` (env still overrides): a pending list belongs to the process that wrote it | `CONSUMER_NAME` |
+| WARNING same-day dedupe raced with no database guarantee | `CREATE UNIQUE INDEX uq_alert_events_item_type_day ON alert_events(tracked_item_id, event_type, (created_at::date))` in the canonical schema **and** the migration; the write catches `IntegrityError` and answers `duplicate`. SQLite keeps the read-then-write check (the expression index is not portable) | both SQL files + `store_event`, pinned by the drift test |
+| WARNING an `XACK` failure other than `ResponseError`, or any error while handling a message, could end the task while the gauge still read 1 | ack errors caught for **any** exception and counted (`el72_alert_events_ack_errors_total`); per-message handling is contained in `_process_with_retry`; the loop ends with `finally: consumer_up.set(0)` | `process_message` / `_process_with_retry` / `consume_loop` |
+| WARNING dedupe and `created_at` used processing time instead of event time | `_event_time()` reads the emitter's own stamp (converted to naive UTC), so a drained backlog cannot rewrite history or steal today's dedupe slot | `_event_time`, test `test_dedupe_uses_event_time_across_midnight` |
+| WARNING open-marking was not atomic under concurrency | the UPDATE carries `opened_at IS NULL` and `rowcount` decides `already_open` | `open_alert` |
+| WARNING the store copy still promised alerting the build cannot deliver | §2 short description and §3's alert bullet state what actually ships (a recorded price event, visible in-app, tap → merchant); the Arabic promise is replaced by an ASCII note pending the owner's wording — machine Arabic copy is forbidden under the active model | `flutter-app/docs/play-store/store-listing.md`, `privacy-policy.md` §1/§2/§3 |
+| INFO `datetime.utcnow()` deprecated | `_utc_naive_now()` for the new table only; existing tables keep their defaults (changing those is a data-visible migration, not a cleanup) | `models.py` |
+| INFO the startup hook could start a second consumer | a live task is never replaced, and the log says so | `main.py::_start_alert_events_consumer` |
+| INFO the dedupe index did not cover `event_type`; migration lacked a trailing newline | unique index above + plain item-time index kept for the item-history read; newline added | both SQL files, `0013_alert_events.sql` |
+
+### Round 2 — HGM review findings on PR #49 (CRITICAL + WARNING findings addressed)
+
+| Finding | Fix | Where |
+|---|---|---|
+| **CRITICAL** an `XACK` failure was reported as a successful decision: the entry stayed pending, the next pass re-read it with no backoff, and the pending pass could hot-spin while new messages starved | `process_message` returns a distinct `ack_failed` outcome, which the retry layer treats as RETRYABLE (bounded by `MAX_DELIVERY_ATTEMPTS`); an entry already decided is re-acked but never re-decided, so `stored`/`skipped` cannot double-count one stream entry; the loop only counts progress for terminal outcomes | `alert_events_consumer.py`, test `test_refusing_ack_is_bounded_and_never_double_counts` (asserts bounded reads, one row, one `stored`, one `discarded`, and that the new-messages pass IS reached) |
+| WARNING the same-day read had no upper bound, so a future-dated row suppressed today's alert while the UNIQUE index would have allowed it | `created_at >= day_start AND < day_start + 1 day` — one definition of "same day" shared with `uq_alert_events_item_type_day` | `store_event`, test `test_dedupe_only_covers_the_same_calendar_day` |
+| WARNING the category fallback read another user's tracker row | the query is scoped to the alert's owner; no owner row means no category rather than a stranger's label | `_fill_category(db, sku, event, owner_id)`, test `test_category_fallback_is_scoped_to_the_owner` |
+| WARNING every `IntegrityError` was classified as a duplicate, hiding an FK race or a future constraint | `_is_same_day_unique()` matches only `uq_alert_events_item_type_day`; anything else re-raises into the transient-failure path (left pending, counted, bounded) | `store_event`, test `test_only_the_same_day_index_may_be_called_a_duplicate` |
+| WARNING pending-review notes were HTML comments inside copy that gets submitted | notes moved out of the copy: the §2 line is a `[PENDING COPY]` placeholder, §3's header (never submitted) carries the flag, and the DRAFT banner gained the release gate `grep -rn "PENDING COPY" flutter-app/docs` → empty at submission | `store-listing.md` |
+| WARNING the consumer started by default in every process, including tests | the API test suite pins `ALERT_EVENTS_CONSUMER=false` in `conftest.py`; multi-worker behaviour (N processes = N consumers on one group, each with its own pending list, duplicates prevented by the UNIQUE index, overlap visible in REDRAWS/DISCARDED) documented in `.env.example` | `services/api/conftest.py`, `.env.example` |
+| WARNING the in-app promise (`app_en.arb` `trackerCreated`) is still false in this branch | unchanged BY CONSTRAINT — rewriting it needs the owner's Arabic and `l10n_coverage_test` forbids landing English alone; promoted from "nice-to-have" to an explicit RELEASE GATE: no build ships to users with this string live. **Superseded:** the rewrite shipped in both locales once the operator lifted the no-generated-Arabic rule (see the MS2 subsection of §9) | §7 risks (below), §9 MS2 subsection |
+| INFO a malformed `ALERTS_CONSUMER_*` value raised at import and took the API down | `_env_int()` falls back to the default and logs the typo | consumer module, test `test_env_int_falls_back_on_a_typo` |
+| INFO `unopened_total` ignored `since` without saying so | documented in the endpoint docstring and pinned by a test: the window filters the list, the badge counts the account (that split is the Gate-2 ratio) | `routers/alerts.py`, `test_unopened_total_counts_the_account_not_the_window` |
+| INFO a fractional payload `user_id` ("1.9") could agree with id 1 | integer-valued check before comparison | `store_event`, test `test_payload_user_id_must_be_an_integer_to_agree` |
+| INFO the discarded-id set grew without bound | bounded FIFO memory (`DELIVERY_MEMORY`) for both the decided and given-up sets | `_remember`, test `test_remembered_ids_are_bounded` |
+| INFO `_event_time` relied on the interpreter for a trailing `Z` | normalized explicitly, the same way the router normalizes `since` | `_event_time` |
+| Tests the review said were missing | startup guards (disabled → no task and the log names the reason; second startup never replaces a live consumer) land in `test_alert_events_startup.py`, alongside the six consumer tests above | services/api |
+
+### Round 3 — HGM review findings on PR #49 (CRITICAL: a broken migration)
+
+| Finding | Fix | Where |
+|---|---|---|
+| **CRITICAL** `0013_alert_events.sql` ended with a stray closing markup tag: the bootstrap would have failed on the last statement of a migration that otherwise applied cleanly — a broken deploy | tag removed, and a structural guard added: every SQL file in `infra/sql` is scanned for a closing markup tag or a model special-token artifact, and every non-legacy migration plus the canonical schema must end with a newline (which is what let the artifact hide on an unterminated last line) | `infra/sql/migrations/0013_alert_events.sql`, `services/common/test_migration_files.py` |
+| WARNING entries delivered under a consumer name that no longer exists (restarted replica, renamed deployment) were stranded in the group forever: `'>'` never returns them, `'0'` only returns entries this name owns | a claim pass between the pending read and the new-message read — `XAUTOCLAIM` with `ALERTS_CLAIM_IDLE_MS` (default 15 min), added as `RedisStreamClient.xautoclaim` (reply parsed by SHAPE, not position, so a server-version change cannot drop alerts); reclaimed entries are counted in `el72_alert_events_claimed_total`, claim failures in `el72_alert_events_claim_errors_total` | `services/common/redis_client.py`, `_claim_stale`, test `test_stranded_entries_are_claimed_and_not_lost` |
+| WARNING `store_event` accepted a tz-aware `now` against naive-UTC columns — raises only in production, never under the SQLite fixtures | `_as_naive_utc()` normalizes whatever the caller hands over, and `_event_time` reuses it | consumer, test `test_store_event_normalizes_an_aware_now` |
+| WARNING `open_alert` refreshed the ORM object after the commit: a row deleted between the read and the write made a user-visible tap a 500 | the values are read ONCE before the write and the response is built from them; when the UPDATE matches nothing, existence is re-checked in the same transaction → already-open answers with the FIRST stamp, a vanished row answers 404 and is counted in `el72_alert_events_event_deleted_total` | `routers/alerts.py`, test `test_open_answers_404_when_the_row_vanishes_mid_request` |
+| WARNING a zero or negative price was stored as a price, which reads as "EGP 0" on a card and can yield a 100% discount | `_positive()` — an unusable reading is stored NULL while the event still lands; the emitter's own `drop_percentage` is still trusted when it sends one | `_to_egp`, `_usd_to_egp`, test `test_non_positive_prices_land_as_null_not_as_a_deal` |
+| INFO no Prometheus counter for opens, so Gate 2's ratio was DB-only | `el72_alert_events_opened_total`, `el72_alert_events_already_open_total` (re-taps kept separate so refreshes cannot inflate the ratio) and `el72_alert_events_event_deleted_total` | `monitoring/metrics.py`, test `test_open_reports_the_stamp_it_wrote_and_counts_the_open` |
+| WARNING a `[PENDING COPY]` marker sits in submitted copy, which conflicts with the release gate | the gate is now stated in the document itself: `grep -rn "PENDING COPY" flutter-app/docs` must come back empty at submission, and the marker's presence is the reason **this branch is not publishable before MS2** | `store-listing.md` header + §2/§3 |
+| WARNING the in-app false promise stays live until MS2 | unchanged BY CONSTRAINT (owner-supplied Arabic, `l10n_coverage_test`); stated as a release gate rather than a TODO | §7 risks |
+| Not done, and why | a migration apply against a live Postgres is not a unit-test concern: `scripts/audit-db-and-bootstrap.sh` applies the migration chain on deploy; the structural guard covers the class of artifact this CRITICAL belonged to. The in-app string awaits MS2 (owner copy) |
+
+### Round 4 — HGM review findings on PR #49 (no CRITICAL; WARNINGs closed, one of my own fixes corrected)
+
+| Finding | Fix | Where |
+|---|---|---|
+| WARNING the payload's timestamp was parsed without bounds, so a hostile or buggy emitter could date rows in the future (they sit on top of the feed and take a future day's dedupe slot) or in the deep past | `_bounded_event_clock()`: outside `ALERTS_EVENT_FUTURE_TOLERANCE_SECONDS` / `ALERTS_EVENT_MAX_AGE_DAYS` the value falls back to processing time — the only clock in this process that cannot be argued with — and the fallback is logged | consumer, test `test_the_payload_clock_is_trusted_only_inside_its_window` |
+| WARNING `GET /alerts/recent` returned a raw URL taken from the payload | the URL is stored only when it equals a `tracked_item_stores.store_url` recorded for that tracked item (one read through the existing `idx_tracked_item_stores_tracked_item_id`); anything else is dropped and the event still lands. The tap path remains the boundary either way | `_matches_tracked_url`, test `test_a_payload_url_that_is_not_the_tracked_url_is_dropped` |
+| WARNING a concurrent open could answer `already_open: true` with `opened_at: null` (the value came from this request's pre-write SELECT) | the `rowcount == 0` branch re-reads `opened_at` in the SAME transaction: a present row answers with the FIRST stamp (possibly written by the other tap), a vanished row answers 404 and is counted | `open_alert`, tests `test_open_marks_an_event_seen_once` / `test_open_answers_404_when_the_row_vanishes_mid_request` |
+| WARNING `unopened_total` counted every row for a user, growing with history | PARTIAL index `idx_alert_events_user_unopened ON alert_events(user_id) WHERE opened_at IS NULL`, so the badge stays proportional to the unread set; pinned in the drift test as PostgreSQL-only, next to the UNIQUE index | schema + `0013_alert_events.sql` + `test_alert_events_schema_sync.py` |
+| WARNING (my own round-1 error) the privacy copy denied WhatsApp delivery while `services/whatsapp/sender.py` exists and, when configured (`MOCK_WHATSAPP=false` + Meta credentials), sends deal alerts through Meta's WhatsApp Business API | copy corrected to what is verifiable: **the app** requests no notifications permission and sends no OS push notification and no email; a WhatsApp deal alert is a **server-side, configuration-gated** channel, disclosed as such in §2/§3 — including that it processes the phone number through a third party — with the default configuration running in mock mode. Listing copy stopped denying channels it cannot see and states only the in-app fact | `privacy-policy.md` §2/§3, `store-listing.md` gate + alert bullet |
+| WARNING the module docstring claimed the consumer reads Redis Streams only, while ownership fan-out reads a shared table | docstring corrected: input is Redis Streams; it reads `tracked_items` ownership and `tracked_item_stores` urls (never writes them) and writes only `alert_events` | module docstring |
+| INFO an invalid `ALERTS_*_RATE_LIMIT` value reached slowapi and surfaced as a runtime error | `_rate_limit()` validates the shape, keeps the default and logs the typo | `routers/alerts.py` |
+| INFO the in-process consumer assumes a single API worker | documented in `.env.example` (one process = one consumer; N workers = N consumers on one group, duplicates prevented by the UNIQUE index, overlap visible in REDRAWS/CLAIMED/DISCARDED). The alternative the review offered — a separate consumer service — is a deployment change and is not taken here |
+| WARNING the in-app `trackerCreated` promise stays live until MS2 | unchanged BY CONSTRAINT (owner-supplied Arabic; `l10n_coverage_test` forbids landing English alone) and enforced as a release gate: no publishable build carries this string before MS2 | §7 risks |
+
+Deferred here, not blocked: MS2 needs the owner's Arabic values for every new key (`navAlerts`, the
+alert-card lines, the channel picker, and a truthful rewrite of `trackerCreated`); MS3 needs H2 (Firebase
+project, `google-services.json`, service-account JSON) and H3 (is OS push in v1.0?). If H3 answers "no", MS2's
+copy fix stops being optional. The **store-facing** promise was already corrected in this PR (`store-listing.md`
+§2/§3 and `privacy-policy.md` now describe an in-app alert history and state that no OS push/email/WhatsApp
+channel is used); the **in-app** promise (`app_en.arb` `trackerCreated`, which claims a WhatsApp notification)
+still needs the owner's Arabic to be rewritten, which is why it lands with MS2 rather than here.
+
+**Release gate, stated once and loudly (round-2 review):** the in-app string is a
+false promise until MS2, so no build derived from this branch may be published to
+users before MS2 lands. The store-facing side is already truthful; the app-facing
+side is the one remaining copy debt, and it is owner-blocked, not engineer-blocked.
+
+### MS2 copy surface (shipped)
+
+| Planned | Shipped | Why |
+|---|---|---|
+| MS2 Arabic supplied by the owner before any client work | the 11 alert-surface keys land in `app_en.arb` **and** `app_ar.arb` in one commit, `app_localizations*.dart` regenerated with `flutter gen-l10n` | the operator removed the rule that forbade this model from generating Arabic (own rules PR: `chore/agent-rules-owner-approved-arabic`, PR #51); key parity and the "never call it reviewed" requirement were kept, and `l10n_coverage_test` still fails on an English-only landing |
+| Arabic wording written from scratch | **token-composed**: every Arabic word is lifted from Arabic this repo already ships — `app_ar.arb` vocabulary and the Arabic branch of `services/whatsapp/sender.py` (`Saler Previous:` / `Saler Current:` / `discount:`) — located by placeholder anchor and asserted present before use | the failure mode the removed rule guarded against is real: invented Arabic is confidently wrong. Composing from shipped strings keeps terminology fixed, and the result is still labelled **unreviewed** here and in the commit message |
+| `trackerCreated` left as a false promise | rewritten in BOTH locales: the tab, not WhatsApp, is where the alert appears | the old English ("You'll get a WhatsApp notification when we find a deal") and Arabic ("will send you a WhatsApp message when we find a deal") both describe a channel this build does not deliver (H1 unresolved) |
+| copy keys added only where the plan listed them | `alertPreviousPrice` / `alertCurrentPrice` / `alertDiscountLine` instead of four event-type labels | the Arabic for previous/current/discount already exists in the WhatsApp template; four invented Arabic nouns would have been unreviewed coinage, while the price-line phrasing reuses vetted product Arabic |
+| MS2 widgets in the same commit | **follow-up commit** (the locale keys landed first) | the copy gate and the widgets are separable risks; the copy went green on its own, then the widgets built on it |
+| `alert_events_repository.dart` written against `http_service.dart` (plan §4's assumption) | written against `ApiClient` + Dio (`flutter-app/lib/src/data/services/api_client.dart`) | that is the HTTP layer this tree actually has: every repository in `lib/src/data/repositories/` imports `api_client.dart`, and `http_service.dart` does not exist here. §4's note was stale, and trusting it would have written an unimportable file |
+| four Arabic event-type labels (`alertTypePriceDrop` …) | an event-type **glyph** (`lib/src/ui/widgets/alert_card.dart::_glyph`) plus the vetted price lines (`alertPreviousPrice` / `alertCurrentPrice` / `alertDiscountLine`) | the Arabic for previous/current/discount already exists in `services/whatsapp/sender.py`; four Arabic nouns for event types would have been unreviewed coinage. The glyph set is pinned to the consumer's `VALID_EVENT_TYPES` through named constants, and an unknown type keeps its row with a neutral mark instead of vanishing |
+| the dead `AlertsRepository.createAlert` path rewritten | **deleted** (`lib/src/data/repositories/alerts_repository.dart`) | it had no caller anywhere in `lib`/`test`, and it posted to the legacy `POST /alerts` threshold-alert endpoint (`services/api/main.py`, still live and still tested server-side). MS2's surface reads server-recorded events; a create path with no UI would be a second, silent alerting model |
+| an alert tap reusing an existing affiliate source (`tracker_card`) | new source `alert_card`, allowlisted **server-first** | `services/api/affiliate.py::VALID_CLICK_SOURCES` gains `alert_card` (pinned in `services/api/test_affiliate.py`) before `merchant_link.dart` gains `sourceAlertCard`: an un-allowlisted source collapses to `unknown`, which would merge alert taps into unknown-source clicks and break §11's per-surface CTR |
+| the Alerts tab after Deals | **ahead of Deals** (nav index 1), tracker FAB condition moved to `(index == 0 || index == 2)` | an alert is something that already happened to a product you track, so it reads before the market browse. The FAB test was positional, so inserting a slot would have silently un-paired the `+` button from Deals; nothing asserted it, hence this row |
+| a card with no merchant URL falls back silently | shows `alertNoLink` and opens nothing | the server stores `url` only when it matches `tracked_item_stores.store_url`; a card without one has no honest destination, and inventing one would be a link the user never tracked |
+| demo/offline shows demo alerts | empty state (`alertsEmpty`), and a FAILED read shows `alertsLoadFailed` | a demo `alert_events` row asserts a price event that never happened, and Gate 2's opened/unopened ratio would be computed over fiction — the same reason `0013_alert_events.sql` backfills nothing. `AlertFeedUnavailable` is thrown so "no alerts" can never be confused with "could not read alerts" |
+| the badge computed from the returned list | the server's `unopened_total` verbatim (`AlertFeed.unopenedTotal`) | mirrors `test_unopened_total_counts_the_account_not_the_window`: a clipped window must not shrink the badge |
+| the feed surviving an identity change | `alertFeedProvider` invalidated on logout and on the demo-mode toggle | the feed is the previous user's history: their un-opened count and their products would otherwise survive into the next session, like every other user-scoped feed |
+| the store listing's release gate could never pass | the gate line spelled the marker string it greps for, so the grep matched its own documentation; the gate text now names the marker without spelling it | `grep -rn "PENDING COPY" flutter-app/docs` returns nothing (verified), and the three remaining markers are filled with Arabic reused verbatim from this file's own Arabic sentences — both AR blocks say outright the wording is machine-composed and NOT native-reviewed (`flutter-app/docs/play-store/store-listing.md` §2/§3) |
+| the nav insert and its positional FAB condition are pinned by nothing | `test/dashboard_alerts_nav_test.dart` (5 cases): destination order is asserted as `[Trackers, Alerts, Deals, Chat, Profile]`; the second slot's label is asserted to be Arabic script in the `ar` locale and not the English word, so a hardcoded label would fail; the `+` tracker FAB exists on index 0 and index 2 and not on index 1; the Alerts slot renders the badge, the price pair and the store label; and a failing read renders `alertsLoadFailed` while `alertsEmpty` stays absent | pinning this in a test rather than a note: the FAB switch is by nav INDEX, and inserting a slot moves Deals from 1 to 2 without any compiler help |
+| a client-chosen `limit` | clamped to the server's 1..200 (`defaultAlertsLimit` / `maxAlertsLimit` mirror `DEFAULT_ALERTS_LIMIT` / `MAX_ALERTS_LIMIT`) | asking for more answers HTTP 422; pinned by `test/alert_events_repository_test.dart` |
+| Dart `\Z` in the id guard, and `String.replaceAll` treated as a regex | `$` in the pattern, an explicit `RegExp` for the `_eg` suffix | two bugs the new tests caught: `\Z` is Python-only, so `markOpened` matched nothing and every mark-open answered false without a request; a String `replaceAll` is a literal replace, so brand labels rendered as "Amazon eg" |
+
+### Pre-merge pass (after #44 landed on main)
+
+- **Merged `origin/main`**; conflicts and their resolution are listed in the
+  merge commit. Migration 0012 now arrives with main's restored comment
+  markers, and `0013_alert_events.sql` still applies after 0011/0012.
+- **CI's red Flutter job was formatting only**: `dart format` on the seven
+  alert-surface files flagged by `--set-exit-if-changed`.
+- **Round-4 findings re-checked against the current head.** Already closed in
+  code: #1 (stamps outside `_bounded_event_clock` fall back to processing
+  time), #3 (the open is an atomic `UPDATE ... WHERE opened_at IS NULL` plus a
+  re-read), #9 (`_rate_limit()` rejects malformed overrides). #6's English no
+  longer promises WhatsApp.
+- **The Arabic for this surface was not Arabic sentences.** Several values
+  were words strung together without grammar ("لا السعر تنبيهات." for "No
+  price alerts yet.", "{days} يوم" for "{days} days ago", and a
+  `trackerCreated` twin that did not say what the English says). Rewritten for
+  `trackerCreated`, `navAlerts`, `alertsTabTitle`, `alertsTabHint`,
+  `alertsEmpty`, `alertsLoadFailed`, `alertWhenDaysAgo` and `alertNoLink`, in
+  the app's existing register. This copy is generated (owner-approved, #51)
+  and has not been reviewed by a native speaker.
+
+### Round 5 — HGM on local Qwen 3.8 Flash Next (REQUEST_CHANGES, 10 findings, 1752 s)
+
+| # | Finding | Verdict | Action |
+|---|---|---|---|
+| 1, 2 | `channel` CHECK allows `push`/`whatsapp` before those senders exist | By design | The enum is the MS3 contract in §WS1; the only writer (the consumer) stores `in_app`, and narrowing now would mean another migration when MS3 lands. |
+| 3 | `created_at`/`updated_at` nullable in SQL | Valid | `NOT NULL` in `schema/postgres.sql` and `0013` (plus an idempotent `SET NOT NULL` for a tree that ran an earlier 0013); the ORM already said `nullable=False`. `test_event_timestamps_are_not_null_everywhere` pins all three. |
+| 4 | Naive UTC timestamps parsed as device-local | Valid | `_datetime()` reads an offset-less string as UTC; a string with its own offset keeps it. Tests pin both. |
+| 5 | Pull-to-refresh rethrows a failed load | Valid | The failure stays in the provider (the tab shows its error state); `onRefresh` no longer rethrows it. |
+| 6, 7 | "{days} days ago" not pluralized (EN "1 days ago"; AR singular for every count) | Valid (7 was this pass's rewrite) | ICU plural in both locales (`int` placeholder): EN `=1`/other; AR one/two/few/many/other. Card tests cover 1, 3 and the Arabic dual/few forms. |
+| 8 | Store listing says "no WhatsApp delivery" while the privacy policy discloses a server-side WhatsApp channel | Valid | The listing line now names only what is always true (no OS push or email), per the file's own release-gate rule. |
+| 9 | PR description says MS2 is out of scope, but the diff ships the Alerts tab | Valid | PR body updated. |
+| 10 | Migration re-declares the shared `update_updated_at_column()` | Accepted | Same body as every other tree's definition; the table's own trigger is the UTC-pinned one. |

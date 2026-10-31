@@ -40,6 +40,7 @@ POSTGRES_MIGRATIONS = [
     "migrations/0010_subscriptions.sql",
     "migrations/0011_chatbot_query_cache.sql",
     "migrations/0012_affiliate_click_attribution.sql",
+    "migrations/0013_alert_events.sql",
 ]
 TIMESCALE_MIGRATIONS = [
     "migrations/timescaledb/0000_baseline.sql",
@@ -462,6 +463,46 @@ def test_env_example_has_no_plaintext_passwords():
                 "",
                 "CHANGE_ME",
             ), f"{key} appears to carry a committed secret in .env.example"
+
+
+def test_sql_files_carry_no_markup_artifacts():
+    """A committed SQL file contains SQL, never a copy-paste artifact.
+
+    A stray closing tag once sat on the unterminated last line of
+    ``0013_alert_events.sql``: the bootstrap would have failed on the final
+    statement of a migration that otherwise applied cleanly -- a broken deploy,
+    not a lint nuisance. The rule targets a CLOSING TAG (``</name>``), which SQL
+    never uses, and the model special-token form; opening placeholders like
+    ``<generated>`` are this tree's documented convention in comments, so they
+    stay legal. The trailing-newline half is what stops the next artifact from
+    hiding on a last line the parser never finished reading, and it applies to
+    migrations and the canonical schema -- the SQL this tree appends to -- not
+    to upstream legacy files, which this branch does not rewrite.
+    """
+    offenders: list[str] = []
+    closing_tag = re.compile(r"</[A-Za-z][\w./=-]*>")
+    for sql_path in sorted(INFRA_SQL.rglob("*.sql")):
+        relative = sql_path.relative_to(REPO_ROOT)
+        body = sql_path.read_text(encoding="utf-8")
+        if closing_tag.search(body):
+            offenders.append(f"{relative}: closing markup tag in a SQL file")
+        if "<|" in body or "|>" in body:
+            offenders.append(f"{relative}: special-token artifact in a SQL file")
+
+    newline_required = [
+        INFRA_SQL / "schema" / "postgres.sql",
+        *(
+            p
+            for p in (INFRA_SQL / "migrations").rglob("*.sql")
+            if "legacy" not in p.parts
+        ),
+    ]
+    for sql_path in newline_required:
+        relative = sql_path.relative_to(REPO_ROOT)
+        if not sql_path.read_text(encoding="utf-8").endswith(chr(10)):
+            offenders.append(f"{relative}: missing trailing newline")
+
+    assert not offenders, chr(10).join(offenders)
 
 
 def test_numbered_migrations_are_applied_by_the_bootstrap():

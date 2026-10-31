@@ -30,6 +30,14 @@ import os
 
 import pytest
 
+# The API owns an in-process stream:alerts consumer (plans/p2 MS1). Tests measure
+# the API, not the pipeline: with the default (consumer on) every TestClient startup
+# would spawn a task retrying against a Redis that is not there, which is log noise
+# and metric pollution, not a fact under test. The consumer's own behaviour is
+# covered in test_alert_events_consumer.py, and its on/off switch in
+# test_alert_events_startup.py.
+os.environ.setdefault("ALERT_EVENTS_CONSUMER", "false")
+
 os.environ["PAYMENTS_ENABLED"] = "true"
 os.environ.setdefault("SECRET_KEY", "test-secret-key-not-used-in-production")
 
@@ -41,6 +49,7 @@ def _reset_rate_limiter(monkeypatch):
     # engine before test modules finalize DATABASE_URL.
     from services.api.payment_security import security_monitor
     from services.api.routers.affiliate import limiter as affiliate_limiter
+    from services.api.routers.alerts import limiter as alerts_limiter
     from services.api.routers.payment import limiter
     from services.api.usage_limits import reset_creation_times
 
@@ -49,9 +58,11 @@ def _reset_rate_limiter(monkeypatch):
 
     limiter.reset()
     affiliate_limiter.reset()
+    alerts_limiter.reset()
     security_monitor.reset()
     yield
     limiter.reset()
     affiliate_limiter.reset()
+    alerts_limiter.reset()
     security_monitor.reset()
     reset_creation_times()

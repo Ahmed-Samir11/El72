@@ -144,7 +144,7 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get trackerCreated =>
-      '✅ تم إنشاء المتتبع! ستصلك رسالة واتساب عند العثور على صفقة.';
+      '✅ تم إنشاء المتتبع! ستظهر تنبيهات أسعار هذا المنتج في تبويب التنبيهات.';
 
   @override
   String get startTracking => 'ابدأ التتبع';
@@ -484,6 +484,64 @@ class AppLocalizationsAr extends AppLocalizations {
   String get noMessagesYet => 'لا توجد رسائل بعد. ابدأ محادثة.';
 
   @override
+  String get navAlerts => 'التنبيهات';
+
+  @override
+  String get alertsTabTitle => 'التنبيهات';
+
+  @override
+  String get alertsTabHint =>
+      'تنبيهات الأسعار لمنتجاتك. اضغط على أي تنبيه لفتحه في المتجر.';
+
+  @override
+  String get alertsEmpty => 'لا توجد تنبيهات أسعار بعد.';
+
+  @override
+  String alertsLoadFailed(String error) {
+    return 'تعذّر تحميل التنبيهات.\n$error';
+  }
+
+  @override
+  String alertsUnopenedBadge(String count) {
+    return '$count تنبيهات نشطة';
+  }
+
+  @override
+  String alertPreviousPrice(String price) {
+    return 'السعر السابق: $price';
+  }
+
+  @override
+  String alertCurrentPrice(String price) {
+    return 'السعر الحالي: $price';
+  }
+
+  @override
+  String alertDiscountLine(String percent) {
+    return 'الخصم: $percent%';
+  }
+
+  @override
+  String get alertWhenToday => 'اليوم';
+
+  @override
+  String alertWhenDaysAgo(int days) {
+    String _temp0 = intl.Intl.pluralLogic(
+      days,
+      locale: localeName,
+      other: 'منذ $days يوم',
+      many: 'منذ $days يومًا',
+      few: 'منذ $days أيام',
+      two: 'منذ يومين',
+      one: 'منذ يوم واحد',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get alertNoLink => 'لا يوجد رابط متجر لهذا التنبيه.';
+
+  @override
   String get fairUseTitle => 'متتبعاتك';
 
   @override
@@ -518,7 +576,21 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String fairUseCapBody(int cap) {
-    return 'لديك بالفعل $cap متتبعًا نشطًا، وهذا هو الحد الأقصى. احذف واحدًا لإفساح المجال، أو اضغط «ليس الآن».';
+    String _temp0 = intl.Intl.pluralLogic(
+      cap,
+      locale: localeName,
+      other:
+          'لديك بالفعل $cap متتبع نشط، وهذا هو الحد الأقصى. احذف واحدًا لإفساح المجال، أو اضغط «ليس الآن».',
+      many:
+          'لديك بالفعل $cap متتبعًا نشطًا، وهذا هو الحد الأقصى. احذف واحدًا لإفساح المجال، أو اضغط «ليس الآن».',
+      few:
+          'لديك بالفعل $cap متتبعات نشطة، وهذا هو الحد الأقصى. احذف واحدًا لإفساح المجال، أو اضغط «ليس الآن».',
+      two:
+          'لديك بالفعل متتبعان نشطان، وهذا هو الحد الأقصى. احذف واحدًا لإفساح المجال، أو اضغط «ليس الآن».',
+      one:
+          'لديك بالفعل متتبع واحد نشط، وهذا هو الحد الأقصى. احذفه لإفساح المجال، أو اضغط «ليس الآن».',
+    );
+    return '$_temp0';
   }
 
   @override
@@ -526,7 +598,16 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String creationWaitBody(int seconds) {
-    return 'لقد أضفت متتبعًا للتو. انتظر $seconds ثانية قبل إضافة التالي.';
+    String _temp0 = intl.Intl.pluralLogic(
+      seconds,
+      locale: localeName,
+      other: 'لقد أضفت متتبعًا للتو. انتظر $seconds ثانية قبل إضافة التالي.',
+      many: 'لقد أضفت متتبعًا للتو. انتظر $seconds ثانية قبل إضافة التالي.',
+      few: 'لقد أضفت متتبعًا للتو. انتظر $seconds ثوانٍ قبل إضافة التالي.',
+      two: 'لقد أضفت متتبعًا للتو. انتظر ثانيتين قبل إضافة التالي.',
+      one: 'لقد أضفت متتبعًا للتو. انتظر ثانية واحدة قبل إضافة التالي.',
+    );
+    return '$_temp0';
   }
 
   @override

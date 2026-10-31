@@ -4,7 +4,6 @@
   "@appTitle": {
     "description": "App name shown in the dashboard app bar."
   },
-
   "login": "تسجيل الدخول",
   "register": "التسجيل",
   "phoneNumber": "رقم الهاتف",
@@ -14,7 +13,9 @@
   "loginFailed": "فشل تسجيل الدخول: {error}",
   "@loginFailed": {
     "placeholders": {
-      "error": { "type": "String" }
+      "error": {
+        "type": "String"
+      }
     }
   },
   "cancel": "إلغاء",
@@ -26,16 +27,16 @@
   "email": "البريد الإلكتروني",
   "enterOtp": "أدخل رمز التحقق",
   "verify": "تحقق",
-
   "splashStatusOpening": "جارٍ فتح التطبيق...",
   "splashStatusConnecting": "جارٍ الاتصال بالسحابة...",
   "splashStatusLoading": "جارٍ تحميل بيانات المستخدم...",
   "splashStatusReady": "على وشك الجاهزية...",
-
   "failedToLoadTrackers": "فشل في تحميل متتبعاتك.\n{error}",
   "@failedToLoadTrackers": {
     "placeholders": {
-      "error": { "type": "String" }
+      "error": {
+        "type": "String"
+      }
     }
   },
   "noTrackersEmpty": "لا توجد متتبعات نشطة بعد.\nاضغط + لبدء تتبع منتج.",
@@ -43,7 +44,9 @@
   "failedToLoadDeals": "فشل في تحميل الصفقات.\n{error}",
   "@failedToLoadDeals": {
     "placeholders": {
-      "error": { "type": "String" }
+      "error": {
+        "type": "String"
+      }
     }
   },
   "noLiveDeals": "لا توجد صفقات حية الآن. عد لاحقًا.",
@@ -57,39 +60,40 @@
   "usingSampleData": "استخدام بيانات تجريبية دون اتصال",
   "usingLiveData": "استخدام حساب مباشر وبيانات الـ API",
   "logOut": "تسجيل الخروج",
-
   "activeAlerts": "تنبيهات نشطة",
   "dealsToday": "صفقات اليوم",
   "savings": "التوفير",
-
   "createPriceTracker": "إنشاء متتبع أسعار",
   "productUrlHint": "رابط المنتج (أي متجر مدعوم)",
   "targetPriceHint": "السعر المستهدف (اختياري)",
-  "trackerCreated": "✅ تم إنشاء المتتبع! ستصلك رسالة واتساب عند العثور على صفقة.",
+  "trackerCreated": "✅ تم إنشاء المتتبع! ستظهر تنبيهات أسعار هذا المنتج في تبويب التنبيهات.",
   "startTracking": "ابدأ التتبع",
   "errorPrefix": "خطأ: {error}",
   "@errorPrefix": {
     "placeholders": {
-      "error": { "type": "String" }
+      "error": {
+        "type": "String"
+      }
     }
   },
-
   "unableToOpen": "تعذر فتح {title}",
   "@unableToOpen": {
     "placeholders": {
-      "title": { "type": "String" }
+      "title": {
+        "type": "String"
+      }
     }
   },
-
   "priceHistory": "سجل الأسعار",
   "noPriceHistory": "لا يوجد سجل أسعار لهذا المنتج بعد.",
   "failedToLoadPriceHistory": "فشل في تحميل سجل الأسعار.\n{message}",
   "@failedToLoadPriceHistory": {
     "placeholders": {
-      "message": { "type": "String" }
+      "message": {
+        "type": "String"
+      }
     }
   },
-
   "subscriptionPlans": "خطط الاشتراك",
   "freePlanShort": "مجاني",
   "proPlan": "احترافي",
@@ -100,12 +104,12 @@
   "egpPerMonth": "{amount} ج.م/شهر",
   "@egpPerMonth": {
     "placeholders": {
-      "amount": { "type": "String" }
+      "amount": {
+        "type": "String"
+      }
     }
   },
-
   "creditPackages": "حزم الرصيد",
-  "currentPlan": "الخطة الحالية",
   "standardPackage": "قياسي",
   "premiumPackage": "بريميوم",
   "standardPackageDesc": "10 أرصدة لتتبع الأسعار",
@@ -113,18 +117,21 @@
   "creditsLabel": "{count} رصيد",
   "@creditsLabel": {
     "placeholders": {
-      "count": { "type": "int" }
+      "count": {
+        "type": "int"
+      }
     }
   },
   "egpOnce": "{amount} ج.م (دفعة واحدة)",
   "@egpOnce": {
     "placeholders": {
-      "amount": { "type": "String" }
+      "amount": {
+        "type": "String"
+      }
     }
   },
   "buyNow": "اشترِ الآن",
   "freeCreditsDesc": "3 أرصدة مجانية مضمّنة",
-
   "selectWallet": "اختر محفظتك",
   "walletVodafoneCash": "فودافون كاش",
   "walletOrangeMoney": "أورانج موني",
@@ -138,21 +145,23 @@
   "walletConfirmMessage": "سندفع إلى المحفظة {number}. هل أنت متأكد؟",
   "@walletConfirmMessage": {
     "placeholders": {
-      "number": { "type": "String" }
+      "number": {
+        "type": "String"
+      }
     }
   },
-
   "enterOtpTitle": "أدخل رمز التحقق",
   "enterOtpDesc": "أدخل الرمز المرسل إلى محفظتك",
   "otpInvalid": "أدخل أرقام الرمز",
   "otpAttemptsLeft": "متبقٍ {count} محاولات",
   "@otpAttemptsLeft": {
     "placeholders": {
-      "count": { "type": "int" }
+      "count": {
+        "type": "int"
+      }
     }
   },
   "verifyOtpButton": "تحقق من الرمز",
-
   "paymentProcessing": "جارٍ معالجة الدفعة…",
   "paymentPending": "في انتظار تأكيد الدفع…",
   "paymentSucceededTitle": "تم الدفع بنجاح!",
@@ -162,7 +171,6 @@
   "paymentCanceledTitle": "أُلغي الدفع",
   "paymentError": "حدث خطأ. يرجى المحاولة مرة أخرى.",
   "retryPayment": "إعادة المحاولة",
-
   "selectPaymentMethod": "اختر طريقة الدفع",
   "paymentMethodWallet": "محفظة جوال",
   "paymentMethodWalletDesc": "ادفع بمحفظة جوال (فودافون كاش أو أورنج موني أو اتصالات كاش)",
@@ -176,22 +184,24 @@
   "cashExpiresAt": "ينتهي في {time}",
   "@cashExpiresAt": {
     "placeholders": {
-      "time": { "type": "String" }
+      "time": {
+        "type": "String"
+      }
     }
   },
   "copyCode": "نسخ",
   "codeCopied": "تم نسخ الرمز",
-
   "statCurrent": "الحالي",
   "statLow90d": "أدنى 90 يوم",
   "statHigh90d": "أعلى 90 يوم",
   "statChange": "التغير",
-
   "close": "إغلاق",
   "targetLabel": "المستهدف: {price}",
   "@targetLabel": {
     "placeholders": {
-      "price": { "type": "String" }
+      "price": {
+        "type": "String"
+      }
     }
   },
   "openProduct": "فتح المنتج",
@@ -201,18 +211,15 @@
   "currentLabel": "الحالي: {price}",
   "@currentLabel": {
     "placeholders": {
-      "price": { "type": "String" }
+      "price": {
+        "type": "String"
+      }
     }
   },
-
   "fetchingPrice": "جارٍ جلب السعر المباشر...",
-
   "priceFetchFailed": "تعذّر جلب السعر - اضغط للمحاولة مرة أخرى.",
-
   "notAProductPage": "هذه الصفحة لا تبدو كصفحة منتج - تحقق من الرابط.",
-
   "priceRefreshFailed": "تعذّر تحديث السعر الآن - حاول مرة أخرى بعد قليل.",
-
   "deleteTrackerTitle": "حذف المتابعة؟",
   "deleteTrackerBody": "إيقاف متابعة \"{title}\"؟ سيتم حذف سجل أسعاره.",
   "@deleteTrackerBody": {
@@ -224,21 +231,22 @@
   "trackerDeleted": "تم حذف المتابعة",
   "retry": "إعادة المحاولة",
   "trackerDeleteFailed": "تعذّر حذف المتابعة - حاول مرة أخرى.",
-
   "genericLoadError": "فشل في التحميل.\n{error}",
   "@genericLoadError": {
     "placeholders": {
-      "error": { "type": "String" }
+      "error": {
+        "type": "String"
+      }
     }
   },
-
   "liveDeals": "الصفقات الحية",
-
   "creditsRemaining": "{count, plural, zero{لا توجد متتبعات متبقية لديك} one{لديك متتبع واحد متبقٍ} two{لديك متتبعان متبقيان} few{لديك {count} متتبعات متبقية} many{لديك {count} متتبعًا متبقية} other{لديك {count} متتبعًا متبقية}}",
   "@creditsRemaining": {
     "description": "تبويب الملف الشخصي: المتتبعات المتبقية للمستخدم المسجل.",
     "placeholders": {
-      "count": { "type": "int" }
+      "count": {
+        "type": "int"
+      }
     }
   },
   "reachedLimitTitle": "لقد وصلت إلى الحد الأقصى",
@@ -301,6 +309,60 @@
   "@noMessagesYet": {
     "description": "نص يظهر عندما لا توجد رسائل بعد."
   },
+  "navAlerts": "التنبيهات",
+  "alertsTabTitle": "التنبيهات",
+  "alertsTabHint": "تنبيهات الأسعار لمنتجاتك. اضغط على أي تنبيه لفتحه في المتجر.",
+  "alertsEmpty": "لا توجد تنبيهات أسعار بعد.",
+  "alertsLoadFailed": "تعذّر تحميل التنبيهات.\n{error}",
+  "alertsUnopenedBadge": "{count} تنبيهات نشطة",
+  "alertPreviousPrice": "السعر السابق: {price}",
+  "alertCurrentPrice": "السعر الحالي: {price}",
+  "alertDiscountLine": "الخصم: {percent}%",
+  "alertWhenToday": "اليوم",
+  "alertWhenDaysAgo": "{days, plural, one{منذ يوم واحد} two{منذ يومين} few{منذ {days} أيام} many{منذ {days} يومًا} other{منذ {days} يوم}}",
+  "@alertsLoadFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "@alertsUnopenedBadge": {
+    "placeholders": {
+      "count": {
+        "type": "String"
+      }
+    }
+  },
+  "@alertPreviousPrice": {
+    "placeholders": {
+      "price": {
+        "type": "String"
+      }
+    }
+  },
+  "@alertCurrentPrice": {
+    "placeholders": {
+      "price": {
+        "type": "String"
+      }
+    }
+  },
+  "@alertDiscountLine": {
+    "placeholders": {
+      "percent": {
+        "type": "String"
+      }
+    }
+  },
+  "@alertWhenDaysAgo": {
+    "placeholders": {
+      "days": {
+        "type": "int"
+      }
+    }
+  },
+  "alertNoLink": "لا يوجد رابط متجر لهذا التنبيه.",
   "fairUseTitle": "متتبعاتك",
   "fairUseChip": "{count, plural, zero{لا توجد متتبعات بعد. حتى {cap} متتبع في وقت واحد} one{لديك متتبع واحد نشط من أصل {cap} كحد أقصى} two{لديك متتبعان نشطان من أصل {cap} كحد أقصى} few{لديك {count} متتبعات نشطة من أصل {cap} كحد أقصى} many{لديك {count} متتبعًا نشطًا من أصل {cap} كحد أقصى} other{لديك {count} متتبعًا نشطًا من أصل {cap} كحد أقصى}}",
   "@fairUseChip": {
@@ -321,7 +383,7 @@
       }
     }
   },
-  "fairUseCapBody": "لديك بالفعل {cap} متتبعًا نشطًا، وهذا هو الحد الأقصى. احذف واحدًا لإفساح المجال، أو اضغط «ليس الآن».",
+  "fairUseCapBody": "{cap, plural, one{لديك بالفعل متتبع واحد نشط، وهذا هو الحد الأقصى. احذفه لإفساح المجال، أو اضغط «ليس الآن».} two{لديك بالفعل متتبعان نشطان، وهذا هو الحد الأقصى. احذف واحدًا لإفساح المجال، أو اضغط «ليس الآن».} few{لديك بالفعل {cap} متتبعات نشطة، وهذا هو الحد الأقصى. احذف واحدًا لإفساح المجال، أو اضغط «ليس الآن».} many{لديك بالفعل {cap} متتبعًا نشطًا، وهذا هو الحد الأقصى. احذف واحدًا لإفساح المجال، أو اضغط «ليس الآن».} other{لديك بالفعل {cap} متتبع نشط، وهذا هو الحد الأقصى. احذف واحدًا لإفساح المجال، أو اضغط «ليس الآن».}}",
   "@fairUseCapBody": {
     "placeholders": {
       "cap": {
@@ -330,7 +392,7 @@
     }
   },
   "creationWaitTitle": "متتبع واحد في كل مرة",
-  "creationWaitBody": "لقد أضفت متتبعًا للتو. انتظر {seconds} ثانية قبل إضافة التالي.",
+  "creationWaitBody": "{seconds, plural, one{لقد أضفت متتبعًا للتو. انتظر ثانية واحدة قبل إضافة التالي.} two{لقد أضفت متتبعًا للتو. انتظر ثانيتين قبل إضافة التالي.} few{لقد أضفت متتبعًا للتو. انتظر {seconds} ثوانٍ قبل إضافة التالي.} many{لقد أضفت متتبعًا للتو. انتظر {seconds} ثانية قبل إضافة التالي.} other{لقد أضفت متتبعًا للتو. انتظر {seconds} ثانية قبل إضافة التالي.}}",
   "@creationWaitBody": {
     "placeholders": {
       "seconds": {

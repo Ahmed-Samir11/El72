@@ -8,6 +8,7 @@ import 'models/platform_stats_model.dart';
 import 'models/price_point_model.dart';
 import 'models/tracked_item_model.dart';
 import 'repositories/affiliate_repository.dart';
+import 'repositories/alert_events_repository.dart';
 import 'repositories/auth_repository.dart';
 import 'repositories/credits_repository.dart';
 import 'repositories/usage_limits_repository.dart';
@@ -45,6 +46,10 @@ final statsRepositoryProvider = Provider<StatsRepository>((ref) {
 
 final priceHistoryRepositoryProvider = Provider<PriceHistoryRepository>((ref) {
   return PriceHistoryRepository();
+});
+
+final alertEventsRepositoryProvider = Provider<AlertEventsRepository>((ref) {
+  return AlertEventsRepository();
 });
 
 final creditsRepositoryProvider = Provider<CreditsRepository>((ref) {
@@ -85,6 +90,19 @@ final liveDealsProvider = FutureProvider<List<Deal>>((ref) {
 /// Platform-wide stats for the Market Pulse header.
 final platformStatsProvider = FutureProvider<PlatformStats>((ref) {
   return ref.read(statsRepositoryProvider).getStats();
+});
+
+/// The signed-in user's alert history, newest first, plus how many of their
+/// events are still unopened (plans/p2 MS2: the in-app alert surface).
+///
+/// A [FutureProvider] like the trackers and deals feeds. A failed read throws
+/// [AlertFeedUnavailable] and the Alerts tab renders `alertsLoadFailed` — never
+/// the empty state, which would claim the user has no alerts. The tab invalidates
+/// it after a tap marks an event opened, so the badge and the card refresh
+/// without an app restart; like the other user-scoped feeds it must be
+/// invalidated whenever the signed-in identity changes.
+final alertFeedProvider = FutureProvider<AlertFeed>((ref) {
+  return ref.read(alertEventsRepositoryProvider).getRecentAlerts();
 });
 
 /// The current user's credit balance and tier.

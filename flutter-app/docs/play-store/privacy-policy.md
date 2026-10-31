@@ -11,8 +11,8 @@ or analytics are added in a later release).**
 
 Elhaq (the "إلحق" price-tracking app) is a tool that helps you follow the prices
 of products you care about on Egyptian online stores (Amazon Egypt, Noon, Jumia)
-and notify you when a price drops. This policy explains what data we collect,
-how it is used, and your choices.
+and record a price event when one of your tracked products changes. This policy
+explains what data we collect, how it is used, and your choices.
 
 ## 1. What we collect
 
@@ -22,6 +22,12 @@ how it is used, and your choices.
   product/URL, and any associated image reference).
 - **Price data.** Current and historical prices for your tracked items, fetched
   from the stores you track.
+- **Price alerts.** When a price you track changes (a drop, a return to stock,
+  crossing your target), we record that event against your account, so the app
+  can show it to you later even if the app was closed when it happened. When you
+  open one of those alerts in the app, we record that you have seen it, so unseen
+  alerts can be counted. This stays tied to your account: we do not track who
+  else might want to know.
 - **Device-local settings.** Your theme preference (light/dark), language
   (Arabic/English), and demo-mode setting are stored **only on your device** and
   are not sent to our servers.
@@ -35,13 +41,27 @@ how it is used, and your choices.
 - As of this version we do **not** send **crash reports** to any third party.
   _(If crash reporting is enabled in a future release, this section will be
   updated and users will be notified.)_
+- The **app** requests only the `INTERNET` permission: it does not request the
+  Android notifications permission, sends you no OS push notification, and sends
+  you no email. Nothing in this version delivers an alert through your device.
+- **WhatsApp deal alerts are a server-side channel, and it is disclosed here.**
+  When that channel is enabled for a deployment (a configured Meta Business API
+  credential with mock mode off), our server sends you a WhatsApp message about a
+  confirmed deal on a product you track, through Meta's WhatsApp Business API. In
+  that case your phone number and the product details in the message are processed
+  by that third-party service. In this project's default configuration the channel
+  runs in mock mode and sends nothing; nothing is disclosed as a send that did not
+  happen, and no channel is promised here that the deployment does not have.
 - We do not collect precise physical location, contacts, photos, or microphone
   data. The app requests only the `INTERNET` permission.
 
 ## 3. How we use your data
 
 - To provide the service: authenticate you, fetch prices for your tracked items,
-  and send you price-drop notifications.
+  and record price-change events for your account so the app can show them to
+  you (see §1: an event is stored and displayed in-app in this version).
+- Where the WhatsApp deal-alert channel is enabled (see §2), also to deliver that
+  message about a confirmed deal to the phone number associated with your account.
 - To operate and improve the service (e.g., reliability of price fetching).
 - We do **not** sell your personal data, and we do **not** share it with third
   parties for advertising.
@@ -49,12 +69,14 @@ how it is used, and your choices.
 ## 4. How long we keep your data
 
 We keep your account and tracked items while your account is active. When you
-delete your account, we delete the associated personal data.
+delete your account, we delete the associated personal data — including the price
+events and alert history recorded for that account, which are removed with it.
 
 ## 5. Your choices
 
 - **Access.** You can view your tracked items and account details in the app.
-- **Deletion.** You can delete your account; this removes your personal data.
+- **Deletion.** You can delete your account; this removes your personal data,
+  tracked items, and the price events and alert history tied to the account.
 - **Contact.** For privacy questions or a data-deletion request, contact:
   **[SUPPORT EMAIL / ADDRESS — fill in before publishing]**.
 

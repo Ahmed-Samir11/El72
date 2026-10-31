@@ -15677,6 +15677,134 @@ Files changed: 17
 Review completed in 1298.7s
 Decision: REQUEST_CHANGES (confidence: 0.82)
 Findings: 10
+## PR Review: feat(api): alert events + alert surface backend (P2 MS1)
+Model: local/qwen-27b
+Files changed: 38
+WARNING: Diff truncated from 303719 to 150000 chars
+
+### Raw LLM Response
+
+
+WARNING: Failed to parse JSON; retrying with strict JSON-only prompt
+
+### Retry LLM Response
+{
+  "summary": "This PR adds the alert-event backend and also ships the MS2 client alert surface, including schema, migration, ORM, consumer, API endpoints, Flutter repository/UI, localization, and store/privacy copy. The implementation is broadly thoughtful and well-tested, but there are several correctness and documentation inconsistencies that should be addressed before merge.",
+  "decision": "REQUEST_CHANGES",
+  "confidence": 0.78,
+  "findings": [
+    {
+      "file": "infra/sql/schema/postgres.sql",
+      "line": 380,
+      "severity": "WARNING",
+      "category": "correctness",
+      "title": "channel CHECK allows channels this build cannot deliver",
+      "description": "The schema and migration allow channel values 'push' and 'whatsapp', but the PR states that this build can only deliver in-app alerts and that no row may claim a push/WhatsApp send that did not happen. Allowing those values now weakens the truth rule at the database boundary; a bug or future unauthorized writer could create rows claiming a channel that is not implemented.",
+      "suggestion": "Restrict the CHECK to 'in_app' until the push/WhatsApp sender actually ships, or add a trigger/constraint that rejects non-in_app values while MS3 is absent. Widen the CHECK in the MS3 PR."
+    },
+    {
+      "file": "infra/sql/migrations/0013_alert_events.sql",
+      "line": 50,
+      "severity": "WARNING",
+      "category": "correctness",
+      "title": "Migration repeats the too-permissive channel CHECK",
+      "description": "The migration mirrors the canonical schema and also permits 'push' and 'whatsapp' before those senders exist. This makes deployed trees inconsistent with the stated truth rule.",
+      "suggestion": "Keep the migration in lockstep with the canonical schema by using CHECK (channel IN ('in_app')) for this PR, then widen it when MS3 lands."
+    },
+    {
+      "file": "infra/sql/schema/postgres.sql",
+      "line": 390,
+      "severity": "WARNING",
+      "category": "correctness",
+      "title": "created_at and updated_at are not NOT NULL",
+      "description": "alert_events.created_at and updated_at have defaults but are nullable. A NULL created_at would break the same-day UNIQUE index semantics and make the client drop the row as unplaceable; a NULL updated_at also weakens the audit trail. The consumer may set these values, but the schema should enforce the invariant.",
+      "suggestion": "Declare created_at and updated_at as NOT NULL with their UTC defaults. Add a schema-sync test asserting these columns are NOT NULL."
+    },
+    {
+      "file": "flutter-app/lib/src/data/models/alert_event_model.dart",
+      "line": 100,
+      "severity": "WARNING",
+      "category": "correctness",
+      "title": "Naive UTC timestamps are parsed as local time",
+      "description": "The server stores naive UTC timestamps, but Dart DateTime.tryParse on a string without timezone information returns a local DateTime. daysAgo then compares that local-interpreted timestamp against DateTime.now(), so users in non-UTC timezones can see an event shifted by their UTC offset and potentially mislabeled as Today/yesterday/days ago.",
+      "suggestion": "Normalize server timestamps to UTC before parsing, or append 'Z' when the server sends naive UTC. Add a test that a UTC timestamp near midnight renders the same day label regardless of local timezone."
+    },
+    {
+      "file": "flutter-app/lib/src/ui/alerts/alerts_tab.dart",
+      "line": 40,
+      "severity": "WARNING",
+      "category": "correctness",
+      "title": "RefreshIndicator onRefresh can throw an unhandled exception",
+      "description": "onRefresh awaits ref.read(alertFeedProvider.future). If the alert feed read fails, that future throws AlertFeedUnavailable. RefreshIndicator does not necessarily swallow this, so a refresh gesture could produce an unhandled exception instead of simply leaving the error state visible.",
+      "suggestion": "Wrap the await in try/catch and ignore the error, or call ref.invalidate without awaiting the future. Add a widget test where the provider throws and refresh does not crash."
+    },
+    {
+      "file": "flutter-app/lib/l10n/app_en.arb",
+      "line": 316,
+      "severity": "WARNING",
+      "category": "documentation",
+      "title": "alertWhenDaysAgo lacks pluralization",
+      "description": "The English string '{days} days ago' renders '1 days ago' for a one-day-old event. The codebase already uses ICU pluralization elsewhere, so this is a user-visible grammar bug.",
+      "suggestion": "Use an ICU plural form, e.g. '{days, plural, =1{1 day ago} other{{days} days ago}}', or add a separate alertWhenYesterday key and select it in Dart."
+    },
+    {
+      "file": "flutter-app/lib/l10n/app_ar.arb",
+      "line": 316,
+      "severity": "WARNING",
+      "category": "documentation",
+      "title": "Arabic days-ago string is singular for all counts",
+      "description": "The Arabic alertWhenDaysAgo value uses a singular day form for every count. This will be grammatically wrong for multiple days.",
+      "suggestion": "Use Arabic pluralization or separate keys for one day and multiple days. If native review is still pending, mark this as unreviewed and avoid shipping it as final store copy."
+    },
+    {
+      "file": "flutter-app/docs/play-store/store-listing.md",
+      "line": 80,
+      "severity": "WARNING",
+      "category": "documentation",
+      "title": "Store listing and privacy policy disagree about WhatsApp delivery",
+      "description": "The store listing says v1.0 has no WhatsApp delivery, while the privacy policy says a WhatsApp deal-alert channel may be enabled server-side and processes the user's phone number through Meta. If the deployment can enable that channel, the listing is false; if it cannot, the privacy policy is describing a capability that is not shipped.",
+      "suggestion": "Align the documents: either state that the shipped deployment does not enable WhatsApp delivery, or remove the absolute 'no WhatsApp delivery' claim from the listing and describe the configuration-gated channel consistently."
+    },
+    {
+      "file": "flutter-app/lib/src/ui/alerts/alerts_tab.dart",
+      "line": 1,
+      "severity": "WARNING",
+      "category": "documentation",
+      "title": "PR description says MS2 is not included, but the diff ships MS2 client surface",
+      "description": "The PR metadata explicitly lists MS2 (Alerts tab and truthful copy in both locales) as not in this PR, but the diff includes the Alerts tab, alert card, repository, provider, navigation slot, tests, and Arabic/English copy. This makes the review scope and release-gate claims inconsistent.",
+      "suggestion": "Update the PR description and plan status to reflect that MS2 is included, or split the client surface into a separate PR. If MS2 is intentionally included, remove the 'Not in this PR' row."
+    },
+    {
+      "file": "infra/sql/migrations/0013_alert_events.sql",
+      "line": 20,
+      "severity": "INFO",
+      "category": "architecture",
+      "title": "Migration redefines the shared updated_at trigger function",
+      "description": "The migration uses CREATE OR REPLACE FUNCTION update_updated_at_column(). If the existing deployed function differs, this migration silently changes behavior for every table using that shared trigger. The alert_events table has its own UTC-pinned trigger, so the shared function replacement is not needed for this table.",
+      "suggestion": "Avoid replacing the shared function unless it is known to be identical. If it must be redeclared, add a migration test or guard that compares the existing function body, or scope the change to alert_events only."
+    }
+  ],
+  "missed_tests": [
+    "Client test that naive UTC server timestamps are interpreted as UTC and daysAgo is stable across local timezones.",
+    "Localization test that alertWhenDaysAgo renders '1 day ago' in English and the correct singular form in Arabic.",
+    "Schema/migration test asserting the channel CHECK only permits 'in_app' while MS3 is absent.",
+    "Schema test asserting alert_events.created_at and updated_at are NOT NULL.",
+    "Widget test that RefreshIndicator onRefresh does not throw when alertFeedProvider fails.",
+    "Documentation consistency test or manual checklist ensuring store listing and privacy policy make the same WhatsApp delivery claim for the shipped deployment."
+  ],
+  "positive_notes": [
+    "The PR adds a strong drift guard tying schema, migration, ORM, and consumer event types together.",
+    "The decision not to backfill alert_events from current_prices is correct and preserves the meaning of Gate 2 metrics.",
+    "The client defensively parses the alert feed and distinguishes 'no alerts' from 'could not read alerts'.",
+    "The consumer design includes group creation, ack discipline, pending reclaim, bounded retries, ownership fan-out, and Prometheus observability.",
+    "The UI avoids fabricating demo alerts and avoids promising notification channels that are not shipped."
+  ]
+}
+
+
+Review completed in 1752.1s
+Decision: REQUEST_CHANGES (confidence: 0.78)
+Findings: 10
 ## PR Review: feat(client): compile the payment surface out of a free build and read the fair-use refusals (P3 MS2/MS3)
 Model: local/qwen-27b
 Files changed: 25
