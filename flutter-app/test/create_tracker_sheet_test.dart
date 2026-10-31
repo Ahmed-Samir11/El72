@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:elhaq_tracker/l10n/app_localizations.dart';
 import 'package:elhaq_tracker/src/core/styles/app_theme.dart';
+import 'package:elhaq_tracker/src/data/config.dart';
 import 'package:elhaq_tracker/src/data/models/credit_balance_model.dart';
 import 'package:elhaq_tracker/src/data/models/tracked_item_model.dart';
 import 'package:elhaq_tracker/src/data/providers.dart';
@@ -93,30 +94,47 @@ void main() {
     await tester.tap(find.text('Start Tracking'));
     await tester.pumpAndSettle();
 
+    if (!AppConfig.paymentsEnabled) {
+      // A free build compiles the upgrade route out: the same 402 must fall
+      // back to the generic error snackbar instead of offering a screen the
+      // build does not contain.
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(find.text('Upgrade plan'), findsNothing);
+      expect(find.byType(SnackBar), findsOneWidget);
+      return;
+    }
+
     // Friendly dialog appears instead of a raw error SnackBar.
     expect(find.text("You've reached your limit"), findsOneWidget);
     expect(find.text('Upgrade plan'), findsOneWidget);
     expect(find.byType(SnackBar), findsNothing);
-  });
+  }, skip: false);
 
-  testWidgets('upgrade button navigates to the subscription screen', (
-    tester,
-  ) async {
-    await tester.pumpWidget(_wrap(Scaffold(body: const CreateTrackerSheet())));
+  testWidgets(
+    'upgrade button navigates to the subscription screen',
+    (tester) async {
+      await tester.pumpWidget(
+        _wrap(Scaffold(body: const CreateTrackerSheet())),
+      );
 
-    await tester.enterText(
-      find.byType(TextField).first,
-      'https://example.com/x',
-    );
-    await tester.tap(find.text('Start Tracking'));
-    await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byType(TextField).first,
+        'https://example.com/x',
+      );
+      await tester.tap(find.text('Start Tracking'));
+      await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Upgrade plan'));
-    await tester.pumpAndSettle();
+      await tester.tap(find.text('Upgrade plan'));
+      await tester.pumpAndSettle();
 
-    // The packages screen is on top: its title is visible.
-    expect(find.text('Credit Packages'), findsOneWidget);
-  });
+      // The packages screen is on top: its title is visible.
+      expect(find.text('Credit Packages'), findsOneWidget);
+    },
+    // Only meaningful in a build compiled with the payment surface; the
+    // ENABLE_PAYMENTS=false run asserts the opposite in the test above, so the
+    // upgrade route being compiled out of a free build skips this case.
+    skip: !AppConfig.paymentsEnabled,
+  );
 
   testWidgets('"Not now" dismisses the dialog without navigating', (
     tester,
@@ -129,6 +147,14 @@ void main() {
     );
     await tester.tap(find.text('Start Tracking'));
     await tester.pumpAndSettle();
+
+    if (!AppConfig.paymentsEnabled) {
+      // No dialog to dismiss in a free build - assert the state directly rather
+      // than tapping a button that was never rendered.
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(find.byType(SubscriptionScreen), findsNothing);
+      return;
+    }
 
     await tester.tap(find.text('Not now'));
     await tester.pumpAndSettle();

@@ -145,5 +145,26 @@ void main() {
         await expectLater(AppConfig.initialize(), completes);
       },
     );
+
+    test(
+      'the payment surface is a compile-time choice, not a runtime toggle',
+      () {
+        // A store build is compiled with --dart-define=ENABLE_PAYMENTS=false
+        // (see .github/workflows/ci.yml, which also runs the whole suite under
+        // that define), so the credit-packages screen and the "Upgrade plan"
+        // route cannot be re-opened at runtime after launch. Asserting the
+        // define's own semantics keeps this honest in both CI postures without
+        // hard-coding one of them.
+        expect(
+          AppConfig.paymentsEnabled,
+          bool.fromEnvironment('ENABLE_PAYMENTS', defaultValue: true),
+        );
+        // Dev builds keep the merged-but-dark rails reachable for testing.
+        expect(
+          bool.fromEnvironment('ENABLE_PAYMENTS', defaultValue: true),
+          isTrue,
+        );
+      },
+    );
   });
 }

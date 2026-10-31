@@ -341,6 +341,49 @@ Round 2 came back **APPROVE** (5 WARNING, 4 INFO). Handled:
 | Two queries for the Profile chip numbers | Fixed: `usage_payload` reads `COUNT(*)` and `MAX(created_at)` in one query; the unused `last_created_at` helper is gone rather than left as dead code. |
 | Env parsed per call; deprecated `on_event` startup | Kept as-is, deliberately: per-call parsing is what lets a test (and a config reload) change the mode without re-importing, and `on_event` is the pattern this module already uses everywhere — changing it here would be an unrelated refactor. |
 
+
+### MS2/MS3 (PR B) - what landed, and where it stops
+
+Branch `feat/free-tracker-fair-use-limits-client`, stacked on PR #50 (merge after it).
+
+| File | Change |
+|---|---|---|
+| `lib/src/data/config.dart` | `AppConfig.paymentsEnabled` - compile-time `ENABLE_PAYMENTS` (default true, **false** in a release build) |
+| `models/usage_limits_model.dart`, `repositories/usage_limits_repository.dart`, `providers.dart` | the `GET /usage/limits` transport and `usageLimitsProvider`, parsed defensively (a malformed number degrades, never throws) |
+| `repositories/tracked_items_repository.dart` | `FairUseCapException` / `RateLimitedException`, mapped off `detail.code` (never the human text), countdown from the body then the `Retry-After` header |
+| `create_tracker_sheet.dart`, `dashboard_page.dart` | the "Upgrade plan" route and the Profile *Manage* entry are compiled out under the flag; a 402 in an off build falls back to the generic error line - never a silent no-op |
+| `.github/workflows/ci.yml` | the release AAB is built with `--dart-define=ENABLE_PAYMENTS=false`, and the suite runs **twice**, once under that define |
+| tests | +14: cap/rate mapping (malformed numbers, header fallback, "a 409 with a string detail is NOT the cap"), the `UsageLimits` posture matrix, both flag postures, the flag being compile-time |
+
+Gates: `flutter test` - 300 passed; `flutter test --dart-define=ENABLE_PAYMENTS=false` - 299 passed, 1 skipped (the upgrade-route case, asserted from the opposite side); `flutter analyze` clean; `dart format` clean.
+
+**Still blocked on WS4.** The cap/rate dialogs, the Profile chip and the store-listing rows need keys that have no Arabic counterpart anywhere (`fairUseTitle`, `fairUseChip`, `fairUseUncapped`, `fairUseCapBody`, `creationWaitTitle`, `creationWaitBody` - English source in the table above). Until both ARB files gain them in one commit, `l10n_coverage_test` and `l10n_hardcoded_strings_test` keep the refusal copy on the generic error line: honest, but not the dialogs MS2 asks for.
+
+Why they were not written here, concretely: this session's model cannot emit Arabic script. Three attempts to add the values to `app_ar.arb` came back Latin-transliterated (`metb'im` for `metb'im`), and the corrupted keys were reverted rather than shipped. `app_ar.arb` on `main` is intact human Arabic, so the repo pipeline is not at fault - only generation from this model. Unblock: the maintainer pastes the six values, or the same work runs on an Arabic-competent model.
+
+### WS4 unblocker: the exact copy PR B needs (owner to translate)
+
+The model running this session cannot emit Arabic script — attempted three times, every
+attempt came back Latin-transliterated (`metb'im` for `metb'im`). Verified empirically,
+not assumed: `app_ar.arb` itself is intact, human-authored Arabic, so the pipeline preserves
+Arabic fine; only this model's generation fails. Until an Arabic-competent model is used
+(`/model`) or the owner pastes the values in, the two PRs below are the hard blocker.
+
+Keys to add, with the English source and where it renders:
+
+| Key | Renders in | EN |
+|---|---|---|
+| `fairUseTitle` | Profile card heading (free build) | "Your trackers" |
+| `fairUseChip(count, cap)` | Profile chip, from `GET /usage/limits` | "{count, plural, =0{No trackers yet. Up to {cap} at once} one{Tracking 1 of up to {cap}} other{Tracking {count} of up to {cap}}}" |
+| `fairUseUncapped(count)` | Profile chip when the server reports no cap (`CREDITS_ENFORCEMENT=off`) | "{count, plural, =0{No trackers yet} one{Tracking 1 tracker, no limit in this build} other{Tracking {count} trackers, no limit in this build}}" |
+| `fairUseCapBody(cap)` | 409 cap dialog body | "You already have {cap} trackers running, which is the maximum. Close one to make room, or tap Not now." |
+| `creationWaitTitle` | 429 dialog title | "One tracker at a time" |
+| `creationWaitBody(seconds)` | 429 dialog body | "You just added a tracker. Wait {seconds} seconds before adding the next one." |
+
+Reused, already bilingual, no new translation needed: `reachedLimitTitle` (cap dialog
+title), `close`, `notNow` (dialog buttons), `startTracking`, `navTrackers`.
+
+
 ### Review round 3 (HGM on PR #50) — verdicts
 
 Round 3 returned REQUEST_CHANGES with 5 WARNING / 4 INFO. Three were restatements

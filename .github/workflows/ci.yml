@@ -196,6 +196,14 @@ jobs:
       - name: Test
         run: cd flutter-app && flutter test
 
+      # The posture a store build is compiled with. `AppConfig.paymentsEnabled`
+      # is a compile-time constant, so the release surface - no credit-packages
+      # entry, no "Upgrade plan" route - only gets compiled and exercised when
+      # the define is set. A failure here means the free product would ship
+      # payment UI, or would not compile without it.
+      - name: Test the release posture (ENABLE_PAYMENTS=false)
+        run: cd flutter-app && flutter test --dart-define=ENABLE_PAYMENTS=false
+
       # --- Signed App Bundle: PRs to main + v* tags only ---
       - name: Prepare release signing
         id: signing
@@ -305,7 +313,8 @@ jobs:
           echo "Building release AAB (versionCode=$VERSION_CODE)"
           VERSION_CODE="$VERSION_CODE" \
             flutter build appbundle --release \
-            --dart-define=API_BASE_URL="$PROD_API_BASE_URL"
+            --dart-define=API_BASE_URL="$PROD_API_BASE_URL" \
+            --dart-define=ENABLE_PAYMENTS=false
           # Expose the versionCode actually baked into the AAB so the verify step
           # checks the real value (not the release-only RELEASE_VERSION_CODE, which
           # is irrelevant to a PR build).

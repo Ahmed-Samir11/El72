@@ -46,11 +46,14 @@ class _FakeSecureStorage extends FlutterSecureStorage {
 }
 
 /// Dio adapter answering every request with [statusCode] and a JSON body
-/// `{"detail": [detail]}` (or an empty body when [detail] is null).
+/// `{"detail": [detail]}` (or an empty body when [detail] is null). Fair-use
+/// refusals send `detail` as an object, and the rate refusal also carries a
+/// `Retry-After` header, so both are supported here.
 class _DetailAdapter implements HttpClientAdapter {
-  _DetailAdapter(this.statusCode, this.detail);
+  _DetailAdapter(this.statusCode, this.detail, {this.retryAfter});
   final int statusCode;
   final Object? detail;
+  final String? retryAfter;
 
   @override
   void close({bool force = false}) {}
@@ -64,20 +67,28 @@ class _DetailAdapter implements HttpClientAdapter {
     final body = detail == null
         ? <int>[]
         : ('{"detail": ${jsonEncodeDetail(detail)}}'.codeUnits);
+    final headers = <String, List<String>>{
+      'content-type': ['application/json'],
+      if (retryAfter != null) 'retry-after': [retryAfter!],
+    };
     return ResponseBody.fromBytes(
       Uint8List.fromList(body),
       statusCode,
-      headers: const {
-        'content-type': ['application/json'],
-      },
+      headers: headers,
     );
   }
 }
 
-/// Minimal JSON string-encoder for the adapter body (details are strings
-/// or numbers in these tests).
+/// Minimal JSON encoder for the adapter body: details are strings, numbers,
+/// or (for the fair-use contract) a flat object of strings and numbers.
 String jsonEncodeDetail(Object? value) {
   if (value is num) return value.toString();
+  if (value is Map) {
+    final entries = value.entries.map(
+      (e) => '"${e.key}": ${jsonEncodeDetail(e.value)}',
+    );
+    return '{${entries.join(', ')}}';
+  }
   return '"$value"';
 }
 
@@ -178,5 +189,135 @@ void main() {
         expect(caught, isNot(isA<InsufficientCreditsException>()));
       },
     );
+  });
+
+  // The free-tracker contract (plans/p3-free-tracker-model-alignment.md, MS1):
+  // a shipped backend answers cap and rate refusals with a structured `detail`
+  // object, and the client must tell those two states apart from each other and
+  // from the legacy 402 - it cannot render the right copy otherwise.
+  group('fair-use error mapping', () {
+    test(
+      'HTTP 409 with the cap body raises FairUseCapException carrying the numbers',
+      () async {
+        final client = ApiClient.withStorage(_FakeSecureStorage());
+        client.dio.httpClientAdapter = _DetailAdapter(409, {
+          'code': 'fair_use_cap',
+          'active_trackers': 100,
+          'cap': 100,
+        });
+        final repo = TrackedItemsRepository(apiClient: client);
+
+        await expectLater(
+          repo.createFromUrl('https://example.com/x'),
+          throwsA(
+            isA<FairUseCapException>()
+                .having((e) => e.activeTrackers, 'activeTrackers', 100)
+                .having((e) => e.cap, 'cap', 100),
+          ),
+        );
+      },
+    );
+
+    test(
+      'HTTP 429 with the rate body raises RateLimitedException with the countdown',
+      () async {
+        final client = ApiClient.withStorage(_FakeSecureStorage());
+        client.dio.httpClientAdapter = _DetailAdapter(429, {
+          'code': 'creation_rate_limit',
+          'retry_after_seconds': 2.76,
+        }, retryAfter: '3');
+        final repo = TrackedItemsRepository(apiClient: client);
+
+        await expectLater(
+          repo.createFromUrl('https://example.com/x'),
+          throwsA(
+            isA<RateLimitedException>().having(
+              (e) => e.retryAfterSeconds,
+              'retryAfterSeconds',
+              2.76,
+            ),
+          ),
+        );
+      },
+    );
+
+    test(
+      'HTTP 429 without a countdown in the body falls back to Retry-After',
+      () async {
+        final client = ApiClient.withStorage(_FakeSecureStorage());
+        client.dio.httpClientAdapter = _DetailAdapter(429, {
+          'code': 'creation_rate_limit',
+        }, retryAfter: '4');
+        final repo = TrackedItemsRepository(apiClient: client);
+
+        await expectLater(
+          repo.createFromUrl('https://example.com/x'),
+          throwsA(
+            isA<RateLimitedException>().having(
+              (e) => e.retryAfterSeconds,
+              'retryAfterSeconds',
+              4.0,
+            ),
+          ),
+        );
+      },
+    );
+
+    test(
+      'malformed fair-use numbers degrade to zero instead of crashing',
+      () async {
+        final client = ApiClient.withStorage(_FakeSecureStorage());
+        client.dio.httpClientAdapter = _DetailAdapter(409, {
+          'code': 'fair_use_cap',
+          'active_trackers': 'many',
+          'cap': null,
+        });
+        final repo = TrackedItemsRepository(apiClient: client);
+
+        await expectLater(
+          repo.createFromUrl('https://example.com/x'),
+          throwsA(
+            isA<FairUseCapException>()
+                .having((e) => e.activeTrackers, 'activeTrackers', 0)
+                .having((e) => e.cap, 'cap', 0),
+          ),
+        );
+      },
+    );
+
+    test(
+      'HTTP 409 with a plain string detail is NOT read as the fair-use cap',
+      () async {
+        // The cap dialog is driven by `detail.code`, never by the status alone:
+        // a duplicate-link 409 must not claim the user is at the ceiling.
+        final client = ApiClient.withStorage(_FakeSecureStorage());
+        client.dio.httpClientAdapter = _DetailAdapter(409, 'Already tracked');
+        final repo = TrackedItemsRepository(apiClient: client);
+
+        Object? caught;
+        try {
+          await repo.createFromUrl('https://example.com/x');
+        } catch (e) {
+          caught = e;
+        }
+
+        expect(caught, isA<Exception>());
+        expect(caught, isNot(isA<FairUseCapException>()));
+        expect(caught?.toString(), contains('Already tracked'));
+      },
+    );
+
+    test('HTTP 402 still maps to the legacy credits exception', () async {
+      // A build pointed at a CREDITS_ENFORCEMENT=on backend keeps working:
+      // the free-model mapping must not swallow the legacy signal.
+      final client = ApiClient.withStorage(_FakeSecureStorage());
+      client.dio.httpClientAdapter = _DetailAdapter(402, 'Not enough credits');
+      final repo = TrackedItemsRepository(apiClient: client);
+
+      await expectLater(
+        repo.createFromUrl('https://example.com/x'),
+        throwsA(isA<InsufficientCreditsException>()),
+      );
+    });
   });
 }

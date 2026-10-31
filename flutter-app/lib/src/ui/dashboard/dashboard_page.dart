@@ -305,13 +305,20 @@ class _ProfileTab extends ConsumerWidget {
               ),
               orElse: () => Text(AppLocalizations.of(context).freePlan),
             ),
-            trailing: TextButton(
-              onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const SubscriptionScreen()),
-              ),
-              child: Text(AppLocalizations.of(context).manage),
-            ),
+            // The manage/upgrade entry exists only in a build compiled with the
+            // payment surface. A free release has no credit-packages screen to
+            // navigate to, so the control is absent rather than dead.
+            trailing: AppConfig.paymentsEnabled
+                ? TextButton(
+                    onPressed: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const SubscriptionScreen(),
+                      ),
+                    ),
+                    child: Text(AppLocalizations.of(context).manage),
+                  )
+                : null,
           ),
         ),
         const SizedBox(height: 12),

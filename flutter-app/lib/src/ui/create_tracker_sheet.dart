@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../l10n/app_localizations.dart';
+import '../data/config.dart';
 import '../core/format/error_message.dart';
 import '../core/styles/app_theme.dart';
 import '../data/providers.dart';
@@ -18,6 +19,27 @@ class CreateTrackerSheet extends ConsumerStatefulWidget {
 class _CreateTrackerSheetState extends ConsumerState<CreateTrackerSheet> {
   final _urlController = TextEditingController();
   final _targetController = TextEditingController();
+
+  /// True when this build was compiled with the payment surface (`ENABLE_PAYMENTS`
+  /// not set to false). A release build of the free product has it off, so the
+  /// "Upgrade plan" route that navigates to [SubscriptionScreen] is compiled out
+  /// of the flow rather than hidden at runtime.
+  static final bool _paymentsEnabled = AppConfig.paymentsEnabled;
+
+  /// The one error line every unhandled failure of the create shows. Extracted
+  /// so a 402 in a payments-off build cannot become a silent no-op: the user
+  /// must still be told the tracker was not created.
+  void _showGenericError(BuildContext context, Object error) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          AppLocalizations.of(context).errorPrefix(errorMessage(error)),
+        ),
+        backgroundColor: context.appTokens.error,
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -66,9 +88,12 @@ class _CreateTrackerSheetState extends ConsumerState<CreateTrackerSheet> {
                 // Refresh the Trackers list so the new item appears immediately.
                 ref.invalidate(trackedItemsProvider);
 
-                // The creation consumed one credit: refresh the balance so
-                // the Profile tab shows the new number.
+                // The creation may have changed the account state the Profile
+                // tab shows: a fair-use build reports the tracker count and the
+                // wait, a payment build the remaining credits. Invalidate both
+                // so neither tile can go stale without an app restart.
                 ref.invalidate(creditBalanceProvider);
+                ref.invalidate(usageLimitsProvider);
 
                 // Schedule a second refresh after the background price fetch
                 // has had time to complete (~3.5s). Guard with mounted: if the
@@ -91,10 +116,16 @@ class _CreateTrackerSheetState extends ConsumerState<CreateTrackerSheet> {
                     ),
                   );
                 }
-              } on InsufficientCreditsException {
-                // Out of credits (HTTP 402): offer the upgrade flow instead
-                // of a raw server message.
+              } on InsufficientCreditsException catch (e) {
+                // Out of credits (HTTP 402): the legacy paid model.
                 if (!context.mounted) return;
+                if (!_paymentsEnabled) {
+                  // A free build has no credit-packages screen to offer, so the
+                  // refusal degrades to the same honest error line any other
+                  // failure gets - never a silent no-op, never an upgrade offer.
+                  _showGenericError(context, e);
+                  return;
+                }
                 final nav = Navigator.of(context);
                 final l10n = AppLocalizations.of(context);
                 showDialog<void>(
@@ -123,18 +154,7 @@ class _CreateTrackerSheetState extends ConsumerState<CreateTrackerSheet> {
                   ),
                 );
               } catch (e) {
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(
-                        AppLocalizations.of(
-                          context,
-                        ).errorPrefix(errorMessage(e)),
-                      ),
-                      backgroundColor: context.appTokens.error,
-                    ),
-                  );
-                }
+                if (context.mounted) _showGenericError(context, e);
               }
             },
             child: Text(AppLocalizations.of(context).startTracking),
