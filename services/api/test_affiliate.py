@@ -153,6 +153,12 @@ def test_store_for_url_rejects_open_redirect_target():
 
 def test_normalize_source_allowlist():
     assert normalize_click_source("deal_feed") == "deal_feed"
+    # plans/p2 MS2: the Alerts tab taps a tracked product from an alert card.
+    # The client constant lives in flutter-app/lib/src/ui/common/merchant_link.dart
+    # (sourceAlertCard); a value the server does not allowlist lands in the metric
+    # dimension as 'unknown', which would silently merge alert taps into
+    # unknown-source clicks and break §11's per-surface CTR.
+    assert normalize_click_source("alert_card") == "alert_card"
     assert normalize_click_source("TRACKER_CARD") == "tracker_card"
     # Unknown client context becomes 'unknown', never dropped or injected.
     assert normalize_click_source("evil'; DROP") == "unknown"
