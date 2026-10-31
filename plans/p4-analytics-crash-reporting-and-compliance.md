@@ -2,7 +2,8 @@
 
 **Branch:** `feat/app-analytics-and-crash-reporting` (off `main`)
 **Date:** 2026-10-29
-**Status:** Approved 2026-10-31 (owner: "start implementing"); MS1 in progress
+**Status:** Approved 2026-10-31 (owner: "start implementing"); MS1 merged (#53, #54);
+H2 (own endpoint) and H9 (180 days) decided 2026-10-31; MS2 is unblocked
 **Series:** 4 of 5 release-priority plans (P1 affiliate clicks, P2 notifications, P3
 free-tracker model, **P4**, P5 activation/trust). P4 consumes P1/P2/P3 call sites, so
 MS3+ of this plan lands after those PRs merge; MS1-MS2 are independent.
@@ -140,7 +141,8 @@ flutter-app/lib/src/data/services/crash_reporting.dart
    `merchant_click` → P1's `merchant_link` (shares the `event_id` with
    `affiliate_clicks.event_id` — P1 WS1 already provides the column), `alert_opened` → P2's
    `/alerts/{id}/open`, `error_observed` → `AsyncStateView` error paths (type + status only).
-4. **Crash reporting**: `sentry_flutter` initialized in `main.dart` behind
+4. **Crash reporting** (*superseded 2026-10-31: H2 chose our own endpoint; see §9
+   "MS2 design". Kept for the record*): `sentry_flutter` initialized in `main.dart` behind
    `--dart-define=SENTRY_DSN=`; if the Firebase project from P2 lands first, **Crashlytics
    is the drop-in alternative** (same H2), documented as a one-line swap table:
 
@@ -154,7 +156,7 @@ flutter-app/lib/src/data/services/crash_reporting.dart
    analogue — a crash payload must not carry the identifier at all), attach
    `release`, `environment`, `session_id` (not `user_id` prose), and keep
    `sample_rate: 1.0` for v1 (low volume cohort).
-5. **Release wiring**: `.github/workflows/ci.yml` `flutter-ci`/`publish-release` steps
+5. **Release wiring** (*superseded with step 4*): `.github/workflows/ci.yml` `flutter-ci`/`publish-release` steps
    pass `--dart-define=SENTRY_DSN=...` alongside the existing
    `--dart-define=API_BASE_URL="$PROD_API_BASE_URL"` (line ~307), and fail the release
    build if the DSN is missing on a `v*` tag (mirrors the existing
@@ -259,7 +261,7 @@ new), `flutter analyze`, `dart format --set-exit-if-changed lib test`.
 
 | Risk / Question | Mitigation / Needed decision |
 |---|---|
-| **H2** — Sentry account/DSN, or Firebase project for Crashlytics | must be created by the owner; CI fails a `v*` release without it (explicit guard, like `RELEASE_VERSION_CODE`) |
+| **H2** — decided: first-party `POST /crashes` (see "MS2 design" in §9) | no external account or secret; native crashes and ANRs come from Play Console's Android vitals |
 | Instrumenting user behavior is a **privacy commitment**, not just code | first-party only, no ad SDKs, retention window, no raw query text, deletion path in-app; report sources cite the Egyptian PDPC — the policy must be written before the event table ships, not after |
 | Low-volume cohort makes rates noisy | rollups return cohort-level counts with denominators; every dashboard number labelled ESTIMATE per report §1 |
 | Telemetry latency/expense on 2G/3G sessions (report §6: data costs matter in Egypt) | batched, ≤1 request per 30 s, never on the tap path, dropped rather than re-queued unboundedly |
@@ -271,9 +273,9 @@ new), `flutter analyze`, `dart format --set-exit-if-changed lib test`.
 ### ⚠️ Human input required
 | # | Item | Why |
 |---|---|---|
-| H2 | Crash-reporting provider (Sentry DSN or Firebase project + `google-services.json`) | cannot be generated in-repo; also gates P2 MS3 |
+| H2 | ~~Crash-reporting provider~~ **Decided 2026-10-31: our own `POST /crashes` endpoint** (Sentry needed a paid plan). Nothing further needed from the owner | — |
 | H8 | Support contact + hosted privacy-policy URL, and the Arabic policy/UI strings | legal review + native reviewer; `PI_MODEL=qwen3.8-flash-next-coder-iq1_m` forbids authoring Arabic here (`.agents/AGENTS.md`, Skill 10) — land `app_en.arb` + `app_ar.arb` together on owner-supplied text |
-| H9 | Retention window and the erasure policy wording | business/legal decision that the report explicitly asks the team not to overstate |
+| H9 | ~~Retention window~~ **Decided 2026-10-31: 180 days for raw events; MS3's daily rollups (no user id) may be kept longer.** The erasure wording in the privacy policy stays open with H8 (MS5) | business/legal decision that the report explicitly asks the team not to overstate |
 
 ---
 
@@ -340,10 +342,10 @@ What changed since this plan was drafted, and how it changes the approach:
   every 30 s).
 - **Event store unavailable:** when `TIMESCALE_URL` is unset the endpoint answers 503 and
   stores nothing; the client drops the batch (fire-and-forget).
-- **Retention (pending H9):** `add_retention_policy('app_events', INTERVAL '180 days')`
+- **Retention (H9, decided 180 days):** `add_retention_policy('app_events', INTERVAL '180 days')`
   in the TimescaleDB migration (the compose image `timescale/timescaledb:2.14.2-pg15`
-  ships the policy scheduler), so no separate cleanup job is needed. The window is the
-  plan's default until the owner decides H9.
+  ships the policy scheduler), so no separate cleanup job is needed. The owner confirmed
+  the window on 2026-10-31.
 - **Erasure:** `DELETE /auth/me` now also sets `affiliate_clicks.user_id = NULL` in the same
   PostgreSQL transaction and `app_events.user_id = NULL` in TimescaleDB, the TimescaleDB
   update first: if it fails the request fails before the account is anonymized, so the
@@ -365,7 +367,7 @@ What changed since this plan was drafted, and how it changes the approach:
 Not in MS1, by the milestone table: the client (MS2), `/metrics/funnel` (MS3), the remaining
 call sites (MS4), and the policy, data-safety and in-app deletion work (MS5). The plan's
 "ingest lag" alert is dropped: ingest is synchronous, so there is no server-side queue to lag.
-H9 (retention window) is still open; 180 days is the default until the owner decides.
+H9 was later decided as 180 days (see "Owner decisions" below).
 
 ### Review round 1 (HGM on local Qwen 3.8 Flash Next, PR #53) — verdicts
 
@@ -404,3 +406,88 @@ Bootstrap applies the `app_events` block twice (schema file, then migration), so
 success also shows the block can be re-run. Locally the tests skip unless
 `EL72_LIVE_TIMESCALE_URL` is set; CI sets `EL72_LIVE_DB_REQUIRED=1` so the job cannot
 pass by skipping.
+
+### Owner decisions (2026-10-31)
+
+- **H9, retention: 180 days for raw `app_events`.** The longest MS3 measure (D90
+  retention) needs at most 90 days of history, so 180 days leaves room without keeping each
+  person's trail longer than the funnel needs. MS3's daily rollups carry no `user_id` and
+  may be kept longer, so seasonal comparisons (Ramadan, White Friday) survive a 180-day
+  raw window. Account deletion still unlinks events immediately, whatever the window.
+  Rollups kept past 180 days suppress any cell under 5 distinct sessions, so a small
+  cohort cannot be picked out of the aggregates. The
+  migration already applies 180 days, so no SQL change is needed; the live CI test pins
+  the job to the migration's interval.
+- **H2, crash reporting: our own endpoint (revised the same day).** Sentry was the first
+  choice, but its sign-up asked for a paid plan the owner cannot take on now. Crashlytics
+  (free, but Google receives the data), self-hosted GlitchTip (server upkeep) and our own
+  endpoint were compared, and the owner chose our own endpoint. It needs no account, no
+  new package and no secret, and crash data never leaves our servers. The design is
+  below; §4 WS3 steps 4-5 (Sentry DSN, `beforeSend`, DSN release guard) are superseded by it.
+
+### MS2 design — first-party crash reports (replaces §4 WS3 steps 4-5)
+
+**What it covers, and what it doesn't.** Dart errors: uncaught exceptions, framework
+errors and async errors, fatal or not. Release builds are not obfuscated (`flutter build
+appbundle` in `ci.yml` has no `--obfuscate`), so Dart stack traces arrive readable. Native
+Android crashes and ANRs are not covered; Google Play Console's Android vitals reports
+those at no cost once the app is on the Play Store, so the two together cover both
+layers. Grafana and Prometheus (already in `docker-compose.yml`) are not crash reporting
+on their own: Prometheus stores server-side numbers only, and a phone cannot push to it.
+They show the crash *rate* from the counter below and alert on it; the reports
+themselves live in the database.
+
+**Server (`POST /crashes`, `services/api/routers/crashes.py`).**
+- Body `{"reports": [...]}`, at most 5 reports and 16 KB. Authentication is optional and
+  never stored: a crash report carries the client `session_id`, not a `user_id`.
+  `session_id` follows the `/events` rules exactly (`normalize_opaque_token`, must contain
+  a letter).
+- **Erasure:** the session id is shared with `app_events`, so a crash report could be
+  linked to a user through that table. `DELETE /auth/me` therefore deletes the user's
+  crash reports, `DELETE FROM app_crashes WHERE session_id IN (SELECT session_id FROM
+  app_events WHERE user_id = :uid)`, in the same TimescaleDB step and *before*
+  `app_events.user_id` is set to NULL (afterwards the link is gone). Rate limit `CRASHES_RATE_LIMIT`, default
+  `10/minute`, keyed like `/events`.
+- Fields: `session_id`, `app_version` (`^\d+\.\d+\.\d+(\+\d+)?$`), `platform`
+  (`android`/`ios`), `os_version` (≤ 64 chars), `error_type` (≤ 128, identifier
+  charset), `message` (≤ 512), `stack` (≤ 8 KB and 50 frames), `fatal` (bool),
+  `occurred_at` (client clock, stored for reference only; `ts` is the server's receipt
+  time, as for events).
+- **Redaction on the server, whatever the client did:** phone numbers (the
+  `_looks_like_phone` rule from `services/api/events.py`), email addresses, JWT-shaped
+  tokens (`eyJ...`) and URL query strings are replaced with `[phone]`, `[email]`,
+  `[token]` and `?[query]` in `message` and `stack` before the insert. IPv4 addresses
+  and runs of 9 or more digits (card or national-id shaped) become `[ip]` and
+  `[number]`. Redaction runs on the full text *before* the size caps, so truncation can
+  never leave half a secret. The raw payload is never logged; a rejected report is logged
+  by reason only. Tests pin each rule.
+- **Stack content:** Dart release traces name frames as `package:el72/...` URIs, not
+  device file paths, so readable traces expose only our own code layout, which is
+  acceptable for a first-party store. Frames beyond the cap are dropped, not summarised.
+- **Grouping:** `fingerprint` = first 16 hex characters of the SHA-256 of `error_type` plus
+  the top 5 stack frames with line numbers removed, so one bug across builds is one
+  group.
+- **Storage:** TimescaleDB `app_crashes` hypertable (migration `0004_app_crashes.sql`),
+  90-day retention, indexes on `(fingerprint, ts)` and `(app_version, ts)`. The live CI
+  job gains the same checks as `app_events` (hypertable, retention job).
+- **Metrics:** `el72_client_crashes_total{fatal}` and
+  `el72_client_crash_reports_rejected_total{reason}`; an `AppCrashSpike` rule (fatal
+  crashes per hour above a threshold) with a runbook entry; a Grafana panel when a
+  dashboard is provisioned. No `app_version` label, to keep series counts bounded.
+
+**Client (`flutter-app/lib/src/telemetry/crash_reporter.dart`), no new packages.**
+- Installs `FlutterError.onError` and `PlatformDispatcher.instance.onError` in
+  `main.dart`. Errors in debug builds go to the console only.
+- Each report is written to `shared_preferences` first (a queue of at most 10, oldest
+  dropped), then sent with the existing `dio` client to `apiBaseUrl`. A fatal crash that
+  kills the app before sending is delivered on the next launch.
+- The client redacts with the same four rules before writing to disk, so an unsent report
+  on the phone holds no phone number either; the server's redaction is the backstop.
+- `app_version` comes from a new `--dart-define=APP_VERSION` set in `ci.yml` from the
+  release version and code (no `package_info_plus`); `os_version` from
+  `Platform.operatingSystemVersion`.
+- The analytics half of MS2 (session id, `/events` batching every 30 s, the existing
+  call sites) is unchanged and shares the session id.
+
+**Before MS2 can start:** nothing from the owner. The H2 account, DSN and
+package steps are no longer needed.
