@@ -178,7 +178,7 @@ class AlertCard extends StatelessWidget {
 String _whenLabel(BuildContext context, AlertEvent event) {
   final days = event.daysAgo(DateTime.now());
   if (days <= 0) return AppLocalizations.of(context).alertWhenToday;
-  return AppLocalizations.of(context).alertWhenDaysAgo(days.toString());
+  return AppLocalizations.of(context).alertWhenDaysAgo(days);
 }
 
 /// The event-type glyph. Unknown types keep their row and fall back to a

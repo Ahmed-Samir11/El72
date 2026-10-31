@@ -89,8 +89,8 @@ rendered from the current visual pass.**
 ## 7. Feature highlights (Play "What's new" per release)
 
 - v1.0: Initial release — price tracking across Amazon EG, Noon & Jumia; price
-  drops recorded and shown to you in-app (no OS push, email or WhatsApp delivery
-  in this version); Arabic-first with RTL; light/dark theme; demo mode.
+  drops recorded and shown to you in-app (no OS push or email in this version);
+  Arabic-first with RTL; light/dark theme; demo mode.
 
 ---
 _Submit the hosted privacy-policy URL and the data-safety answers above in the

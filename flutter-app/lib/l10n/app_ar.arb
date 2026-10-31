@@ -319,7 +319,7 @@
   "alertCurrentPrice": "السعر الحالي: {price}",
   "alertDiscountLine": "الخصم: {percent}%",
   "alertWhenToday": "اليوم",
-  "alertWhenDaysAgo": "منذ {days} يوم",
+  "alertWhenDaysAgo": "{days, plural, one{منذ يوم واحد} two{منذ يومين} few{منذ {days} أيام} many{منذ {days} يومًا} other{منذ {days} يوم}}",
   "@alertsLoadFailed": {
     "placeholders": {
       "error": {
@@ -358,7 +358,7 @@
   "@alertWhenDaysAgo": {
     "placeholders": {
       "days": {
-        "type": "String"
+        "type": "int"
       }
     }
   },

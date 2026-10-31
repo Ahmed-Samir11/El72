@@ -52,8 +52,8 @@ CREATE TABLE IF NOT EXISTS alert_events (
     channel TEXT NOT NULL DEFAULT 'in_app'
         CHECK (channel IN ('in_app', 'push', 'whatsapp')),
     opened_at TIMESTAMP WITHOUT TIME ZONE,
-    created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT (NOW() AT TIME ZONE 'UTC'),
-    updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT (NOW() AT TIME ZONE 'UTC')
+    created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT (NOW() AT TIME ZONE 'UTC'),
+    updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT (NOW() AT TIME ZONE 'UTC')
 );
 
 -- Alerts tab read (user, newest first), the consumer's same-day dedupe
@@ -75,6 +75,13 @@ CREATE INDEX IF NOT EXISTS idx_alert_events_user_unopened
 -- so concurrent consumers/replicas cannot both write the day's alert.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_alert_events_item_type_day
     ON alert_events(tracked_item_id, event_type, (created_at::date));
+
+-- A tree that applied an earlier revision of this file built the table with
+-- nullable timestamps. The defaults mean no row can hold a NULL, and SET NOT
+-- NULL is a no-op when the constraint is already there, so this converges both
+-- paths on the canonical schema (and on the ORM's nullable=False).
+ALTER TABLE alert_events ALTER COLUMN created_at SET NOT NULL;
+ALTER TABLE alert_events ALTER COLUMN updated_at SET NOT NULL;
 
 -- The UTC-pinned updated_at trigger (a naive column must not inherit the
 -- session timezone through the shared trigger function).

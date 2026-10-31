@@ -525,8 +525,17 @@ class AppLocalizationsAr extends AppLocalizations {
   String get alertWhenToday => 'اليوم';
 
   @override
-  String alertWhenDaysAgo(String days) {
-    return 'منذ $days يوم';
+  String alertWhenDaysAgo(int days) {
+    String _temp0 = intl.Intl.pluralLogic(
+      days,
+      locale: localeName,
+      other: 'منذ $days يوم',
+      many: 'منذ $days يومًا',
+      few: 'منذ $days أيام',
+      two: 'منذ يومين',
+      one: 'منذ يوم واحد',
+    );
+    return '$_temp0';
   }
 
   @override

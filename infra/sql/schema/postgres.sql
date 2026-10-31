@@ -379,8 +379,8 @@ CREATE TABLE IF NOT EXISTS alert_events (
     channel TEXT NOT NULL DEFAULT 'in_app'
         CHECK (channel IN ('in_app', 'push', 'whatsapp')),
     opened_at TIMESTAMP WITHOUT TIME ZONE,
-    created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT (NOW() AT TIME ZONE 'UTC'),
-    updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT (NOW() AT TIME ZONE 'UTC')
+    created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT (NOW() AT TIME ZONE 'UTC'),
+    updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT (NOW() AT TIME ZONE 'UTC')
 );
 
 -- Retailer Analytics (Aggregated B2B metrics, no PII)

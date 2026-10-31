@@ -34,7 +34,13 @@ class AlertsTab extends ConsumerWidget {
       // opened, or a backlog the consumer finally drained, shows up here.
       onRefresh: () async {
         ref.invalidate(alertFeedProvider);
-        await ref.read(alertFeedProvider.future);
+        try {
+          await ref.read(alertFeedProvider.future);
+        } catch (_) {
+          // The provider already holds the failure and the tab renders its
+          // error state; rethrowing here would only surface as an unhandled
+          // async error behind the indicator.
+        }
       },
       child: CustomScrollView(
         physics: const AlwaysScrollableScrollPhysics(),

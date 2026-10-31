@@ -1001,8 +1001,8 @@ abstract class AppLocalizations {
   /// No description provided for @alertWhenDaysAgo.
   ///
   /// In en, this message translates to:
-  /// **'{days} days ago'**
-  String alertWhenDaysAgo(String days);
+  /// **'{days, plural, =1{1 day ago} other{{days} days ago}}'**
+  String alertWhenDaysAgo(int days);
 
   /// No description provided for @alertNoLink.
   ///

@@ -416,3 +416,16 @@ side is the one remaining copy debt, and it is owner-blocked, not engineer-block
   `alertsEmpty`, `alertsLoadFailed`, `alertWhenDaysAgo` and `alertNoLink`, in
   the app's existing register. This copy is generated (owner-approved, #51)
   and has not been reviewed by a native speaker.
+
+### Round 5 — HGM on local Qwen 3.8 Flash Next (REQUEST_CHANGES, 10 findings, 1752 s)
+
+| # | Finding | Verdict | Action |
+|---|---|---|---|
+| 1, 2 | `channel` CHECK allows `push`/`whatsapp` before those senders exist | By design | The enum is the MS3 contract in §WS1; the only writer (the consumer) stores `in_app`, and narrowing now would mean another migration when MS3 lands. |
+| 3 | `created_at`/`updated_at` nullable in SQL | Valid | `NOT NULL` in `schema/postgres.sql` and `0013` (plus an idempotent `SET NOT NULL` for a tree that ran an earlier 0013); the ORM already said `nullable=False`. `test_event_timestamps_are_not_null_everywhere` pins all three. |
+| 4 | Naive UTC timestamps parsed as device-local | Valid | `_datetime()` reads an offset-less string as UTC; a string with its own offset keeps it. Tests pin both. |
+| 5 | Pull-to-refresh rethrows a failed load | Valid | The failure stays in the provider (the tab shows its error state); `onRefresh` no longer rethrows it. |
+| 6, 7 | "{days} days ago" not pluralized (EN "1 days ago"; AR singular for every count) | Valid (7 was this pass's rewrite) | ICU plural in both locales (`int` placeholder): EN `=1`/other; AR one/two/few/many/other. Card tests cover 1, 3 and the Arabic dual/few forms. |
+| 8 | Store listing says "no WhatsApp delivery" while the privacy policy discloses a server-side WhatsApp channel | Valid | The listing line now names only what is always true (no OS push or email), per the file's own release-gate rule. |
+| 9 | PR description says MS2 is out of scope, but the diff ships the Alerts tab | Valid | PR body updated. |
+| 10 | Migration re-declares the shared `update_updated_at_column()` | Accepted | Same body as every other tree's definition; the table's own trigger is the UTC-pinned one. |

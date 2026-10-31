@@ -123,7 +123,13 @@ double? _number(Object? value) {
   return null;
 }
 
+/// The API sends naive UTC (`2026-10-31T09:15:00`, no offset). Dart parses a
+/// string without an offset as LOCAL time, which would shift every event by
+/// the device's UTC offset and move the "Today" boundary; such a string is
+/// read as UTC instead. A string that carries its own offset keeps it.
 DateTime? _datetime(Object? value) {
-  if (value is String) return DateTime.tryParse(value);
-  return null;
+  if (value is! String) return null;
+  final text = value.trim();
+  final hasOffset = RegExp(r'(Z|[+-]\d{2}:?\d{2})$').hasMatch(text);
+  return DateTime.tryParse(hasOffset ? text : '${text}Z');
 }

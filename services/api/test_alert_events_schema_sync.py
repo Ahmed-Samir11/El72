@@ -254,3 +254,20 @@ def test_alert_events_timestamps_are_naive_utc_everywhere():
     assert _event_time({"timestamp": "2026-10-29T09:00:00"}).tzinfo is None
     aware = _event_time({"timestamp": "2026-10-29T09:00:00+02:00"})
     assert aware.tzinfo is None and aware == datetime(2026, 10, 29, 7, 0, 0)
+
+
+def test_event_timestamps_are_not_null_everywhere():
+    """created_at places a row in the feed and in the same-day dedupe index.
+
+    The ORM declares both timestamps NOT NULL; the canonical schema and the
+    migration must too, or a writer that bypasses the ORM could store a row
+    the client cannot place and the dedupe index cannot see.
+    """
+    for path in (SCHEMA_SQL, MIGRATION_SQL):
+        text = _normalize(path.read_text(encoding="utf-8"))
+        for column in ("created_at", "updated_at"):
+            assert (
+                f"{column} TIMESTAMP WITHOUT TIME ZONE NOT NULL" in text
+            ), f"{path.name}: {column} must be NOT NULL"
+    assert not AlertEvent.__table__.c.created_at.nullable
+    assert not AlertEvent.__table__.c.updated_at.nullable

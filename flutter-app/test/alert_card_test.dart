@@ -17,6 +17,7 @@ AlertEvent _event({
   DateTime? openedAt,
   String storeId = 'amazon_eg',
   String eventType = eventTypePriceDrop,
+  DateTime? createdAt,
 }) => AlertEvent(
   id: id,
   eventType: eventType,
@@ -28,7 +29,7 @@ AlertEvent _event({
   sku: 'ABC123',
   url: url,
   openedAt: openedAt,
-  createdAt: DateTime.now().toUtc(),
+  createdAt: createdAt ?? DateTime.now().toUtc(),
 );
 
 /// Records every resolve+open and answers with a canned result — the same
@@ -53,9 +54,10 @@ class _FakeLink extends MerchantLink {
   }
 }
 
-Widget _app(AlertCard card) {
+Widget _app(AlertCard card, {Locale? locale}) {
   return MaterialApp(
     theme: AppTheme.light(),
+    locale: locale,
     localizationsDelegates: const [
       AppLocalizations.delegate,
       GlobalMaterialLocalizations.delegate,
@@ -153,5 +155,68 @@ void main() {
     expect(find.textContaining('Current price:'), findsAtLeast(1));
     expect(find.textContaining('Discount:'), findsAtLeast(1));
     expect(find.text('Today'), findsOneWidget);
+  });
+
+  group('event age', () {
+    DateTime ago(int days) =>
+        DateTime.now().toUtc().subtract(Duration(days: days, hours: 1));
+
+    testWidgets('one day reads in the singular', (tester) async {
+      await tester.pumpWidget(
+        _app(AlertCard(event: _event(createdAt: ago(1)))),
+      );
+      expect(find.text('1 day ago'), findsOneWidget);
+      expect(find.text('1 days ago'), findsNothing);
+    });
+
+    testWidgets('several days read in the plural', (tester) async {
+      await tester.pumpWidget(
+        _app(AlertCard(event: _event(createdAt: ago(3)))),
+      );
+      expect(find.text('3 days ago'), findsOneWidget);
+    });
+
+    testWidgets('Arabic uses the dual and the few forms', (tester) async {
+      const arabic = Locale('ar');
+      await tester.pumpWidget(
+        _app(
+          AlertCard(event: _event(createdAt: ago(2))),
+          locale: arabic,
+        ),
+      );
+      expect(find.text('منذ يومين'), findsOneWidget);
+
+      await tester.pumpWidget(
+        _app(
+          AlertCard(event: _event(createdAt: ago(5))),
+          locale: arabic,
+        ),
+      );
+      expect(find.text('منذ 5 أيام'), findsOneWidget);
+    });
+  });
+
+  group('server timestamps', () {
+    Map<String, dynamic> json(String createdAt) => {
+      'id': '6f2b1a9c-0000-4f18-9b2e-1c2d3e4f5060',
+      'event_type': eventTypePriceDrop,
+      'created_at': createdAt,
+    };
+
+    test('a naive server timestamp is read as UTC, not device-local', () {
+      final event = AlertEvent.fromJson(json('2026-10-31T09:15:00'));
+      expect(event.createdAt.isUtc, isTrue);
+      expect(event.createdAt, DateTime.utc(2026, 10, 31, 9, 15));
+    });
+
+    test('a timestamp that carries an offset keeps it', () {
+      final event = AlertEvent.fromJson(json('2026-10-31T11:15:00+02:00'));
+      expect(event.createdAt.toUtc(), DateTime.utc(2026, 10, 31, 9, 15));
+    });
+
+    test('an unparseable timestamp is still flagged as missing', () {
+      final event = AlertEvent.fromJson(json('not a date'));
+      expect(event.hasCreatedAt, isFalse);
+    });
   });
 }

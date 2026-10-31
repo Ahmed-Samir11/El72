@@ -319,7 +319,7 @@
   "alertCurrentPrice": "Current price: {price}",
   "alertDiscountLine": "Discount: {percent}%",
   "alertWhenToday": "Today",
-  "alertWhenDaysAgo": "{days} days ago",
+  "alertWhenDaysAgo": "{days, plural, =1{1 day ago} other{{days} days ago}}",
   "@alertsLoadFailed": {
     "placeholders": {
       "error": {
@@ -358,7 +358,7 @@
   "@alertWhenDaysAgo": {
     "placeholders": {
       "days": {
-        "type": "String"
+        "type": "int"
       }
     }
   },
