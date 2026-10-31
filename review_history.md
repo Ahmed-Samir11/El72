@@ -15805,3 +15805,117 @@ WARNING: Failed to parse JSON; retrying with strict JSON-only prompt
 Review completed in 1752.1s
 Decision: REQUEST_CHANGES (confidence: 0.78)
 Findings: 10
+## PR Review: feat(client): compile the payment surface out of a free build and read the fair-use refusals (P3 MS2/MS3)
+Model: local/qwen-27b
+Files changed: 25
+
+### Raw LLM Response
+{
+  "summary": "This PR adds a compile-time payments flag, a fair-use usage provider, structured tracker-creation refusal handling, and corresponding tests/CI posture checks. The implementation is generally careful and well-tested, but the generated Arabic copy needs native review and there are a few maintainability/testing edge cases worth addressing before merge.",
+  "decision": "REQUEST_CHANGES",
+  "confidence": 0.78,
+  "findings": [
+    {
+      "file": "flutter-app/lib/l10n/app_ar.arb",
+      "line": 301,
+      "severity": "WARNING",
+      "category": "correctness",
+      "title": "Generated Arabic fair-use copy needs native review and pluralization fixes",
+      "description": "The Arabic values are machine-generated and explicitly not natively reviewed. Several plural forms look grammatically inconsistent: the zero form uses a singular noun with a plural cap, some plural categories may use singular nouns, and seconds/cap are not pluralized. For an Arabic-first product, this is user-visible copy risk.",
+      "suggestion": "Have a native Arabic reviewer validate all seven keys. Prefer pluralized forms for count, cap, and seconds where applicable, and add Arabic UI tests for representative values such as 0, 1, 2, 3, and 100."
+    },
+    {
+      "file": "flutter-app/lib/l10n/app_en.arb",
+      "line": 340,
+      "severity": "INFO",
+      "category": "correctness",
+      "title": "English bodies do not pluralize seconds or cap",
+      "description": "creationWaitBody renders 'Wait {seconds} seconds' and fairUseCapBody renders '{cap} trackers'. If either value is 1, the English copy will be grammatically wrong.",
+      "suggestion": "Use plural forms for seconds and cap, or document/enforce that these values are always greater than 1."
+    },
+    {
+      "file": "flutter-app/lib/src/ui/create_tracker_sheet.dart",
+      "line": 125,
+      "severity": "WARNING",
+      "category": "correctness",
+      "title": "Payments-off 402 can surface credit-specific copy",
+      "description": "When ENABLE_PAYMENTS=false, a legacy 402 falls back to errorMessage(e). If the backend detail says 'Not enough credits' or similar, a free build may show credit-specific language even though the product promises free tracking.",
+      "suggestion": "When !_paymentsEnabled, render a neutral localized error instead of the server's legacy credit detail, or explicitly map legacy 402 to a non-credit error in free builds."
+    },
+    {
+      "file": "flutter-app/lib/src/data/config.dart",
+      "line": 45,
+      "severity": "WARNING",
+      "category": "architecture",
+      "title": "paymentsEnabled defaults to true, making the release posture build-command dependent",
+      "description": "The product guarantee that a store build has no payment surface depends on the release build command passing --dart-define=ENABLE_PAYMENTS=false. CI pins this, but a local or manual release build without the define would ship the payment UI.",
+      "suggestion": "Keep the current default if intentional, but add a release build script or wrapper that defaults ENABLE_PAYMENTS=false, and make the CI pin harder to bypass."
+    },
+    {
+      "file": "flutter-app/test/dashboard_credits_test.dart",
+      "line": 48,
+      "severity": "WARNING",
+      "category": "testing",
+      "title": "Payments-off dashboard credit test may leave usageLimitsProvider unoverridden",
+      "description": "In the ENABLE_PAYMENTS=false posture, DashboardPage watches usageLimitsProvider. If the existing _wrap helper only overrides creditBalanceProvider, the test may hit the default UsageLimitsRepository/network path during the payments-off run, making it less deterministic.",
+      "suggestion": "Override usageLimitsProvider in dashboard_credits_test.dart for the payments-off posture, or add a shared test wrapper that overrides all providers used by the Profile tab."
+    },
+    {
+      "file": "flutter-app/lib/src/data/repositories/usage_limits_repository.dart",
+      "line": 35,
+      "severity": "INFO",
+      "category": "architecture",
+      "title": "Live transport error discards the original DioException",
+      "description": "The repository throws a new DioException with a generic message, losing the original status/body. This matches existing repository conventions, but it makes debugging live /usage/limits failures harder.",
+      "suggestion": "If the codebase allows, preserve the original exception as cause or log the original status before replacing it."
+    },
+    {
+      "file": "flutter-app/lib/src/core/format/error_message.dart",
+      "line": 27,
+      "severity": "INFO",
+      "category": "architecture",
+      "title": "Core error formatter depends on repository exception hierarchy",
+      "description": "error_message.dart now imports tracked_items_repository.dart to understand TrackerCreationRefusal. This couples a core formatting utility to a data-layer repository module.",
+      "suggestion": "Consider moving TrackerCreationRefusal and its subclasses into a shared errors module, or keep the formatter agnostic by exposing a narrower interface."
+    },
+    {
+      "file": "flutter-app/test/config_test.dart",
+      "line": 150,
+      "severity": "INFO",
+      "category": "testing",
+      "title": "Workflow string-match test is brittle",
+      "description": "The test reads .github/workflows/ci.yml and asserts exact substrings. It is a reasonable precedent for compile-time flags, but small CI formatting changes can fail the test without any product regression.",
+      "suggestion": "Keep if accepted, but consider extracting build arguments into a shared script/config file that both CI and tests can read structurally."
+    },
+    {
+      "file": "flutter-app/lib/l10n/app_ar.arb",
+      "line": 301,
+      "severity": "WARNING",
+      "category": "documentation",
+      "title": "PR description contradicts the diff regarding Arabic keys",
+      "description": "The PR description says the Arabic keys are not in this PR and that owner input is still needed, but the diff adds all fair-use Arabic keys and generated localizations.",
+      "suggestion": "Update the PR description to reflect that Arabic copy is included but generated/unreviewed, and state the remaining native-review requirement."
+    }
+  ],
+  "missed_tests": [
+    "UsageLimitsRepository tests: demo fallback, live-mode failure, non-200 response, non-Map response body, and preserved error behavior.",
+    "create_tracker_sheet tests for payments-off 402 copy: assert the user-facing line is neutral and not credit-specific.",
+    "tracked_items_repository tests for HTTP 429 with malformed retry_after_seconds plus a valid Retry-After seconds header.",
+    "tracked_items_repository tests for HTTP 409 with a structured detail object whose code is unknown; it must not become FairUseCapException.",
+    "dashboard tests asserting payments-on builds do not watch/request usageLimitsProvider and payments-off builds do not watch/request creditBalanceProvider.",
+    "Arabic pluralization tests for fairUseChip and fairUseUncapped across 0, 1, 2, 3, and large counts.",
+    "RateLimitedException tests for negative or zero retryAfterSeconds to confirm the UI chooses the no-count copy."
+  ],
+  "positive_notes": [
+    "The compile-time ENABLE_PAYMENTS flag is enforced in both CI test posture and release build command.",
+    "Fair-use refusals are mapped from machine-readable codes rather than human-facing text.",
+    "Malformed numeric payloads degrade safely instead of throwing cast errors.",
+    "Tests pin important edge cases: string 409 is not treated as cap, malformed cap numbers stay unknown, and payments-off 402 is not a silent no-op.",
+    "Provider invalidation is updated for both credit and usage state, reducing stale Profile data."
+  ]
+}
+
+
+Review completed in 627.0s
+Decision: REQUEST_CHANGES (confidence: 0.78)
+Findings: 9

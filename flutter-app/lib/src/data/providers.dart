@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'models/chat_conversation.dart';
 import 'models/credit_balance_model.dart';
+import 'models/usage_limits_model.dart';
 import 'models/deal_model.dart';
 import 'models/platform_stats_model.dart';
 import 'models/price_point_model.dart';
@@ -10,6 +11,7 @@ import 'repositories/affiliate_repository.dart';
 import 'repositories/alert_events_repository.dart';
 import 'repositories/auth_repository.dart';
 import 'repositories/credits_repository.dart';
+import 'repositories/usage_limits_repository.dart';
 import 'repositories/chatbot_repository.dart';
 import 'repositories/deals_repository.dart';
 import 'repositories/price_history_repository.dart';
@@ -108,8 +110,24 @@ final alertFeedProvider = FutureProvider<AlertFeed>((ref) {
 /// One-shot [FutureProvider]: callers must `ref.invalidate(creditBalanceProvider)`
 /// after any credit-consuming action (e.g. successful tracker creation) so
 /// the Profile tab reflects the new balance without an app restart.
+/// Only meaningful while the payment surface exists in the build
+/// (`AppConfig.paymentsEnabled`); the free product shows usage instead.
 final creditBalanceProvider = FutureProvider<CreditBalance>((ref) {
   return ref.read(creditsRepositoryProvider).getBalance();
+});
+
+final usageLimitsRepositoryProvider = Provider<UsageLimitsRepository>((ref) {
+  return UsageLimitsRepository();
+});
+
+/// The user's fair-use usage of the tracker feature (`GET /usage/limits`).
+///
+/// One-shot [FutureProvider]: callers must `ref.invalidate(usageLimitsProvider)`
+/// after a tracker is created or removed so the Profile chip shows the new
+/// count. This is the account state a free build shows in place of a credit
+/// balance.
+final usageLimitsProvider = FutureProvider<UsageLimits>((ref) {
+  return ref.read(usageLimitsRepositoryProvider).getUsageLimits();
 });
 
 /// Price history for a single SKU (keyed by [sku]).

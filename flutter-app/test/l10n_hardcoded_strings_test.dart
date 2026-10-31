@@ -196,6 +196,9 @@ class _Fixture {
       // string a widget renders.
       'lib/src/data/repositories/credits_repository.dart',
       'lib/src/data/repositories/payment_repository.dart',
+      // Same shape as the two above: the fair-use balance of MS1's `GET /usage/limits`
+      // transport error, never rendered to the user.
+      'lib/src/data/repositories/usage_limits_repository.dart',
     };
 
     final scanned = scan('lib');

@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -145,5 +147,27 @@ void main() {
         await expectLater(AppConfig.initialize(), completes);
       },
     );
+
+    test('the release build is compiled without the payment surface', () {
+      // `AppConfig.paymentsEnabled` is a compile-time constant, so no runtime
+      // test can prove which posture a store artifact uses - the artifact's
+      // own build command can. Read the workflow and require the define there
+      // (same file-reading precedent as `l10n_coverage_test.dart`).
+      final workflow = File('../.github/workflows/ci.yml').readAsStringSync();
+
+      expect(
+        workflow,
+        contains('--dart-define=ENABLE_PAYMENTS=false'),
+        reason:
+            'a release AAB built without the define would ship the credit-'
+            'packages screen the free product promises not to have',
+      );
+      // The suite must also RUN under that define, so the off posture is
+      // compiled and exercised rather than merely assumed.
+      expect(
+        workflow,
+        contains('flutter test --dart-define=ENABLE_PAYMENTS=false'),
+      );
+    });
   });
 }

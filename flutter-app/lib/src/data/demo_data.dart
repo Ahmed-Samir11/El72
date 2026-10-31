@@ -1,4 +1,5 @@
 import 'models/credit_balance_model.dart';
+import 'models/usage_limits_model.dart';
 import 'models/deal_model.dart';
 import 'models/platform_stats_model.dart';
 import 'models/price_point_model.dart';
@@ -12,6 +13,15 @@ class DemoData {
   static const CreditBalance creditBalance = CreditBalance(
     balance: 3,
     tier: 'free',
+  );
+
+  /// Demo fair-use usage: one tracker running, well under the ceiling, no
+  /// pending creation window. Matches [DemoData.trackedItems] so the demo
+  /// Profile chip and the demo tracker list tell the same story.
+  static const UsageLimits usageLimits = UsageLimits(
+    activeTrackers: 1,
+    cap: 100,
+    enforcement: 'fair_use',
   );
 
   static const List<TrackedItem> trackedItems = [

@@ -533,4 +533,64 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get alertNoLink => 'No merchant link for this alert.';
+
+  @override
+  String get fairUseTitle => 'Your trackers';
+
+  @override
+  String fairUseChip(int count, int cap) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Tracking $count of up to $cap',
+      one: 'Tracking 1 of up to $cap',
+      zero: 'No trackers yet. Up to $cap at once',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String fairUseUncapped(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Tracking $count trackers, no limit in this build',
+      one: 'Tracking 1 tracker, no limit in this build',
+      zero: 'No trackers yet',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String fairUseCapBody(int cap) {
+    String _temp0 = intl.Intl.pluralLogic(
+      cap,
+      locale: localeName,
+      other:
+          'You already have $cap trackers running, which is the maximum. Delete one to make room, or tap Not now.',
+      one:
+          'You already have 1 tracker running, which is the maximum. Delete it to make room, or tap Not now.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get creationWaitTitle => 'One tracker at a time';
+
+  @override
+  String creationWaitBody(int seconds) {
+    String _temp0 = intl.Intl.pluralLogic(
+      seconds,
+      locale: localeName,
+      other:
+          'You just added a tracker. Wait $seconds seconds before adding the next one.',
+      one:
+          'You just added a tracker. Wait 1 second before adding the next one.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get creationWaitBodyNoCount =>
+      'One tracker at a time. Tap Start Tracking again when you are ready.';
 }

@@ -140,9 +140,9 @@ instead of "credits remaining", and the per-user tracker count P4's
 engagement rollups read.
 
 What this supersedes in this file: item 1 "The Token/Credit System" and item
-6 "Tiered Pricing Value-Caps", plus the "Revenue model: Freemium — credit-based
-tracking" line in .agents/instructions.md (that file is maintainer-edited —
-tracked as a follow-up, not silently rewritten here). The report's own risk
+6 "Tiered Pricing Value-Caps", plus the old "Revenue model: Freemium — credit-based
+tracking" line in .agents/instructions.md (rewritten to the fair-use model on
+the owner's H7 decision, 2026-10-31). The report's own risk
 column names why: "payment friction suppresses adoption", and its
 recommendation is "do not turn limits into artificial payment friction during
 the validation year".
@@ -157,10 +157,12 @@ re-enable, not a rebuild. The free-tracker economics remain an ASSUMPTION,
 not a FACT: P4 measures trackers/user and clicks/user from launch, and if
 affiliate revenue per MAU is too low, the flagged payment rails return.
 
-Owner decisions still open (do not invent these in code):
-- H6 — confirm the launch economic model and the cap value for the store release.
-- H7 — rewrite .agents/instructions.md's freemium line in a maintainer session.
-- Arabic copy for the new fair-use UI strings (PR B).
+Owner decisions (resolved 2026-10-31):
+- H6 — confirmed: the store release ships free tracking with fair-use caps, cap = 100
+  active trackers.
+- H7 — done: .agents/instructions.md's revenue-model line now describes this model.
+- Arabic copy for the fair-use UI strings (PR B) — written under the owner's #51
+  authorization; generated, not yet reviewed by a native speaker.
 
 
 

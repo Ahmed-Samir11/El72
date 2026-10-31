@@ -41,6 +41,24 @@ class AppConfig {
     defaultValue: _chatbotEmulatorDefaultUrl,
   );
 
+  /// Whether the payment/credit surface exists in this build at all.
+  ///
+  /// The shipped product is **free to track**: Paymob is merged but dark — the
+  /// backend leaves the rails in place and simply does not mount the payment
+  /// routes unless it is started with `PAYMENTS_ENABLED=true`. A release must
+  /// be built with `--dart-define=ENABLE_PAYMENTS=false`, which keeps the
+  /// credit-packages screen, the payment flow and the "Upgrade plan" route out
+  /// of the app. Dev builds default to true so the still-live rails stay testable
+  /// against a backend that does mount them.
+  ///
+  /// A build whose flag disagrees with the server is caught by the live suite
+  /// (`tests/test_mobile_e2e.py` asserts a fair-use backend serves no payment
+  /// route), not by a console warning.
+  static const bool paymentsEnabled = bool.fromEnvironment(
+    'ENABLE_PAYMENTS',
+    defaultValue: true,
+  );
+
   static const String _demoModeKey = 'demo_mode';
   static late SharedPreferences _preferences;
   static bool demoMode = false;

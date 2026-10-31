@@ -100,6 +100,14 @@ to v1 for no measured gain.
    `flutter-ci`/`publish-release` jobs in `.github/workflows/ci.yml`) contains no
    payment UI. Dev builds pass `--dart-define=ENABLE_PAYMENTS=true` to keep the
    screens testable. Nothing is deleted, so P3 is one revert away from being undone.
+
+   **Implemented the other way round, deliberately:** the code is
+   `bool.fromEnvironment('ENABLE_PAYMENTS', defaultValue: true)`. Defaulting to
+   `false` would break every existing dev widget test and the ~40 payment tests
+   unless each local command carries the define, which is how a gate quietly rots.
+   The release guarantee is enforced where it actually counts - the build
+   command in `.github/workflows/ci.yml` - and CI now runs the suite in **both**
+   postures, so a regression in either direction fails the build.
 2. **Profile tab**: replace `creditsRemaining` + `Manage → SubscriptionScreen`
    (`dashboard_page.dart:398-405`) with the fair-use state from `/usage/limits`
    ("Tracking {n} of up to {cap} products at once") and no route to a purchase screen
@@ -341,6 +349,86 @@ Round 2 came back **APPROVE** (5 WARNING, 4 INFO). Handled:
 | Two queries for the Profile chip numbers | Fixed: `usage_payload` reads `COUNT(*)` and `MAX(created_at)` in one query; the unused `last_created_at` helper is gone rather than left as dead code. |
 | Env parsed per call; deprecated `on_event` startup | Kept as-is, deliberately: per-call parsing is what lets a test (and a config reload) change the mode without re-importing, and `on_event` is the pattern this module already uses everywhere — changing it here would be an unrelated refactor. |
 
+
+### MS2/MS3 (PR B) - what landed, and where it stops
+
+Branch `feat/free-tracker-fair-use-limits-client`, stacked on PR #50 (merge after it) ∞ **PR #52**: https://github.com/Ahmed-Samir11/El72/pull/52
+
+| File | Change |
+|---|---|---|
+| `lib/src/data/config.dart` | `AppConfig.paymentsEnabled` - compile-time `ENABLE_PAYMENTS` (default true, **false** in a release build) |
+| `models/usage_limits_model.dart`, `repositories/usage_limits_repository.dart`, `providers.dart` | the `GET /usage/limits` transport and `usageLimitsProvider`, parsed defensively (a malformed number degrades, never throws) |
+| `repositories/tracked_items_repository.dart` | `FairUseCapException` / `RateLimitedException`, mapped off `detail.code` (never the human text), countdown from the body then the `Retry-After` header |
+| `create_tracker_sheet.dart`, `dashboard_page.dart` | the "Upgrade plan" route and the Profile *Manage* entry are compiled out under the flag; a 402 in an off build falls back to the generic error line - never a silent no-op |
+| `.github/workflows/ci.yml` | the release AAB is built with `--dart-define=ENABLE_PAYMENTS=false`, and the suite runs **twice**, once under that define |
+| tests | +14: cap/rate mapping (malformed numbers, header fallback, "a 409 with a string detail is NOT the cap"), the `UsageLimits` posture matrix, both flag postures, the flag being compile-time |
+
+Gates: `flutter test` - 300 passed; `flutter test --dart-define=ENABLE_PAYMENTS=false` - 299 passed, 1 skipped (the upgrade-route case, asserted from the opposite side); `flutter analyze` clean; `dart format` clean.
+
+**Still blocked on WS4.** The cap/rate dialogs, the Profile chip and the store-listing rows need keys that have no Arabic counterpart anywhere (`fairUseTitle`, `fairUseChip`, `fairUseUncapped`, `fairUseCapBody`, `creationWaitTitle`, `creationWaitBody` - English source in the table above). Until both ARB files gain them in one commit, `l10n_coverage_test` and `l10n_hardcoded_strings_test` keep the refusal copy on the generic error line: honest, but not the dialogs MS2 asks for.
+
+Why they were not written here, concretely: this session's model cannot emit Arabic script. Three attempts to add the values to `app_ar.arb` came back Latin-transliterated (`metb'im` for `metb'im`), and the corrupted keys were reverted rather than shipped. `app_ar.arb` on `main` is intact human Arabic, so the repo pipeline is not at fault - only generation from this model. Unblock: the maintainer pastes the six values, or the same work runs on an Arabic-competent model.
+
+### Review round 2 (HGM on PR #52) - verdicts
+
+| Finding | Verdict |
+|---|---|
+| **[WARNING]** a payments-off 402 is not pinned to neutral user-facing copy | Real. It was leaking internals: the fallback printed `InsufficientCreditsException(Not enough credits)`. All three refusals now share a `TrackerCreationRefusal` base carrying the server's own `detail`, and `errorMessage()` renders that (already translated by the backend) or the neutral `Something went wrong.` - tests pin that no class name can reach a screen. |
+| **[WARNING]** malformed fair-use cap values degrade to zero | Real. `activeTrackers`/`cap` are now `int?`: unknown stays unknown, because a dialog reading "0 of 0" out of a hand-edited proxy response is worse than declining to state a number. |
+| **[WARNING]** `paymentsEnabled=true` by default makes the release guarantee build-command dependent | Kept deliberately. A compile-time flag has no runtime test surface; the artifact's build command *is* the contract, so CI pins it (release AAB + a whole suite run under the define) and `config_test` reads the workflow to fail if the pin is dropped. Flipping the default instead would have red-flagged every dev command. |
+| **[WARNING]** live `GET /usage/limits` failure discards the original response | Kept: `credits_repository.dart` and `payment_repository.dart` do exactly this; changing the transport convention is outside this PR. |
+| **[WARNING]** creation throttle is process-local; cap check is not atomic | MS1's recorded trade-offs (Redis counter + window as the follow-up), not client issues. |
+| **[INFO]** `usageLimitsProvider` is wired but not consumed by the UI | True by construction: the chip is the ARB-blocked copy. Wiring it now means MS2 lands as one UI edit rather than a data-layer change plus a UI change. |
+| **[INFO]** the posture test string-matches the workflow file | Kept: same file-reading precedent as `l10n_coverage_test.dart`, and for a compile-time flag there is nothing else to assert. |
+| **[INFO]** deprecated FastAPI startup pattern extended | Documented under MS1 §9 (repo-wide convention, unrelated refactor). |
+
+### Review round 1 (HGM on PR #52) - verdicts
+
+
+| Finding | Verdict |
+|---|---|
+| **[CRITICAL]** the release-posture config test fails under `ENABLE_PAYMENTS=false` | Real. A test cannot observe whether a define was *absent* rather than false, so asserting `isTrue` broke the off half of CI. Replaced with a test that reads `.github/workflows/ci.yml` and requires both the release define and the off-posture test run - the artifact's own build command is the thing that can be pinned. |
+| **[WARNING]** payments-off build still exposed credit-balance UI | Real. The whole credit tile (heading, balance line, `Manage`) is now absent under the flag, asserted in both postures, and `creditBalanceProvider` is not watched at all - a release build never requests a route the backend does not mount. |
+| **[WARNING]** the generic error path can surface machine-facing copy for fair-use refusals | Real for the internals half. The cap refusal now shows the already-bilingual `reachedLimitTitle`; the rate refusal renders the ordinary transport line from the retained `cause`, so no exception class name can reach a screen. The count-and-countdown dialog itself stays blocked on the ARB keys. |
+| **[WARNING]** `Retry-After` as an HTTP date degrades to a zero wait | Documented and pinned by a test: 0 means "no usable countdown", and the dialog must drop the number then - a separate copy row, added below. |
+| **[WARNING]** the plan said the flag defaults to `false` | Doc drift fixed in WS2 above: the shipped code defaults to `true` and CI pins the release posture at the build command. |
+| **[WARNING]** client and backend defaults differ | Kept deliberately: the server's default is the shipped posture (`PAYMENTS_ENABLED=false`), the client's default is the dev posture. Both directions are gated in CI; recorded in section 11. |
+| **[INFO]** use `const` for the local flag | Done. |
+| **[INFO]** live-mode `GET /usage/limits` failure discards the original response | Kept: `credits_repository.dart` and `payment_repository.dart` do exactly this; changing the transport convention is outside this PR. |
+| **[INFO]** the PR contains unrelated plan documents | Real, and my first check was wrong: `git add plans` swept the untracked P4/P5 drafts into the client commit. Removed from the branch (`git rm --cached`, files kept on disk); the branch diff now carries only `plans/p3-...md`. Lesson: stage paths, not directories. |
+
+### WS4 unblocker: the exact copy PR B needs (owner to translate)
+
+The model running this session cannot emit Arabic script — attempted three times, every
+attempt came back Latin-transliterated (`metb'im` for `metb'im`). Verified empirically,
+not assumed: `app_ar.arb` itself is intact, human-authored Arabic, so the pipeline preserves
+Arabic fine; only this model's generation fails. Until an Arabic-competent model is used
+(`/model`) or the owner pastes the values in, the two PRs below are the hard blocker.
+
+Keys to add, with the English source and where it renders:
+
+| Key | Renders in | EN |
+|---|---|---|
+| `fairUseTitle` | Profile card heading (free build) | "Your trackers" |
+| `fairUseChip(count, cap)` | Profile chip, from `GET /usage/limits` | "{count, plural, =0{No trackers yet. Up to {cap} at once} one{Tracking 1 of up to {cap}} other{Tracking {count} of up to {cap}}}" |
+| `fairUseUncapped(count)` | Profile chip when the server reports no cap (`CREDITS_ENFORCEMENT=off`) | "{count, plural, =0{No trackers yet} one{Tracking 1 tracker, no limit in this build} other{Tracking {count} trackers, no limit in this build}}" |
+| `fairUseCapBody(cap)` | 409 cap dialog body | "You already have {cap} trackers running, which is the maximum. Close one to make room, or tap Not now." |
+| `creationWaitTitle` | 429 dialog title | "One tracker at a time" |
+| `creationWaitBody(seconds)` | 429 dialog body | "You just added a tracker. Wait {seconds} seconds before adding the next one." |
+| `creationWaitBodyNoCount()` | 429 dialog when `Retry-After` is an HTTP date (`retryAfterSeconds == 0`) | "One tracker at a time. Tap Start Tracking again when you are ready." |
+
+
+The product's own Arabic register for these strings is already on disk: `app_ar.arb`
+(UI nouns: `متba` tracker / `متban` trackers, `الرصيد` credit, `خط` plan) and `short_ar.txt`
+at the repo root (`إلحق it tracks products you care about on Amazon Egypt, Noon and Jumia`),
+which uses the verb form `تtracks`. Whichever the owner chooses, the six values above should
+reuse it rather than invent a third term.
+| `creationWaitBodyNoCount(seconds omitted)` | 429 dialog when `Retry-After` is an HTTP date the client cannot resolve (`retryAfterSeconds == 0`) | "One tracker at a time. Tap Start Tracking again when you are ready." |
+
+Reused, already bilingual, no new translation needed: `reachedLimitTitle` (cap dialog
+title), `close`, `notNow` (dialog buttons), `startTracking`, `navTrackers`.
+
+
 ### Review round 3 (HGM on PR #50) — verdicts
 
 Round 3 returned REQUEST_CHANGES with 5 WARNING / 4 INFO. Three were restatements
@@ -402,3 +490,47 @@ REQUEST_CHANGES, 1 CRITICAL / 5 WARNING / 4 INFO, 1299 s.
 | 8 | Any non-cap 409 read as a duplicate | Valid (this pass's code) | Only a plain-text 409 is "already tracking"; a structured 409 with an unknown code falls back to the generic reply. |
 | 9 | `_iso_utc` assumes naive UTC | Accepted | The columns are naive UTC across the schema. |
 | 10 | Deprecated `on_event` | Accepted | Same as the module's existing startup hooks; repo-wide migration is separate. |
+
+### PR B pre-merge pass (owner decisions H6/H7 given, 2026-10-31)
+
+- **Merged the updated #50 branch**, which carries `origin/main`. One conflict,
+  `tracked_items_repository.dart`: #44's `deleteTrackedItem` and this branch's
+  number helpers both kept. #52's test stubs implemented `TrackedItemsRepository`
+  without #44's `deleteTrackedItem`, which would not have compiled after the merge;
+  they now implement it.
+- **WS4 unblocked.** #51 authorizes generated Arabic, and the owner confirmed H6 (free
+  tracking, cap = 100) and asked for H7 now. The seven keys (`fairUseTitle`,
+  `fairUseChip`, `fairUseUncapped`, `fairUseCapBody`, `creationWaitTitle`,
+  `creationWaitBody`, `creationWaitBodyNoCount`) are in both ARB files in one commit.
+  The Arabic follows `creditsRemaining`'s full plural set and the existing
+  "متتبع" vocabulary; it is generated and not natively reviewed.
+- **One copy change against the table above:** the cap body says "Delete one to make
+  room", not "Close one". Delete is the action the app actually offers
+  (swipe-to-delete, #44), and the dialog's way-out button is `navTrackers`, which
+  returns to that list. `close` is used by the wait dialog instead.
+- **The interim behavior is replaced by the MS2 dialogs.** Cap (409): title
+  `reachedLimitTitle`, body `fairUseCapBody(cap)` only when the cap is a number,
+  actions `navTrackers` / `notNow`. Rate (429): `creationWaitTitle`, body
+  `creationWaitBody(ceil(retryAfterSeconds))` or `creationWaitBodyNoCount` when the
+  wait is 0, action `close`. Profile (free build): `fairUseTitle` with
+  `fairUseChip` or `fairUseUncapped` from `/usage/limits`; while loading or after
+  an error the heading stands alone. Deleting a tracker now also refreshes
+  `usageLimitsProvider`.
+- **H7 done:** `.agents/instructions.md`'s revenue-model line describes free tracking
+  bounded by fair use, with the paid rails flagged off; `business_research.md`
+  records H6/H7 as resolved.
+
+### Review round 3 (HGM on local Qwen 3.8 Flash Next, PR #52) — verdicts
+
+REQUEST_CHANGES, 6 WARNING / 3 INFO, 627 s. Addressed together with merging #49.
+
+| # | Finding | Verdict | Action |
+|---|---|---|---|
+| 1, 2 | Seconds and cap are not pluralized (EN "1 seconds", AR "{seconds} ثانية" for every count) | Valid | `creationWaitBody` and `fairUseCapBody` are ICU plurals in both locales: EN `=1`/other; AR one/two/few/many/other ("ثانيتين", "{n} ثوانٍ", "100 متتبع"). The `fairUseChip` zero form ("حتى {cap} متتبع") is already right for cap = 100: a noun after a hundred is singular. |
+| 3 | A payments-off 402 can show the server's credit wording | Valid | The free build shows the neutral "Something went wrong."; the test asserts no "credits" text. |
+| 4 | `ENABLE_PAYMENTS` defaults to true | By design | Recorded in WS2: CI pins the release build command and runs the suite in both postures. |
+| 5 | The credits test may hit the real usage repository when payments are off | Valid | `dashboard_credits_test` pins `usageLimitsProvider`. |
+| 6, 7, 8 | Transport error drops the original Dio error; formatter imports the repository; workflow string match | Accepted | The sibling repositories follow the same conventions; recorded in round 2. |
+| 9 | PR description says the Arabic keys are not included | Valid | PR body updated. |
+
+Merging #49 into this branch had no key conflicts: main's ARB files plus this branch's seven keys, with `trackerCreated` taken from #49 (the copy that no longer promises WhatsApp).

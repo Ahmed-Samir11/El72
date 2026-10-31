@@ -362,5 +362,56 @@
       }
     }
   },
-  "alertNoLink": "No merchant link for this alert."
+  "alertNoLink": "No merchant link for this alert.",
+  "fairUseTitle": "Your trackers",
+  "@fairUseTitle": {
+    "description": "Profile card heading in a free (payments-off) build."
+  },
+  "fairUseChip": "{count, plural, =0{No trackers yet. Up to {cap} at once} =1{Tracking 1 of up to {cap}} other{Tracking {count} of up to {cap}}}",
+  "@fairUseChip": {
+    "description": "Profile card line from GET /usage/limits when a cap applies.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      },
+      "cap": {
+        "type": "int"
+      }
+    }
+  },
+  "fairUseUncapped": "{count, plural, =0{No trackers yet} =1{Tracking 1 tracker, no limit in this build} other{Tracking {count} trackers, no limit in this build}}",
+  "@fairUseUncapped": {
+    "description": "Profile card line when the server reports no cap (CREDITS_ENFORCEMENT=off).",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "fairUseCapBody": "{cap, plural, =1{You already have 1 tracker running, which is the maximum. Delete it to make room, or tap Not now.} other{You already have {cap} trackers running, which is the maximum. Delete one to make room, or tap Not now.}}",
+  "@fairUseCapBody": {
+    "description": "Body of the dialog shown when tracker creation is refused at the fair-use cap (HTTP 409).",
+    "placeholders": {
+      "cap": {
+        "type": "int"
+      }
+    }
+  },
+  "creationWaitTitle": "One tracker at a time",
+  "@creationWaitTitle": {
+    "description": "Title of the dialog shown when trackers are created too fast (HTTP 429)."
+  },
+  "creationWaitBody": "{seconds, plural, =1{You just added a tracker. Wait 1 second before adding the next one.} other{You just added a tracker. Wait {seconds} seconds before adding the next one.}}",
+  "@creationWaitBody": {
+    "description": "Body of the HTTP 429 dialog when the server gave a usable countdown.",
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
+  "creationWaitBodyNoCount": "One tracker at a time. Tap Start Tracking again when you are ready.",
+  "@creationWaitBodyNoCount": {
+    "description": "Body of the HTTP 429 dialog when no usable countdown was given (Retry-After as an HTTP date)."
+  }
 }
