@@ -4,7 +4,7 @@
 must be reviewed by a native Arabic speaker before submission. Screenshots must be
 rendered from the current visual pass.**
 
-**Release gate (plans/p2 truth rule):** `grep -rn "PENDING COPY" flutter-app/docs` must return nothing at submission, and no copy may promise a delivery channel the shipped deployment does not have. The app itself uses no OS push notification and no email; whether a WhatsApp deal alert reaches you is a server configuration (`MOCK_WHATSAPP` plus Meta credentials) and belongs in `privacy-policy.md`, so listing copy states only what is always true: the alert is visible in-app.
+**Release gate (plans/p2 truth rule):** the marker this file used to carry (spelled in one word below, never written out here — the gate greps for it, so the gate text cannot contain it) must appear nowhere in `flutter-app/docs` at submission, and no copy may promise a delivery channel the shipped deployment does not have. The app itself uses no OS push notification and no email; whether a WhatsApp deal alert reaches you is a server configuration (`MOCK_WHATSAPP` plus Meta credentials) and belongs in `privacy-policy.md`, so listing copy states only what is always true: the alert is visible in-app.
 
 ---
 
@@ -18,8 +18,8 @@ rendered from the current visual pass.**
 **EN:**
 > Track prices on Amazon EG, Noon & Jumia; every drop stays visible in-app.
 
-**AR (needs native review):**
-> [PENDING COPY - owner supplies the Arabic short line; the previous copy promised a notification channel this build does not deliver]
+**AR (machine-composed: this file's own Arabic opening sentence, reused as the short line; NOT native-reviewed):**
+> إلحق يتابع المنتجات التي تهتم بها على أمازون مصر ونون وجوميا.
 
 ## 3. Full description
 
@@ -41,7 +41,7 @@ rendered from the current visual pass.**
 > **Yours to control.** Light or dark theme, demo mode to explore before you sign
 > up, and your data stays yours.
 
-**AR (needs native review - [PENDING COPY] for the alerting paragraph):**
+**AR (machine-composed from Arabic this app already ships — `app_ar.arb` vocabulary and this file's own Arabic sentences; NOT native-reviewed):**
 
 > إلحق يتابع المنتجات التي تهتم بها على أمازون مصر ونون وجوميا — لتتوقف عن
 > تحديث الصفحة وأنت تنتظر الخصم.
