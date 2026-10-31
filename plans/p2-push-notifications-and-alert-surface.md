@@ -395,3 +395,24 @@ side is the one remaining copy debt, and it is owner-blocked, not engineer-block
 | the nav insert and its positional FAB condition are pinned by nothing | `test/dashboard_alerts_nav_test.dart` (5 cases): destination order is asserted as `[Trackers, Alerts, Deals, Chat, Profile]`; the second slot's label is asserted to be Arabic script in the `ar` locale and not the English word, so a hardcoded label would fail; the `+` tracker FAB exists on index 0 and index 2 and not on index 1; the Alerts slot renders the badge, the price pair and the store label; and a failing read renders `alertsLoadFailed` while `alertsEmpty` stays absent | pinning this in a test rather than a note: the FAB switch is by nav INDEX, and inserting a slot moves Deals from 1 to 2 without any compiler help |
 | a client-chosen `limit` | clamped to the server's 1..200 (`defaultAlertsLimit` / `maxAlertsLimit` mirror `DEFAULT_ALERTS_LIMIT` / `MAX_ALERTS_LIMIT`) | asking for more answers HTTP 422; pinned by `test/alert_events_repository_test.dart` |
 | Dart `\Z` in the id guard, and `String.replaceAll` treated as a regex | `$` in the pattern, an explicit `RegExp` for the `_eg` suffix | two bugs the new tests caught: `\Z` is Python-only, so `markOpened` matched nothing and every mark-open answered false without a request; a String `replaceAll` is a literal replace, so brand labels rendered as "Amazon eg" |
+
+### Pre-merge pass (after #44 landed on main)
+
+- **Merged `origin/main`**; conflicts and their resolution are listed in the
+  merge commit. Migration 0012 now arrives with main's restored comment
+  markers, and `0013_alert_events.sql` still applies after 0011/0012.
+- **CI's red Flutter job was formatting only**: `dart format` on the seven
+  alert-surface files flagged by `--set-exit-if-changed`.
+- **Round-4 findings re-checked against the current head.** Already closed in
+  code: #1 (stamps outside `_bounded_event_clock` fall back to processing
+  time), #3 (the open is an atomic `UPDATE ... WHERE opened_at IS NULL` plus a
+  re-read), #9 (`_rate_limit()` rejects malformed overrides). #6's English no
+  longer promises WhatsApp.
+- **The Arabic for this surface was not Arabic sentences.** Several values
+  were words strung together without grammar ("لا السعر تنبيهات." for "No
+  price alerts yet.", "{days} يوم" for "{days} days ago", and a
+  `trackerCreated` twin that did not say what the English says). Rewritten for
+  `trackerCreated`, `navAlerts`, `alertsTabTitle`, `alertsTabHint`,
+  `alertsEmpty`, `alertsLoadFailed`, `alertWhenDaysAgo` and `alertNoLink`, in
+  the app's existing register. This copy is generated (owner-approved, #51)
+  and has not been reviewed by a native speaker.

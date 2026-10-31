@@ -143,7 +143,8 @@ class AppLocalizationsAr extends AppLocalizations {
   String get targetPriceHint => 'السعر المستهدف (اختياري)';
 
   @override
-  String get trackerCreated => '✅ تم إنشاء المتتبع!\nالسعر تنبيهات اليوم.';
+  String get trackerCreated =>
+      '✅ تم إنشاء المتتبع! ستظهر تنبيهات أسعار هذا المنتج في تبويب التنبيهات.';
 
   @override
   String get startTracking => 'ابدأ التتبع';
@@ -483,20 +484,21 @@ class AppLocalizationsAr extends AppLocalizations {
   String get noMessagesYet => 'لا توجد رسائل بعد. ابدأ محادثة.';
 
   @override
-  String get navAlerts => 'تنبيهات';
+  String get navAlerts => 'التنبيهات';
 
   @override
-  String get alertsTabTitle => 'تنبيهات';
+  String get alertsTabTitle => 'التنبيهات';
 
   @override
-  String get alertsTabHint => 'السعر تنبيهات.\nاضغط فتح المنتج.';
+  String get alertsTabHint =>
+      'تنبيهات الأسعار لمنتجاتك. اضغط على أي تنبيه لفتحه في المتجر.';
 
   @override
-  String get alertsEmpty => 'لا السعر تنبيهات.';
+  String get alertsEmpty => 'لا توجد تنبيهات أسعار بعد.';
 
   @override
   String alertsLoadFailed(String error) {
-    return 'فشل في تحميل تنبيهات.\n$error';
+    return 'تعذّر تحميل التنبيهات.\n$error';
   }
 
   @override
@@ -524,9 +526,9 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String alertWhenDaysAgo(String days) {
-    return '$days يوم';
+    return 'منذ $days يوم';
   }
 
   @override
-  String get alertNoLink => 'لا رابط تنبيهات.';
+  String get alertNoLink => 'لا يوجد رابط متجر لهذا التنبيه.';
 }

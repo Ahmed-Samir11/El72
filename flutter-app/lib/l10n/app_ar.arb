@@ -66,7 +66,7 @@
   "createPriceTracker": "إنشاء متتبع أسعار",
   "productUrlHint": "رابط المنتج (أي متجر مدعوم)",
   "targetPriceHint": "السعر المستهدف (اختياري)",
-  "trackerCreated": "✅ تم إنشاء المتتبع!\nالسعر تنبيهات اليوم.",
+  "trackerCreated": "✅ تم إنشاء المتتبع! ستظهر تنبيهات أسعار هذا المنتج في تبويب التنبيهات.",
   "startTracking": "ابدأ التتبع",
   "errorPrefix": "خطأ: {error}",
   "@errorPrefix": {
@@ -309,17 +309,17 @@
   "@noMessagesYet": {
     "description": "نص يظهر عندما لا توجد رسائل بعد."
   },
-  "navAlerts": "تنبيهات",
-  "alertsTabTitle": "تنبيهات",
-  "alertsTabHint": "السعر تنبيهات.\nاضغط فتح المنتج.",
-  "alertsEmpty": "لا السعر تنبيهات.",
-  "alertsLoadFailed": "فشل في تحميل تنبيهات.\n{error}",
+  "navAlerts": "التنبيهات",
+  "alertsTabTitle": "التنبيهات",
+  "alertsTabHint": "تنبيهات الأسعار لمنتجاتك. اضغط على أي تنبيه لفتحه في المتجر.",
+  "alertsEmpty": "لا توجد تنبيهات أسعار بعد.",
+  "alertsLoadFailed": "تعذّر تحميل التنبيهات.\n{error}",
   "alertsUnopenedBadge": "{count} تنبيهات نشطة",
   "alertPreviousPrice": "السعر السابق: {price}",
   "alertCurrentPrice": "السعر الحالي: {price}",
   "alertDiscountLine": "الخصم: {percent}%",
   "alertWhenToday": "اليوم",
-  "alertWhenDaysAgo": "{days} يوم",
+  "alertWhenDaysAgo": "منذ {days} يوم",
   "@alertsLoadFailed": {
     "placeholders": {
       "error": {
@@ -362,5 +362,5 @@
       }
     }
   },
-  "alertNoLink": "لا رابط تنبيهات."
+  "alertNoLink": "لا يوجد رابط متجر لهذا التنبيه."
 }
