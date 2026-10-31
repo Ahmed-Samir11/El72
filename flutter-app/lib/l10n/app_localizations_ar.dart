@@ -143,8 +143,7 @@ class AppLocalizationsAr extends AppLocalizations {
   String get targetPriceHint => 'السعر المستهدف (اختياري)';
 
   @override
-  String get trackerCreated =>
-      '✅ تم إنشاء المتتبع! ستصلك رسالة واتساب عند العثور على صفقة.';
+  String get trackerCreated => '✅ تم إنشاء المتتبع!\nالسعر تنبيهات اليوم.';
 
   @override
   String get startTracking => 'ابدأ التتبع';
@@ -462,4 +461,49 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get noMessagesYet => 'لا توجد رسائل بعد. ابدأ محادثة.';
+
+  @override
+  String get navAlerts => 'تنبيهات';
+
+  @override
+  String get alertsTabTitle => 'تنبيهات';
+
+  @override
+  String get alertsTabHint => 'السعر تنبيهات.\nاضغط فتح المنتج.';
+
+  @override
+  String get alertsEmpty => 'لا السعر تنبيهات.';
+
+  @override
+  String alertsLoadFailed(String error) {
+    return 'فشل في تحميل تنبيهات.\n$error';
+  }
+
+  @override
+  String alertsUnopenedBadge(String count) {
+    return '$count تنبيهات نشطة';
+  }
+
+  @override
+  String alertPreviousPrice(String price) {
+    return 'السعر السابق $price';
+  }
+
+  @override
+  String alertCurrentPrice(String price) {
+    return 'السعر الحالي $price';
+  }
+
+  @override
+  String alertDiscountLine(String percent) {
+    return 'الخصم $percent%';
+  }
+
+  @override
+  String get alertWhenToday => 'اليوم';
+
+  @override
+  String alertWhenDaysAgo(String days) {
+    return '$days يوم';
+  }
 }

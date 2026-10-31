@@ -353,7 +353,7 @@ abstract class AppLocalizations {
   /// No description provided for @trackerCreated.
   ///
   /// In en, this message translates to:
-  /// **'✅ Tracker created! You\'ll get a WhatsApp notification when we find a deal.'**
+  /// **'👄 Tracker created! Price alerts for this product appear in the Alerts tab.'**
   String get trackerCreated;
 
   /// No description provided for @startTracking.
@@ -758,8 +758,7 @@ abstract class AppLocalizations {
   /// **'Target: {price}'**
   String targetLabel(String price);
 
-  /// Secondary action on a tracker card that opens the tracked product page
-  /// at the merchant (the tap is affiliate-attributed; plans/p1).
+  /// Secondary action on a tracker card that opens the tracked product page at the merchant; the tap is affiliate-attributed (plans/p1).
   ///
   /// In en, this message translates to:
   /// **'Open product'**
@@ -902,6 +901,72 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'No messages yet. Start a conversation.'**
   String get noMessagesYet;
+
+  /// No description provided for @navAlerts.
+  ///
+  /// In en, this message translates to:
+  /// **'Alerts'**
+  String get navAlerts;
+
+  /// No description provided for @alertsTabTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Alerts'**
+  String get alertsTabTitle;
+
+  /// No description provided for @alertsTabHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Price alerts for your products. Press one to open it at the store.'**
+  String get alertsTabHint;
+
+  /// No description provided for @alertsEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No price alerts yet.'**
+  String get alertsEmpty;
+
+  /// No description provided for @alertsLoadFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to load alerts.\n{error}'**
+  String alertsLoadFailed(String error);
+
+  /// No description provided for @alertsUnopenedBadge.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} active alerts'**
+  String alertsUnopenedBadge(String count);
+
+  /// No description provided for @alertPreviousPrice.
+  ///
+  /// In en, this message translates to:
+  /// **'Previous price: {price}'**
+  String alertPreviousPrice(String price);
+
+  /// No description provided for @alertCurrentPrice.
+  ///
+  /// In en, this message translates to:
+  /// **'Current price: {price}'**
+  String alertCurrentPrice(String price);
+
+  /// No description provided for @alertDiscountLine.
+  ///
+  /// In en, this message translates to:
+  /// **'Discount: {percent}%'**
+  String alertDiscountLine(String percent);
+
+  /// No description provided for @alertWhenToday.
+  ///
+  /// In en, this message translates to:
+  /// **'Today'**
+  String get alertWhenToday;
+
+  /// No description provided for @alertWhenDaysAgo.
+  ///
+  /// In en, this message translates to:
+  /// **'{days} days ago'**
+  String alertWhenDaysAgo(String days);
 }
 
 class _AppLocalizationsDelegate
