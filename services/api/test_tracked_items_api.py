@@ -280,6 +280,22 @@ def test_toggle_and_delete_tracked_item(client):
     assert api.delete("/tracked-items/999").status_code == 404
 
 
+def test_delete_refuses_another_users_tracker(client):
+    api, session, _ = client
+    other = User(phone="+201000000002", password_hash="x", salt="y", tier="free")
+    session.add(other)
+    session.commit()
+    item = TrackedItem(
+        user_id=other.id, canonical_product_id="someone-elses", is_active=True
+    )
+    session.add(item)
+    session.commit()
+
+    # Same answer as a missing id, so the caller learns nothing about the item.
+    assert api.delete(f"/tracked-items/{item.id}").status_code == 404
+    assert session.query(TrackedItem).filter_by(id=item.id).first() is not None
+
+
 def test_add_store_mapping_success_and_duplicate(client):
     api, session, user = client
     item = TrackedItem(

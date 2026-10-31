@@ -448,3 +448,29 @@ and are fixed:
   row now detects a mounted surface and skips.
 - Also documented: `created_last` covers exactly the same set as
   `active_trackers` — a paused tracker neither counts nor dates the chip.
+
+### Pre-merge pass (after #44 landed on main)
+
+- **Merged `origin/main`.** One conflict, `services/api/conftest.py`: both
+  module docstrings and both env lines kept (`PAYMENTS_ENABLED=true` from this
+  branch, `SECRET_KEY` test value from #44). `mount_routers()` already mounts
+  #46's affiliate router exactly once.
+- **CI's red `Lint and Tests` was a FastAPI version skew, not a gate bug.**
+  `services/api/requirements.txt` pins `fastapi==0.104.1`, but
+  `requirements-test.txt` says `>=0.109.0`, so CI resolves the newest release
+  (0.162). There `app.routes` keeps each `include_router` as one
+  `_IncludedRouter` entry with no `.path`. `test_main.py` now reads mounted paths
+  through `_mounted_paths()`, which also expands `effective_route_contexts()`,
+  and still sees `include_in_schema=False` routes (`/admin/login`), which an
+  OpenAPI-based check would miss. Verified on FastAPI 0.125 and 0.162.
+  Follow-up (not in this PR): make the test pin match the runtime pin, or CI
+  keeps testing a framework production never runs.
+- **The chatbot now speaks this contract.** Its add-to-feed only special-cased
+  402, so a fair-use refusal reached the user as the generic "couldn't add"
+  reply. `_creation_refusal_message()` maps `409 fair_use_cap` (with the counts
+  when both are positive integers, neutral wording otherwise), `429` (the
+  structured `retry_after_seconds`, then a numeric `Retry-After`, then no
+  number at all for an HTTP date), and the plain duplicate `409`. New messages
+  in `services/chatbot/i18n.py` for both locales; the Arabic is generated
+  (owner-approved, #51) and has not been natively reviewed.
+

@@ -383,19 +383,23 @@ engine = create_engine("sqlite:///./test.db")
 **When to use**: any new user-facing string in `flutter-app`, or when a widget
 is found to carry a hardcoded English string.
 
-### Hard rule — Arabic depends on the active model
+### Rule — Arabic copy is generated here, reviewed before it ships
 
-`lib/l10n/app_ar.arb` is written by a native speaker, and
-`test/l10n_coverage_test.dart` fails when an English key has no non-empty
-Arabic twin, when the Arabic is a copy of the English, or when it contains no
-Arabic script. Check the model first: `echo $PI_MODEL`. While it is
-`qwen3.8-flash-next-coder-iq1_m`, **do not author, translate or retype Arabic**
-— that model corrupts Arabic script and invents wrong wording.
+`lib/l10n/app_ar.arb` parity is enforced by `test/l10n_coverage_test.dart`: it
+fails when an English key has no non-empty Arabic twin, when the Arabic value is
+a copy of the English, or when it contains no Arabic script.
 
-- Prefer an existing key already translated in both locales.
-- If a new string is genuinely needed, ask the user for the Arabic value and
-  land both locales in the same commit; never commit English alone.
-- Never transcribe existing Arabic from recall. Read it back as escapes and
+The owner has authorized this agent to write Arabic UI strings directly (the
+previous rule tied authorship to a specific active model). What stays required:
+
+- Prefer an existing key already present in both locales over inventing a new
+  one — duplicate copy is a maintenance cost, not a localization win.
+- Land `app_en.arb` and `app_ar.arb` in the SAME commit with identical
+  placeholder names; never commit English alone.
+- Treat generated Arabic as unreviewed: any doc that already carries a native-
+  review DRAFT banner (`docs/play-store/*`) keeps it, and nothing may call the
+  copy reviewed or translated on the strength of being generated.
+- When editing an existing Arabic value, read the current one back as escapes and
   copy those, e.g.
 
 ```bash

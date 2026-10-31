@@ -20,6 +20,10 @@ silently stop the legacy payment tests from running; the release posture —
 no Paymob route at all — is asserted separately in ``test_main.py`` by calling
 ``mount_routers(..., payment_surface=False)``, an explicit decision rather than
 an inherited environment.
+
+SECRET_KEY has no default in the service itself (a hard-coded signing key would
+let anyone forge tokens), so the suite supplies a test-only value before any
+API module is imported.
 """
 
 import os
@@ -27,6 +31,7 @@ import os
 import pytest
 
 os.environ["PAYMENTS_ENABLED"] = "true"
+os.environ.setdefault("SECRET_KEY", "test-secret-key-not-used-in-production")
 
 
 @pytest.fixture(autouse=True)

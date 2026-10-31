@@ -21,8 +21,25 @@ MESSAGES = {
         "insufficient_credits": (
             "Insufficient credits: {detail}. Upgrade your plan " "to continue."
         ),
+        "fair_use_cap": (
+            "You're tracking {active} of {cap} products, the most one account "
+            "can track. Remove one from your feed to add this one."
+        ),
+        "fair_use_cap_plain": (
+            "You've reached the most products one account can track. Remove one "
+            "from your feed to add this one."
+        ),
+        "creation_rate_limited": (
+            "You're adding products a little fast. Try again in {seconds} seconds."
+        ),
+        "creation_rate_limited_plain": (
+            "You're adding products a little fast. Try again in a moment."
+        ),
+        "already_tracking": "You're already tracking '{title}'.",
         "empty_query": "Please enter a product to search for.",
         "price_filter": " under {max_price:g} EGP",
+        "price_min": " over {min_price:g} EGP",
+        "price_range": " between {min_price:g} and {max_price:g} EGP",
     },
     "ar": {
         "no_results": 'مش لاقي منتجات لـ "{query}"{price_filter}. جرب كلمات تانية.',
@@ -31,8 +48,22 @@ MESSAGES = {
         "no_search_results": "مفيش نتائج بحث لإضافتها.",
         "add_failed": "معلش، مقدرتش أضيف المنتج ده دلوقتي. جرب تاني بعدين.",
         "insufficient_credits": "رصيدك مش كفاية: {detail}. ممكن تطور باقتك.",
+        "fair_use_cap": (
+            "انت بتتابع {active} من {cap} منتج، ودي أقصى حاجة للحساب. "
+            "شيل منتج من المتابعة عشان تضيف ده."
+        ),
+        "fair_use_cap_plain": (
+            "وصلت لأقصى عدد منتجات تقدر تتابعه. شيل منتج من المتابعة عشان تضيف ده."
+        ),
+        "creation_rate_limited": (
+            "بتضيف منتجات بسرعة شوية. جرب تاني بعد {seconds} ثانية."
+        ),
+        "creation_rate_limited_plain": "بتضيف منتجات بسرعة شوية. جرب تاني كمان شوية.",
+        "already_tracking": 'انت بتتابع "{title}" بالفعل.',
         "empty_query": "اكتب اسم المنتج اللي عايز تدور عليه.",
         "price_filter": " بأقل من {max_price:g} جنيه",
+        "price_min": " بأكتر من {min_price:g} جنيه",
+        "price_range": " من {min_price:g} لـ {max_price:g} جنيه",
     },
 }
 

@@ -12,3 +12,7 @@ crawl4ai>=0.3.0
 
 # OpenAI client for LM Studio local inference
 openai>=1.0.0
+
+# robots.txt parsing for the shared contract in services/common/robots.py:
+# the chatbot may not crawl paths a store disallows, same as the scraper.
+robotexclusionrulesparser>=1.7.1

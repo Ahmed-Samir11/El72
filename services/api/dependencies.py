@@ -4,16 +4,23 @@ from typing import Optional
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from jose import JWTError, jwt
+from jose import jwt
 from passlib.context import CryptContext
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from services.api.models import User
+from services.common.auth import (
+    ALGORITHM,
+    TokenDecodeError,
+    decode_access_token,
+    require_secret_key,
+    token_subject,
+)
 
-# Configuration
-SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key")
-ALGORITHM = "HS256"
+# Configuration. The signing key has no default on purpose: a predictable
+# key would let anyone forge a token for any phone number.
+SECRET_KEY = require_secret_key()
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./elhaq.db")
@@ -84,13 +91,11 @@ def get_optional_user(
     if credentials is None:
         return None
     try:
-        payload = jwt.decode(
-            credentials.credentials, SECRET_KEY, algorithms=[ALGORITHM]
-        )
-        phone = payload.get("sub")
-    except JWTError:
+        payload = decode_access_token(credentials.credentials, SECRET_KEY)
+    except TokenDecodeError:
         return None
-    if not isinstance(phone, str) or not phone:
+    phone = token_subject(payload)
+    if phone is None:
         return None
     return db.query(User).filter(User.phone == phone, User.status == "ACTIVE").first()
 
@@ -127,12 +132,12 @@ def get_current_user(
         headers={"WWW-Authenticate": "Bearer"},
     )
     try:
-        payload = jwt.decode(token.credentials, SECRET_KEY, algorithms=[ALGORITHM])
-        phone: str = payload.get("sub")
-        if phone is None:
-            raise credentials_exception
-    except JWTError:
+        payload = decode_access_token(token.credentials, SECRET_KEY)
+    except TokenDecodeError:
         raise credentials_exception from None
+    phone = token_subject(payload)
+    if phone is None:
+        raise credentials_exception
     user = db.query(User).filter(User.phone == phone, User.status == "ACTIVE").first()
     if user is None:
         raise credentials_exception

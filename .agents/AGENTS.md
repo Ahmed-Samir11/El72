@@ -99,20 +99,24 @@ services/
   widgets. See Skill 10 in `.agents/skills/el72-dev/SKILL.md`.
 - **Architecture**: `lib/src/` organized into `core/`, `data/`, `routing/`, `services/`, `ui/`
 
-### Arabic UI strings — model-dependent (hard rule)
+### Arabic UI strings — owner-approved generation; native review before release
 
-The Arabic locale is authored by a native speaker, and
-`flutter-app/test/l10n_coverage_test.dart` fails if an English key lacks a
-non-empty Arabic twin. Check the active model with `echo $PI_MODEL`: when it
-is `qwen3.8-flash-next-coder-iq1_m`, **do not author, translate or retype
-Arabic** — that model corrupts Arabic script and invents wrong wording.
+`flutter-app/test/l10n_coverage_test.dart` fails when an English key has no
+non-empty Arabic twin, when the Arabic is a copy of the English value, or when
+it carries no Arabic script. That parity is the rule that actually protects
+users, and it is enforced by CI, not by a convention.
 
-- Reuse a key that is already translated in both locales.
-- If a new string is genuinely required, ask the user for the Arabic value;
-  commit the English and Arabic keys together, never English alone.
-- Never transcribe existing Arabic from recall. Read it back as escapes
-  (`json.load` the `.arb` file, `.encode('unicode_escape')`) and copy those,
-  so tests and docs quote it exactly.
+The owner has authorized this agent to write Arabic UI copy directly (the earlier
+rule tied authorship to a specific active model — see the Streams/rule history
+in git). What stays required:
+
+- One commit, both locales: `app_en.arb` and `app_ar.arb`, identical placeholder
+  names (`"@key"` blocks) — never English alone.
+- Generated Arabic is **unreviewed copy**: release docs that already carry a
+  native-review DRAFT banner (`docs/play-store/*`) keep that status, and no
+  commit, PR or changelog may call generated Arabic "translated" or "reviewed".
+- When modifying an existing Arabic value, read the current one back as escapes
+  rather than from recall, so tests and docs quote it exactly:
 
 ### Commit Messages
 
@@ -233,5 +237,5 @@ api (port 8000) → analyzer (port 8001) → scraper-monitor → scraper → not
 - ❌ Create new database tables without updating the appropriate canonical schema under `infra/sql/schema/`
 - ❌ Use synchronous I/O in async services
 - ❌ Run `pip install` without user confirmation
-- ❌ Write or retype Arabic UI strings while `PI_MODEL=qwen3.8-flash-next-coder-iq1_m` — reuse an already-translated key or ask the user for the Arabic
+- ❌ Commit an English locale key without its Arabic twin in the same commit, or describe generated Arabic as reviewed
 - ❌ Ship a hardcoded English string in a Flutter widget when a locale key exists for it

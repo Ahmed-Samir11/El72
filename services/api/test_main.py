@@ -264,6 +264,26 @@ def test_cors_disallowed_origin_rejected():
 # --- the payment surface is a mount decision, not an assumption (plans/p3) ---
 
 
+def _mounted_paths(target: FastAPI) -> set:
+    """Every path [target] serves, on old and new FastAPI alike.
+
+    Production pins an older FastAPI, where ``app.routes`` holds one route per
+    endpoint. Newer releases keep each ``include_router`` as a single entry with
+    no ``.path`` and expand it lazily, so the routes it contributes are read
+    from ``effective_route_contexts()`` instead. Walking ``app.routes`` alone
+    (rather than the OpenAPI schema) keeps ``include_in_schema=False`` routes
+    such as ``/admin/login`` visible to the gate.
+    """
+    paths = set()
+    for route in target.routes:
+        path = getattr(route, "path", None)
+        if path is not None:
+            paths.add(path)
+        elif hasattr(route, "effective_route_contexts"):
+            paths.update(context.path for context in route.effective_route_contexts())
+    return paths
+
+
 def test_release_build_mounts_no_payment_surface():
     """The shipped configuration registers no Paymob route at all.
 
@@ -274,7 +294,7 @@ def test_release_build_mounts_no_payment_surface():
     built = FastAPI()
     mount_routers(built, payment_surface=False)
 
-    paths = {route.path for route in built.routes}
+    paths = _mounted_paths(built)
     assert not [p for p in paths if p.startswith("/payment")]
     assert not [p for p in paths if p.startswith("/subscription")]
     # /admin/login and /admin/audit-log are defined inside the payment router,
@@ -298,7 +318,7 @@ def test_payment_surface_mounts_when_it_is_asked_for():
     built = FastAPI()
     mount_routers(built, payment_surface=True)
 
-    paths = {route.path for route in built.routes}
+    paths = _mounted_paths(built)
     assert "/payment/start" in paths
     assert "/payment/manual" in paths
     assert "/subscription/status" in paths
