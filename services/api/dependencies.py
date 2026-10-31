@@ -91,13 +91,11 @@ def get_optional_user(
     if credentials is None:
         return None
     try:
-        payload = jwt.decode(
-            credentials.credentials, SECRET_KEY, algorithms=[ALGORITHM]
-        )
-        phone = payload.get("sub")
-    except JWTError:
+        payload = decode_access_token(credentials.credentials, SECRET_KEY)
+    except TokenDecodeError:
         return None
-    if not isinstance(phone, str) or not phone:
+    phone = token_subject(payload)
+    if phone is None:
         return None
     return db.query(User).filter(User.phone == phone, User.status == "ACTIVE").first()
 

@@ -87,7 +87,14 @@ three comment lines without `--`, so psql would fail the file and roll back the
 whole migration. This branch's `test_sql_files_parse_as_postgres` caught it once
 0012 was in the tree; the prefixes are restored.
 
-Tests after this round: `pytest services` → 930 passed, 1 skipped, 2 failed.
+Found by CI after the merge (ruff F821): main's `get_optional_user` (#46)
+caught `jose.JWTError`, whose import this branch removed when token decoding
+moved to `services/common/auth.py`. Any invalid bearer token on the public
+`/affiliate/redirect` would have raised `NameError` (a 500) instead of logging
+the click anonymously. It now uses `decode_access_token`/`token_subject` like
+`get_current_user`; `test_invalid_token_is_logged_as_anonymous` covers it.
+
+Tests after this round: `pytest services` → 932 passed, 1 skipped, 2 failed.
 The 2 failures (`test_seed_data.py::test_database_urls_require_both_connections`,
 `test_public_api.py::test_deals_live`) also fail on `origin/main` in a full run
 and pass alone (order-dependent). `flutter test` → 289 passed.
