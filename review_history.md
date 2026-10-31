@@ -14313,3 +14313,1244 @@ Files changed: 11
 Review completed in 271.3s
 Decision: REQUEST_CHANGES (confidence: 0.88)
 Findings: 13
+## PR Review: chatbot: cached searches, LLM-free extraction, store health and stable result ids
+Model: local/qwen-27b
+Files changed: 24
+WARNING: Diff truncated from 178325 to 50000 chars
+
+### Raw LLM Response
+{
+  "summary": "This PR adds a substantial chatbot performance and reliability layer: deterministic JSON-LD/HTML extraction, bounded search/result caches, store health/cooldowns, stable result addressing, shared JWT/robots handling, and supporting migrations/tests. The overall direction is strong, but several visible issues around cache mutation/TTL semantics, Arabic number parsing, deployment/import paths, and security defaults should be addressed before merge.",
+  "decision": "REQUEST_CHANGES",
+  "confidence": 0.74,
+  "findings": [
+    {
+      "file": "services/chatbot/cache.py",
+      "line": 100,
+      "severity": "WARNING",
+      "category": "correctness",
+      "title": "Cached result lists are returned and stored by reference",
+      "description": "SearchResultCache.get returns the same list object stored in the in-process cache. If the search service later enriches, sorts, filters, or mutates those product dicts, the cache entry is mutated as a side effect. This can corrupt future cache hits and make cached results diverge from the original crawl.",
+      "suggestion": "Return a defensive copy from get and store a copy in set, or make cached payloads immutable. For example, use copy.deepcopy for small result sets or normalize results into immutable tuples/dataclasses before caching."
+    },
+    {
+      "file": "services/chatbot/cache.py",
+      "line": 105,
+      "severity": "WARNING",
+      "category": "correctness",
+      "title": "Negative DB cache entries are promoted into memory with the positive TTL",
+      "description": "When a DB lookup returns an empty list, SearchResultCache.get caches it in memory using self.ttl_seconds instead of self.negative_ttl_seconds. This defeats the shorter negative-cache TTL and can keep a store marked empty for the full positive cache lifetime after a restart.",
+      "suggestion": "Use the negative TTL when the DB value is empty: self._memory.set(key, stored, self.negative_ttl_seconds if not stored else self.ttl_seconds)."
+    },
+    {
+      "file": "services/chatbot/cache.py",
+      "line": 150,
+      "severity": "WARNING",
+      "category": "correctness",
+      "title": "DB cache writes may fail on non-JSON-serializable product fields",
+      "description": "_db_store calls json.dumps(products) directly. If product dicts contain UUID objects, Decimal values, datetime objects, or other non-JSON-serializable values, the cache write will raise and be swallowed as a warning, silently disabling the DB mirror.",
+      "suggestion": "Normalize product payloads before caching, or use json.dumps(products, default=str). Better, convert UUIDs to strings and prices to floats/strings before cache writes."
+    },
+    {
+      "file": "services/chatbot/cache.py",
+      "line": 100,
+      "severity": "WARNING",
+      "category": "security",
+      "title": "Cached payloads may leak or reuse session-specific result identifiers",
+      "description": "The cache key is global per store/query/price window and does not include user or session. If cached product dicts include result_id or position from a previous session, those identifiers can be returned to another user or reused in a different session. This can create stale result addressing and may allow cross-session result references if add-to-feed trusts result_id without ownership checks.",
+      "suggestion": "Strip session-specific fields such as result_id and position before caching, or regenerate them for the current session after cache retrieval. If result_id is used for add-to-feed, validate that the result belongs to the current session/user."
+    },
+    {
+      "file": "services/chatbot/arabic_nlp.py",
+      "line": 95,
+      "severity": "WARNING",
+      "category": "correctness",
+      "title": "Standalone Arabic thousand word 'أf' is missing from the price pattern",
+      "description": "The first alternative in _PRICE_PATTERN now accepts 'أf' after a digit, but the standalone-word alternative does not include 'أf'. A query like 'أf' as a maximum price may not be parsed as a price bound even though _parse_number supports it.",
+      "suggestion": "Add 'أf' to the standalone price-word alternatives in _PRICE_PATTERN, alongside 'أlf', 'الف', etc."
+    },
+    {
+      "file": "services/chatbot/arabic_nlp.py",
+      "line": 91,
+      "severity": "WARNING",
+      "category": "correctness",
+      "title": "Thousand value added to what appears to be a tens table",
+      "description": "The diff adds \"أf\": 1000 to a table whose surrounding entries are tens values such as 80 and 90. If this table is semantically a tens table, adding a thousand value is inconsistent and may produce incorrect parsing in contexts that expect tens.",
+      "suggestion": "Move 'أf' to the multiplier/number-word table used by _parse_number, or rename the table if it intentionally mixes tens and thousands."
+    },
+    {
+      "file": "services/chatbot/Dockerfile",
+      "line": 18,
+      "severity": "WARNING",
+      "category": "architecture",
+      "title": "Shared library import path may not match the copied layout",
+      "description": "The Dockerfile copies services/common/ to /app/common/. If chatbot code imports services.common.auth or services.common.robots, the package will not be importable at runtime. The API dependency file uses services.common, which makes this layout worth verifying.",
+      "suggestion": "Either copy to /app/services/common/ and preserve the package path, or ensure all chatbot imports use common.* and add a container smoke test that imports the chatbot entrypoint."
+    },
+    {
+      "file": "requirements-test.txt",
+      "line": 44,
+      "severity": "WARNING",
+      "category": "architecture",
+      "title": "Runtime dependency for robots parsing may be missing from production requirements",
+      "description": "The visible diff adds robotexclusionrulesparser to requirements-test.txt, but the chatbot runtime uses services/common/robots.py. If services/chatbot/requirements.txt does not also include robotexclusionrulesparser, the container may fail at runtime or fall back to a stub only in tests.",
+      "suggestion": "Confirm services/chatbot/requirements.txt includes robotexclusionrulesparser, or make the import optional with a clearly documented fallback."
+    },
+    {
+      "file": "services/api/dependencies.py",
+      "line": 10,
+      "severity": "WARNING",
+      "category": "security",
+      "title": "Insecure default SECRET_KEY remains",
+      "description": "The API still defaults SECRET_KEY to \"your-secret-key\" when the environment variable is absent. Since this PR centralizes JWT handling, this is a good opportunity to remove the insecure default.",
+      "suggestion": "Require SECRET_KEY at startup, e.g. SECRET_KEY = os.environ[\"SECRET_KEY\"], or fail fast if it is missing or equal to known dev values."
+    },
+    {
+      "file": "docker-compose.yml",
+      "line": 107,
+      "severity": "INFO",
+      "category": "security",
+      "title": "Default robots mode is soft",
+      "description": "ROBOTS_TXT_MODE is set to \"soft\", which may allow crawling disallowed paths while only logging or reporting them. If the service is intended to honor robots.txt, the default should be strict or the behavior should be clearly documented.",
+      "suggestion": "Set ROBOTS_TXT_MODE to \"strict\" by default, or document that soft mode is a deliberate compatibility/observability mode."
+    },
+    {
+      "file": "infra/sql/migrations/0011_chatbot_query_cache.sql",
+      "line": 31,
+      "severity": "WARNING",
+      "category": "correctness",
+      "title": "Existing chat_search_results rows receive position 0",
+      "description": "Adding position NOT NULL DEFAULT 0 gives all pre-existing rows the same position. If result addressing queries by position without a fallback, old sessions may resolve 'رقم N' ambiguously or incorrectly.",
+      "suggestion": "Backfill existing positions where possible, or ensure queries order by position, created_at, and id, and treat position 0 as legacy fallback."
+    },
+    {
+      "file": "services/chatbot/cache.py",
+      "line": 70,
+      "severity": "INFO",
+      "category": "correctness",
+      "title": "Cache key delimiter can collide if store_id contains a pipe",
+      "description": "make_cache_key joins store_id, query, and bounds with '|'. If store_id ever contains '|', different inputs can produce the same key.",
+      "suggestion": "Use a tuple key internally, escape store_id, or use a hash of normalized components."
+    },
+    {
+      "file": "services/chatbot/extractors.py",
+      "line": 45,
+      "severity": "INFO",
+      "category": "performance",
+      "title": "JSON-LD graph traversal uses list.pop(0)",
+      "description": "_iter_jsonld_nodes uses a list as a FIFO queue and calls pop(0), which is O(n) per pop. For large JSON-LD graphs this can become quadratic.",
+      "suggestion": "Use collections.deque for the queue."
+    },
+    {
+      "file": "services/chatbot/extractors.py",
+      "line": 75,
+      "severity": "INFO",
+      "category": "correctness",
+      "title": "Out-of-stock detection ignores non-string availability values",
+      "description": "_in_stock only inspects string availability. Schema.org availability can be represented as an enum object or list, which may be treated as in-stock incorrectly.",
+      "suggestion": "Handle dict/list availability values and extract @value, url, or @id before checking against _OUT_OF_STOCK."
+    },
+    {
+      "file": "services/chatbot/conftest.py",
+      "line": 30,
+      "severity": "INFO",
+      "category": "testing",
+      "title": "Global robots parser stub can mask real robots behavior",
+      "description": "The conftest installs a permissive stub for robotexclusionrulesparser when the package is absent. This keeps tests collectable, but it can hide real robots.txt behavior in chatbot tests if the real package is not installed.",
+      "suggestion": "Keep the stub, but add a test that fails or skips clearly when the real parser is unavailable, and ensure robots-specific tests use the shared robots module directly."
+    },
+    {
+      "file": "plans/chatbot-enhancements.md",
+      "line": 1,
+      "severity": "INFO",
+      "category": "documentation",
+      "title": "Plan document is partially out of sync with implementation",
+      "description": "The plan mentions cachetools and a migration named 0011_chat_query_cache.sql, while the implementation uses a dependency-free TTLLRUCache and the migration is 0011_chatbot_query_cache.sql.",
+      "suggestion": "Update the plan to match the implemented cache design and migration filename."
+    }
+  ],
+  "missed_tests": [
+    "Cache test: DB negative entry loaded into memory must use the negative TTL, not the positive TTL.",
+    "Cache test: mutating a returned cached result list must not corrupt the cache entry.",
+    "Cache test: DB upsert with UUID/Decimal/datetime product fields either serializes correctly or is normalized before caching.",
+    "Cache test: cached payloads do not leak result_id/position from another session, or those fields are regenerated per session.",
+    "Cache test: cache key normalization handles case, whitespace, punctuation, 40000.0 vs 40000, and store_id delimiter collisions.",
+    "Arabic NLP test: standalone 'أf' is parsed as a maximum price.",
+    "Arabic NLP test: 'أf' with digits, e.g. '10أf', is parsed as 10000.",
+    "Arabic NLP test: combining-mark normalization does not break product queries or add commands.",
+    "Docker smoke test: the chatbot image can import its entrypoint and shared auth/robots modules.",
+    "Migration test: running 0011 twice is idempotent and position default/backfill behavior is understood.",
+    "Add-to-feed test: result_id is validated against the current session/user and does not accept arbitrary result_ids from other sessions.",
+    "Rate-limit test: JWT sub is used when present and IP fallback is used when absent.",
+    "Store health test: cooldown after STORE_FAILURE_THRESHOLD and status reporting for blocked/timeout/robots_denied stores.",
+    "Extractor tests: malformed JSON-LD, aggregateOffer, out-of-stock enum/list availability, image variants, and card fallback are covered."
+  ],
+  "positive_notes": [
+    "The move to deterministic JSON-LD and card extraction before LLM fallback is a strong latency and reliability improvement.",
+    "Bounded TTL/LRU in-process state plus a DB mirror addresses the previous unbounded _active_search_results leak and restart loss.",
+    "Store health/cooldowns and store_status make partial failures visible to users instead of silently returning empty results.",
+    "Shared JWT and robots handling in services/common reduces duplication and drift between services.",
+    "The migrations are idempotent and include an expiry index for cache sweeps.",
+    "The PR includes a large test plan and appears to add focused tests for extractors, cache, store health, and chatbot behavior."
+  ]
+}
+
+
+Review completed in 363.0s
+Decision: REQUEST_CHANGES (confidence: 0.74)
+Findings: 16
+## PR Review: chatbot: cached searches, LLM-free extraction, store health and stable result ids
+Model: local/qwen-27b
+Files changed: 24
+WARNING: Diff truncated from 178325 to 50000 chars
+
+### Raw LLM Response
+{
+  "summary": "This PR introduces a substantial chatbot performance and reliability layer: deterministic JSON-LD/HTML extraction, bounded search caching with a Postgres mirror, store health/cooldown tracking, stable result addressing, shared JWT/robots helpers, and Arabic parsing fixes. The overall direction is strong, but there are a few correctness, deployment, and security concerns that should be addressed before merge.",
+  "decision": "REQUEST_CHANGES",
+  "confidence": 0.74,
+  "findings": [
+    {
+      "file": "services/chatbot/Dockerfile",
+      "line": 18,
+      "severity": "WARNING",
+      "category": "architecture",
+      "title": "Shared library import path may not match code imports",
+      "description": "The Dockerfile copies services/common to /app/common, but the shared JWT helper is imported in services/api/dependencies.py as services.common.auth. If the chatbot modules use the same import path, the container will fail at startup with ImportError. The comment says services/common is mapped to /app/common, which implies the chatbot may import common instead, but that is inconsistent with the visible shared-library usage.",
+      "suggestion": "Make the import path explicit and consistent. Either copy the shared library to /app/services/common/ and keep imports as services.common.*, or ensure the chatbot imports common.* and add a container smoke test that imports the shared auth/robots modules from the chatbot image."
+    },
+    {
+      "file": "services/chatbot/extractors.py",
+      "line": 125,
+      "severity": "WARNING",
+      "category": "correctness",
+      "title": "_in_stock only inspects the first offer",
+      "description": "For JSON-LD products with multiple offers, _in_stock returns False if the first offer is out of stock, even if a later offer is available. This can incorrectly hide purchasable products.",
+      "suggestion": "Check all offers and return True if any offer is not explicitly out of stock. For example, collect availability values and return not any(normalized_availability in _OUT_OF_STOCK for availability in availabilities if availability is present)."
+    },
+    {
+      "file": "infra/sql/migrations/0011_chatbot_query_cache.sql",
+      "line": 31,
+      "severity": "WARNING",
+      "category": "correctness",
+      "title": "Existing chat_search_results rows are backfilled with position 0",
+      "description": "Adding position with DEFAULT 0 gives every pre-existing row the same position. If an old session is resumed after the migration, ordinal references such as 'رقm 3' may be ambiguous or resolve incorrectly.",
+      "suggestion": "Either backfill position per session using created_at ordering, or explicitly ignore sessions created before the migration for ordinal resolution. Add a test or migration check for resumed old sessions."
+    },
+    {
+      "file": "services/api/dependencies.py",
+      "line": 13,
+      "severity": "WARNING",
+      "category": "security",
+      "title": "Insecure default SECRET_KEY remains in the API dependency",
+      "description": "The file still uses SECRET_KEY = os.getenv('SECRET_KEY', 'your-secret-key'). If the environment variable is missing, the service can run with a predictable signing key, which is a serious authentication risk.",
+      "suggestion": "Require SECRET_KEY at startup, for example SECRET_KEY = os.environ['SECRET_KEY'], or fail fast with a clear error if it is unset. This is especially important now that JWT decoding is centralized."
+    },
+    {
+      "file": "docker-compose.yml",
+      "line": 105,
+      "severity": "WARNING",
+      "category": "security",
+      "title": "ROBOTS_TXT_MODE defaults to soft",
+      "description": "The chatbot service sets ROBOTS_TXT_MODE: 'soft'. If soft means robots.txt is observed but not enforced, the chatbot may still crawl disallowed paths, which contradicts the stated goal of honoring robots.txt.",
+      "suggestion": "Default to strict for public deployments, or clearly document that soft is a development-only mode. Consider adding a startup warning when soft mode is enabled in production."
+    },
+    {
+      "file": "services/chatbot/cache.py",
+      "line": 145,
+      "severity": "WARNING",
+      "category": "performance",
+      "title": "DB cache rows can grow with large JSONB payloads",
+      "description": "chat_query_cache stores full result lists as JSONB and only sweeps expired rows periodically. If searches return many products or pages contain large payloads, the table can grow significantly between sweeps.",
+      "suggestion": "Cap the number of cached products per entry, truncate non-essential fields before caching, and consider running the expired-row sweep on startup as well as every N writes. Add a test that verifies oversized cache entries are bounded."
+    },
+    {
+      "file": "services/chatbot/extractors.py",
+      "line": 64,
+      "severity": "INFO",
+      "category": "performance",
+      "title": "JSON-LD graph traversal uses list.pop(0)",
+      "description": "_iter_jsonld_nodes uses queue.pop(0), which is O(n) for lists. JSON-LD blocks are usually small, but this can become quadratic on larger graphs.",
+      "suggestion": "Use collections.deque with popleft() for a proper FIFO queue."
+    },
+    {
+      "file": "services/chatbot/cache.py",
+      "line": 66,
+      "severity": "INFO",
+      "category": "correctness",
+      "title": "Cache key may omit locale/currency/user-specific search context",
+      "description": "make_cache_key keys on store_id, query, and price bounds. If the same store_id can return different results based on country, currency, language, or user-specific filters, cached results may be reused incorrectly.",
+      "suggestion": "If store_id does not already encode country/currency/locale, include those dimensions in the cache key. Add tests for cache key normalization and locale-sensitive searches."
+    },
+    {
+      "file": "services/chatbot/conftest.py",
+      "line": 1,
+      "severity": "INFO",
+      "category": "testing",
+      "title": "Global robots parser stub can mask missing runtime dependency",
+      "description": "The chatbot conftest installs a stub for robotexclusionrulesparser when the real package is absent. This is useful for unit tests, but it can hide a missing runtime dependency in the chatbot image.",
+      "suggestion": "Ensure robotexclusionrulesparser is present in the chatbot runtime requirements and add a smoke test that imports services.common.robots without the stub."
+    }
+  ],
+  "missed_tests": [
+    "Container smoke test that the chatbot image can import services.common.auth and services.common.robots.",
+    "Cache tests for DB fallback after in-memory expiry, expired DB rows not being returned, and negative cache TTL being shorter than positive cache TTL.",
+    "JSON-LD extraction tests for multiple offers where one is out of stock and another is available.",
+    "Tests for malformed JSON-LD, @graph nesting, arrays, and aggregateOffer fallback.",
+    "Arabic parsing tests for combining-mark normalization, 'أf' as thousand, and multiplier handling.",
+    "Tests that parse_add_command does not silently default to index 1 without an explicit ordinal or target.",
+    "Tests that result_id and position remain stable across restarts and resolve the same product.",
+    "Tests for store health cooldown after STORE_FAILURE_THRESHOLD consecutive failures and the GET /chatbot/stores endpoint.",
+    "Tests that rate limiting keys on JWT sub and falls back to client address.",
+    "Tests that robots.txt Crawl-Delay is honored and capped by MAX_CRAWL_DELAY.",
+    "Tests that SEARCH_DEADLINE cancels pending store crawls instead of hanging the response."
+  ],
+  "positive_notes": [
+    "Moving deterministic extraction before the LLM is the right latency and reliability strategy.",
+    "The cache is bounded in memory and mirrored to Postgres, which addresses both restart durability and unbounded in-process state.",
+    "Store health and explicit store_status make partial failures visible to users instead of silently dropping stores.",
+    "Stable result addressing with result_id and position is a good foundation for multi-turn add-to-feed flows.",
+    "Centralizing JWT and robots handling in services/common reduces drift between services.",
+    "The PR includes a large test surface for the new cache, extraction, health, and Arabic parsing behavior."
+  ]
+}
+
+
+Review completed in 264.5s
+Decision: REQUEST_CHANGES (confidence: 0.74)
+Findings: 9
+## PR Review: chatbot: cached searches, LLM-free extraction, store health and stable result ids
+Model: local/qwen-27b
+Files changed: 32
+WARNING: Diff truncated from 240873 to 50000 chars
+
+### Raw LLM Response
+{
+  "summary": "This PR adds a substantial chatbot performance, reliability, and observability layer: deterministic extraction, bounded query/result caches, store health/cooldowns, stable result addressing, shared JWT/robots handling, and supporting migrations/tests. The visible infrastructure changes are mostly sound, but the migration backfill, robots crawl-delay handling, and externally supplied result identifiers need closer scrutiny before merge.",
+  "decision": "REQUEST_CHANGES",
+  "confidence": 0.68,
+  "findings": [
+    {
+      "file": "infra/sql/migrations/0011_chatbot_query_cache.sql",
+      "line": 31,
+      "severity": "WARNING",
+      "category": "correctness",
+      "title": "Position backfill can re-rank mixed old/new sessions",
+      "description": "The backfill updates every row where position = 0. If the migration is re-run after the application has already inserted new results into an old session, the first new result may also have position = 0 and can be grouped with legacy rows, potentially overwriting its correct position. The migration is described as idempotent, but this statement is only safe when all position = 0 rows are legacy rows.",
+      "suggestion": "Make the backfill explicitly one-time or scoped to pre-migration rows. Options: add a boolean backfilled marker, add the column nullable and backfill before setting NOT NULL, or only backfill rows created before a known migration timestamp. Add a test that runs the migration twice after new rows have been inserted."
+    },
+    {
+      "file": "docker-compose.yml",
+      "line": 118,
+      "severity": "WARNING",
+      "category": "architecture",
+      "title": "Capping Crawl-Delay conflicts with strict robots.txt mode",
+      "description": "The compose comment says strict mode honors a declared Crawl-Delay, but the implementation caps the delay with MAX_CRAWL_DELAY. If a site declares a longer crawl-delay than the cap, the chatbot will crawl faster than robots.txt permits, which is not strict robots compliance.",
+      "suggestion": "In strict mode, honor the declared Crawl-Delay exactly, or rename/document the mode as 'strict-with-capped-delay'. Expose MAX_CRAWL_DELAY in compose and add tests for declared delays above and below the cap."
+    },
+    {
+      "file": "services/chatbot/main.py",
+      "line": 1,
+      "severity": "WARNING",
+      "category": "security",
+      "title": "result_id must be validated against the requesting session/user",
+      "description": "The PR introduces stable result_id values that clients can use to add products to feeds. If add-to-feed accepts result_id without verifying that the result belongs to the current session and authenticated user, a caller could reference arbitrary results from other sessions or users.",
+      "suggestion": "Resolve result_id by joining chat_search_results with the current session/user, or validate chat_search_results.session_id and user_id before accepting the request. Return 404/403 for foreign result ids. Add tests for cross-session and cross-user result_id access."
+    },
+    {
+      "file": "infra/sql/schema/postgres.sql",
+      "line": 397,
+      "severity": "WARNING",
+      "category": "performance",
+      "title": "Query cache table needs bounded upsert and expiry sweep",
+      "description": "chat_query_cache has a unique cache_key and an expiry index, but the schema alone does not show how repeated cache writes are handled or how expired rows are removed. Without upsert handling and periodic sweeps, the table can either fail on repeated keys or grow unbounded between restarts.",
+      "suggestion": "Ensure cache writes use INSERT ... ON CONFLICT (cache_key) DO UPDATE, run an expired-row sweep on startup and periodically, and keep JSONB payloads bounded by CACHE_MAX_PRODUCTS. Add tests for repeated cache writes and expired-row cleanup."
+    },
+    {
+      "file": "infra/sql/schema/postgres.sql",
+      "line": 390,
+      "severity": "INFO",
+      "category": "performance",
+      "title": "Ordinal result lookup would benefit from a composite index",
+      "description": "chat_search_results already has an index on session_id, but ordinal lookups such as 'رقm 3' likely filter by session_id and position. Without a composite index, PostgreSQL may scan all rows for a session.",
+      "suggestion": "Add CREATE INDEX IF NOT EXISTS idx_chat_search_results_session_position ON chat_search_results(session_id, position); if ordinal lookups are common."
+    },
+    {
+      "file": "infra/sql/migrations/0011_chatbot_query_cache.sql",
+      "line": 18,
+      "severity": "INFO",
+      "category": "correctness",
+      "title": "expires_at_epoch could use an integer type and constraints",
+      "description": "expires_at_epoch is DOUBLE PRECISION. Epoch seconds do not need floating-point precision, and float comparisons can introduce avoidable edge cases. The column also has no non-negative constraint.",
+      "suggestion": "Use BIGINT NOT NULL with CHECK (expires_at_epoch >= 0), or at least add a CHECK constraint. Update the schema and migration consistently."
+    },
+    {
+      "file": "services/chatbot/Dockerfile",
+      "line": 1,
+      "severity": "INFO",
+      "category": "architecture",
+      "title": "Shared common import path should be smoke-tested",
+      "description": "The PR copies services/common into the chatbot image. If the copied layout and Python import path do not match, the container can fail at startup with ImportError. This is easy to miss in unit tests that run from the repository root.",
+      "suggestion": "Add a container smoke test that imports the chatbot entrypoint and the shared auth/robots modules, or assert the expected import path in the Dockerfile build."
+    },
+    {
+      "file": "services/chatbot/conftest.py",
+      "line": 1,
+      "severity": "INFO",
+      "category": "testing",
+      "title": "Robots parser stub can hide a missing runtime dependency",
+      "description": "The test setup can install a permissive stub when robotexclusionrulesparser is absent. This keeps tests collectable, but it can mask a missing runtime dependency or incorrect robots behavior in the chatbot image.",
+      "suggestion": "Ensure CI installs the real robotexclusionrulesparser package for chatbot tests, and make the stub clearly fail or skip when real robots behavior is being tested."
+    },
+    {
+      "file": "plans/chatbot-enhancements.md",
+      "line": 1,
+      "severity": "INFO",
+      "category": "documentation",
+      "title": "Plan references migration registration not visible in the diff",
+      "description": "The plan says migration 0011 is registered in scripts/db-bootstrap.sh and guarded by a migration-file test, but the visible diff does not show that registration. If the migration is not registered, fresh bootstraps may not create the cache table.",
+      "suggestion": "Confirm scripts/db-bootstrap.sh applies 0011_chatbot_query_cache.sql, or update the plan if registration is handled elsewhere. Add or keep the migration-registration test."
+    }
+  ],
+  "missed_tests": [
+    "Migration test: run 0011 twice after new chat_search_results rows have been inserted and verify positions are not corrupted.",
+    "Cache test: negative DB cache entries are promoted into memory with the negative TTL, not the positive TTL.",
+    "Cache test: mutating a returned cached result list does not mutate the cached entry.",
+    "Cache test: cache key normalization handles case, whitespace, numeric bounds, and store_id delimiter collisions.",
+    "Cache test: DB cache writes handle UUID/Decimal/datetime values or normalize them before JSON serialization.",
+    "Cache test: cached payloads do not leak result_id or position from another session, or those fields are regenerated per session.",
+    "Add-to-feed test: result_id is validated against the current session/user and rejects foreign result ids.",
+    "Arabic NLP tests: standalone 'أf', '10أf', combining-mark normalization, and multiplier handling do not break product queries or add commands.",
+    "Robots tests: strict mode honors disallowed paths and declared Crawl-Delay; capped delay behavior is explicit.",
+    "Store health tests: cooldown after STORE_FAILURE_THRESHOLD, status reporting for blocked/timeout/robots_denied/cached stores, and GET /chatbot/stores shape.",
+    "Rate-limit tests: JWT sub is used when present and IP fallback is used when absent.",
+    "Docker smoke test: the chatbot image can import its entrypoint and shared auth/robots modules.",
+    "Extractor tests: malformed JSON-LD, aggregateOffer, multiple offers, out-of-stock enum/list availability, image variants, and card fallback are covered.",
+    "Concurrency tests: SEARCH_DEADLINE cancels pending stores and does not leak resources or hang the reply."
+  ],
+  "positive_notes": [
+    "Deterministic JSON-LD and HTML extraction before falling back to the LLM is a strong latency and reliability improvement.",
+    "Bounded TTL/LRU state plus a Postgres mirror replaces the previous unbounded in-process cache and survives restarts.",
+    "Store health, cooldowns, and store_status make partial failures visible to users instead of silently returning empty results.",
+    "Stable result addressing with result_id and position is a good foundation for multi-turn Arabic commands.",
+    "The migrations are idempotent in shape, include an expiry index, and add the cache table to both migration and canonical schema.",
+    "The PR includes a large test plan and appears to add focused tests for extractors, cache, store health, and chatbot behavior."
+  ]
+}
+
+
+Review completed in 235.3s
+Decision: REQUEST_CHANGES (confidence: 0.68)
+Findings: 9
+## PR Review: chatbot: cached searches, LLM-free extraction, store health and stable result ids
+Model: local/qwen-27b
+Files changed: 32
+WARNING: Diff truncated from 264958 to 50000 chars
+
+### Raw LLM Response
+{
+  "summary": "This PR adds a substantial chatbot performance and reliability layer: deterministic JSON-LD/HTML extraction, bounded search/result caches with a Postgres mirror, store health/cooldown tracking, stable result addressing, shared JWT/robots helpers, and supporting migrations/tests. The overall direction is strong and the visible schema/migration work is mostly careful, but several cache semantics, deployment/import-path, Arabic parsing, and result-addressing issues need verification or fixes before merge.",
+  "decision": "REQUEST_CHANGES",
+  "confidence": 0.72,
+  "findings": [
+    {
+      "file": "infra/sql/migrations/0011_chatbot_query_cache.sql",
+      "line": 55,
+      "severity": "WARNING",
+      "category": "correctness",
+      "title": "Position backfill is 0-based and leaves legacy rows ambiguous",
+      "description": "The migration adds `position INTEGER NOT NULL DEFAULT 0` and backfills old rows using `ROW_NUMBER() - 1`, so the first result in a session has position 0. If the ordinal parser treats `رقم 1` as position 1, or if legacy rows remain at 0 in partially ranked sessions, `أadd رقم N` can resolve to the wrong product or become ambiguous. The migration comment implies 0-based positions, but the user-facing Arabic ordinal is naturally 1-based.",
+      "suggestion": "Either store 1-based positions (`ROW_NUMBER()` instead of `ROW_NUMBER() - 1`) or make the application explicitly map user ordinals to 0-based positions everywhere. Add a migration test covering old sessions, new sessions, and mixed-position sessions, and ensure ordinal lookup has a deterministic fallback for rows still at 0."
+    },
+    {
+      "file": "infra/sql/migrations/0011_chatbot_query_cache.sql",
+      "line": 24,
+      "severity": "INFO",
+      "category": "performance",
+      "title": "Redundant ALTER COLUMN TYPE on fresh databases",
+      "description": "The migration creates `expires_at_epoch BIGINT NOT NULL`, then immediately runs `ALTER TABLE chat_query_cache ALTER COLUMN expires_at_epoch TYPE BIGINT;`. On a fresh database this is redundant; depending on PostgreSQL version it may still take a lock or rewrite the table unnecessarily.",
+      "suggestion": "Wrap the type change in a conditional block that only runs when the column is not already `BIGINT`, or remove it if the migration is guaranteed to be the first definition. Keep the named constraint addition idempotent."
+    },
+    {
+      "file": "infra/sql/migrations/0011_chatbot_query_cache.sql",
+      "line": 1,
+      "severity": "WARNING",
+      "category": "architecture",
+      "title": "Migration registration is not visible in the diff",
+      "description": "The plan says migration 0011 must be registered in `scripts/db-bootstrap.sh`, and `services/common/test_migration_files.py` should fail if a numbered migration is never applied. The visible diff does not show that registration. If the migration is not wired into bootstrap, fresh deployments will not create `chat_query_cache` or `chat_search_results.position`.",
+      "suggestion": "Add the migration to `scripts/db-bootstrap.sh` in the same PR and include or update the migration-registration test so this cannot regress."
+    },
+    {
+      "file": "services/chatbot/cache.py",
+      "line": 100,
+      "severity": "WARNING",
+      "category": "correctness",
+      "title": "Cached payloads must be detached and free of session-only fields",
+      "description": "The cache key is global per `(store_id, query, min_price, max_price)`. If `get()` returns the same mutable list/dicts stored in memory, later sorting/filtering/enriching by the search service can mutate the cache. If cached payloads include `result_id` or `position` from a previous session, those identifiers can leak into another session or become stale.",
+      "suggestion": "Store and return deep copies or immutable normalized payloads. Strip `result_id` and `position` before caching, then regenerate them for the current session after retrieval. Add tests that mutate a returned cached result and assert the cache entry is unchanged."
+    },
+    {
+      "file": "services/chatbot/cache.py",
+      "line": 105,
+      "severity": "WARNING",
+      "category": "correctness",
+      "title": "Negative DB cache entries may be promoted with the positive TTL",
+      "description": "The PR description says empty results are cached with a shorter TTL. If a DB lookup returns an empty list and the in-memory cache stores it using `ttl_seconds` instead of `negative_ttl_seconds`, a store can remain marked empty for the full positive cache lifetime after a restart, defeating negative caching.",
+      "suggestion": "When loading from the DB, use `negative_ttl_seconds` if the stored result list is empty and `ttl_seconds` otherwise. Add a test that seeds an empty DB row, loads it into memory, advances time past the negative TTL but before the positive TTL, and expects a re-crawl."
+    },
+    {
+      "file": "services/chatbot/cache.py",
+      "line": 150,
+      "severity": "WARNING",
+      "category": "correctness",
+      "title": "DB mirror should serialize normalized JSON-safe payloads",
+      "description": "If product dictionaries contain UUIDs, Decimal values, datetimes, or other non-JSON-serializable values, `json.dumps(products)` can fail. If the failure is swallowed as a warning, the DB cache mirror silently stops working and restarts will lose warm results.",
+      "suggestion": "Normalize cached payloads before writing: convert UUIDs to strings, prices to floats/strings, and remove non-serializable fields. Alternatively use `json.dumps(..., default=str)`, but explicit normalization is safer and keeps the DB payload predictable."
+    },
+    {
+      "file": "services/chatbot/Dockerfile",
+      "line": 18,
+      "severity": "WARNING",
+      "category": "architecture",
+      "title": "Shared common import path must match the copied layout",
+      "description": "The Dockerfile copies `services/common/` to `/app/common/`. If chatbot code imports `services.common.auth` or `services.common.robots`, the package will not be importable at runtime. Conversely, if code imports `common.*`, that must be consistent with the API/shared-library layout.",
+      "suggestion": "Choose one import contract and enforce it: either copy to `/app/services/common/` and keep `services.common.*` imports, or copy to `/app/common/` and use `common.*` imports. Add a container smoke test that imports the chatbot entrypoint and shared auth/robots modules."
+    },
+    {
+      "file": "requirements-test.txt",
+      "line": 44,
+      "severity": "INFO",
+      "category": "architecture",
+      "title": "Ensure robots parser is a runtime dependency, not only a test dependency",
+      "description": "The visible diff adds `robotexclusionrulesparser` to `requirements-test.txt`. The chatbot runtime uses shared robots handling, so if `services/chatbot/requirements.txt` does not also include the package, production may fall back to a stub or fail.",
+      "suggestion": "Confirm `robotexclusionrulesparser` is present in the chatbot runtime requirements, or make the import optional with a clearly documented and tested fallback."
+    },
+    {
+      "file": "services/api/dependencies.py",
+      "line": 10,
+      "severity": "WARNING",
+      "category": "security",
+      "title": "JWT secret should fail fast instead of using an insecure default",
+      "description": "This PR centralizes JWT handling, but if any consumer still defaults `SECRET_KEY` to a known development value, tokens can be forged when the environment variable is missing. A shared auth contract should make the secret mandatory.",
+      "suggestion": "Require `SECRET_KEY` at startup, for example `SECRET_KEY = os.environ[\"SECRET_KEY\"]`, or fail with a clear error if it is missing or equal to known dev values. Add a test that startup fails without `SECRET_KEY`."
+    },
+    {
+      "file": "services/chatbot/arabic_nlp.py",
+      "line": 95,
+      "severity": "WARNING",
+      "category": "correctness",
+      "title": "Arabic thousand word `أf` must be handled consistently in patterns and number parsing",
+      "description": "The PR adds `أf` as a thousand word and fixes multiplier handling. If `أf` is only added to one table or only after digits, standalone `أf` or combined forms like `10أf` may not parse as expected.",
+      "suggestion": "Ensure `أf` appears in both the price pattern alternatives and the multiplier/number-word table used by `_parse_number`. Add tests for `أf`, `10أf`, `أf 10`, and queries where `أf` is part of a product name rather than a price."
+    },
+    {
+      "file": "services/chatbot/extractors.py",
+      "line": 45,
+      "severity": "INFO",
+      "category": "performance",
+      "title": "JSON-LD graph traversal should use a deque",
+      "description": "If `_iter_jsonld_nodes` uses a list as a FIFO queue with `pop(0)`, traversal becomes O(n) per pop and can be quadratic on large JSON-LD graphs.",
+      "suggestion": "Use `collections.deque` for the queue."
+    },
+    {
+      "file": "services/chatbot/extractors.py",
+      "line": 75,
+      "severity": "INFO",
+      "category": "correctness",
+      "title": "Handle non-string schema.org availability values",
+      "description": "Schema.org `availability` can be a string, enum object, URL, or list. If `_in_stock` only checks strings, out-of-stock products represented as objects or lists may be treated as available.",
+      "suggestion": "Normalize availability values by extracting `@value`, `@id`, `url`, or list items before comparing against out-of-stock markers. Add tests for object and list availability forms."
+    },
+    {
+      "file": "docker-compose.yml",
+      "line": 97,
+      "severity": "INFO",
+      "category": "documentation",
+      "title": "Comment says every store is crawled at once despite concurrency limit",
+      "description": "The comment says \"Every store is crawled at once, bounded by CRAWL_TIMEOUT\", but `MAX_CONCURRENT_STORES: \"8\"` means stores are batched when there are more than eight stores.",
+      "suggestion": "Clarify the comment: stores are crawled concurrently up to `MAX_CONCURRENT_STORES`, with each crawl bounded by `CRAWL_TIMEOUT` and the whole search bounded by `SEARCH_DEADLINE`."
+    }
+  ],
+  "missed_tests": [
+    "Cache test: an empty DB cache row loaded into memory uses the negative TTL, not the positive TTL.",
+    "Cache test: mutating a returned cached result list or product dict does not mutate the cached entry.",
+    "Cache test: cached payloads do not contain `result_id` or `position` from another session, and those fields are regenerated for the current session.",
+    "Cache test: DB upsert handles UUID/Decimal/datetime product fields by normalizing them before serialization.",
+    "Cache test: cache key normalization handles case, whitespace, punctuation, `40000.0` vs `40000`, and store_id/query delimiter collisions.",
+    "Migration test: running `0011_chatbot_query_cache.sql` twice is idempotent and does not corrupt existing rows.",
+    "Migration test: position backfill correctly handles old sessions, new sessions, and sessions with mixed `position = 0` and ranked rows.",
+    "Arabic NLP test: standalone `أf` is parsed as a price bound.",
+    "Arabic NLP test: combined forms like `10أf` are parsed as 10000 without breaking product-name queries.",
+    "Docker smoke test: the chatbot image can import its entrypoint and shared `auth`/`robots` modules.",
+    "Add-to-feed test: `result_id` is validated against the current session/user and does not accept arbitrary result IDs from other sessions.",
+    "Rate-limit test: JWT `sub` is used when present and client IP is used as fallback when absent.",
+    "Store health test: cooldown after `STORE_FAILURE_THRESHOLD` and status reporting for `blocked`, `timeout`, `robots_denied`, and `cooling` stores.",
+    "Extractor tests: malformed JSON-LD, `aggregateOffer`, out-of-stock enum/list availability, image variants, and card fallback are covered.",
+    "Robots test: strict mode refuses disallowed paths and honors a declared `Crawl-Delay` exactly; delays above `MAX_CRAWL_DELAY` report `robots_denied`."
+  ],
+  "positive_notes": [
+    "Moving to deterministic JSON-LD and HTML card extraction before the LLM is a strong latency and reliability improvement.",
+    "Replacing the unbounded `_active_search_results` dict with a bounded TTL/LRU cache plus DB fallback addresses both memory growth and restart loss.",
+    "Store health/cooldown tracking and `store_status` make partial failures visible to users instead of silently returning empty results.",
+    "The cache table design uses a hashed cache key, an expiry index, upserts, and a sweep strategy, which is a reasonable Postgres-backed cache pattern.",
+    "The migrations are written to be idempotent and include both the canonical schema and a numbered migration path.",
+    "The PR includes a large test plan and appears to add focused tests for extractors, cache, store health, status reporting, result IDs, and rate limiting."
+  ]
+}
+
+
+Review completed in 204.8s
+Decision: REQUEST_CHANGES (confidence: 0.72)
+Findings: 13
+## PR Review: chatbot: cached searches, LLM-free extraction, store health and stable result ids
+Model: local/qwen-27b
+Files changed: 32
+WARNING: Diff truncated from 282954 to 50000 chars
+
+### Raw LLM Response
+{
+  "summary": "This PR adds a substantial chatbot performance and reliability layer: deterministic JSON-LD/HTML extraction, bounded search/result caches, store health/cooldowns, stable result addressing, shared JWT/robots groundwork, and supporting migrations/tests. The direction is strong, but the migration backfill, new stable result IDs, and deployment/import/dependency paths need more defensive verification before merge.",
+  "decision": "REQUEST_CHANGES",
+  "confidence": 0.72,
+  "findings": [
+    {
+      "file": "infra/sql/migrations/0011_chatbot_query_cache.sql",
+      "line": 93,
+      "severity": "WARNING",
+      "category": "correctness",
+      "title": "Backfill can leave mixed old/new positions in resumed sessions",
+      "description": "The backfill only re-ranks a session when MAX(position) is 0. If a pre-migration session later receives new results after the migration, the new rows will have non-zero positions, so the old rows remain at 0. That can make ordinal lookups ambiguous or resolve to the wrong row.",
+      "suggestion": "Track legacy rows explicitly, for example use position NULL or -1, add a migration watermark/created_at cutoff, or backfill only rows that predate the migration. Avoid using 0 as both a valid first position and an unset marker."
+    },
+    {
+      "file": "infra/sql/schema/postgres.sql",
+      "line": 391,
+      "severity": "WARNING",
+      "category": "correctness",
+      "title": "position NOT NULL DEFAULT 0 cannot distinguish legacy rows from the first result",
+      "description": "The service uses 0-based positions, so position 0 is a valid first result. Pre-existing rows also receive position 0, making it impossible to tell whether a row is legacy or intentionally first. This complicates safe backfill and ordinal resolution.",
+      "suggestion": "Consider making position nullable or using a sentinel such as -1 for unset rows. If keeping 0, add a separate legacy flag or migration watermark so backfill can safely identify old rows."
+    },
+    {
+      "file": "services/chatbot/main.py",
+      "line": 1,
+      "severity": "WARNING",
+      "category": "security",
+      "title": "Stable result IDs need session/user scoping",
+      "description": "The PR introduces result_id and stable result addressing, but the visible diff does not show that add-to-feed or ordinal resolution validates the result against the current session and authenticated user. If result_id is accepted without ownership checks, a guessed or leaked ID could reference another user's search results.",
+      "suggestion": "Scope result_id lookups by session_id and user_id, and return the same generic 'nothing to add' response for foreign sessions. Add tests proving another user's result_id cannot be added."
+    },
+    {
+      "file": "services/chatbot/Dockerfile",
+      "line": 18,
+      "severity": "WARNING",
+      "category": "architecture",
+      "title": "Shared library import path may not match runtime layout",
+      "description": "The plan describes copying services/common to /app/common, while other services may import services.common.*. If the chatbot modules use the same package path, the container can fail at startup with ImportError.",
+      "suggestion": "Verify the chatbot imports match the copied layout, e.g. common.auth vs services.common.auth. Add a container smoke test that imports the chatbot entrypoint and shared auth/robots modules."
+    },
+    {
+      "file": "requirements-test.txt",
+      "line": 44,
+      "severity": "WARNING",
+      "category": "architecture",
+      "title": "Runtime robots parser dependency should be confirmed in production requirements",
+      "description": "The visible diff adds robotexclusionrulesparser to requirements-test.txt. The chatbot runtime uses the shared robots handler, so if services/chatbot/requirements.txt does not also include this package, production may fall back to a stub or fail.",
+      "suggestion": "Confirm services/chatbot/requirements.txt includes robotexclusionrulesparser, or make the import optional with an explicit, documented fallback and a startup warning."
+    },
+    {
+      "file": "scripts/db-bootstrap.sh",
+      "line": 1,
+      "severity": "WARNING",
+      "category": "architecture",
+      "title": "Migration registration is not visible in the diff",
+      "description": "The plan says migration 0011 must be registered in scripts/db-bootstrap.sh and guarded by test_migration_files.py. The visible diff does not show that registration. If it is missing, existing migrated databases may not receive chat_query_cache or chat_search_results.position.",
+      "suggestion": "Ensure scripts/db-bootstrap.sh applies 0011_chatbot_query_cache.sql and that the migration-file test passes. Fresh databases are covered by schema/postgres.sql, but migrated databases need the migration."
+    },
+    {
+      "file": "services/chatbot/cache.py",
+      "line": 1,
+      "severity": "WARNING",
+      "category": "security",
+      "title": "Cache key may not invalidate on crawler/robots configuration changes",
+      "description": "The described cache key is based on store, query, and price bounds. If ROBOTS_TXT_MODE, crawler settings, locale, or extraction strategy changes, cached results from a previous configuration can be served under a stricter policy or with different assumptions.",
+      "suggestion": "Include a normalized configuration version or relevant policy fields in the cache key, or add cache invalidation when crawler/robots settings change."
+    },
+    {
+      "file": "docker-compose.yml",
+      "line": 95,
+      "severity": "INFO",
+      "category": "documentation",
+      "title": "Windows-specific LLM model path is committed",
+      "description": "The compose file contains a Windows-style local model path. This is likely local-development-only, but it can be confusing or break non-Windows environments if copied.",
+      "suggestion": "Move the local model path to a local override file or document that it is a developer-only value."
+    },
+    {
+      "file": "plans/chatbot-enhancements.md",
+      "line": 1,
+      "severity": "INFO",
+      "category": "documentation",
+      "title": "Plan document includes future PR scope not implemented here",
+      "description": "The plan describes PRs 2-4, Flutter changes, Redis Streams, and other services that are not part of this diff. This is useful context but may make the PR scope look larger than it is.",
+      "suggestion": "Clearly mark the future phases as out of scope for this PR, or split the plan into a separate design document if it will not all be implemented together."
+    },
+    {
+      "file": "review_history.md",
+      "line": 1,
+      "severity": "INFO",
+      "category": "documentation",
+      "title": "Generated review history is included in the PR",
+      "description": "The diff adds a large generated review history file. This can be useful for auditability but adds noise to the PR and may contain stale or truncated review content.",
+      "suggestion": "Consider keeping review history in a separate branch, artifact, or generated file that is excluded from normal PR diffs."
+    },
+    {
+      "file": "docker-compose.yml",
+      "line": 104,
+      "severity": "INFO",
+      "category": "architecture",
+      "title": "Cache sweep frequency is not exposed as a tunable",
+      "description": "The plan mentions CACHE_SWEEP_EVERY_WRITES=20, but the compose file exposes other cache tunables without this one. Operators may expect to tune sweep frequency alongside TTL and max products.",
+      "suggestion": "Expose CACHE_SWEEP_EVERY_WRITES in docker-compose.yml with a default, or document that it is intentionally fixed."
+    }
+  ],
+  "missed_tests": [
+    "Migration test: a pre-migration session that receives new results after migration does not produce ambiguous ordinal resolution.",
+    "Migration test: running 0011_chatbot_query_cache.sql twice is idempotent and does not re-rank live sessions.",
+    "Schema test: position uses a sentinel or nullable value that distinguishes legacy rows from the first result.",
+    "Add-to-feed test: result_id from another user or session is rejected and does not expose foreign search results.",
+    "Docker smoke test: the chatbot image can import its entrypoint plus shared auth and robots modules.",
+    "Dependency test: services/chatbot/requirements.txt includes robotexclusionrulesparser for runtime use.",
+    "Cache test: changing ROBOTS_TXT_MODE or crawler configuration invalidates or bypasses cached results.",
+    "Cache test: DB negative entries are promoted into memory with the negative TTL, not the positive TTL.",
+    "Cache test: returned cached result lists are detached copies and mutation by the service does not corrupt cache entries.",
+    "Robots test: a declared Crawl-Delay is honored exactly, and a delay above MAX_CRAWL_DELAY reports robots_denied instead of crawling faster.",
+    "Arabic NLP test: standalone 'أf' and digit-prefixed forms like '10أf' parse correctly.",
+    "Arabic NLP test: combining-mark normalization does not break product queries or add commands.",
+    "Rate-limit test: JWT sub is used when present and client IP is used when absent.",
+    "Store health test: cooldown after STORE_FAILURE_THRESHOLD and status reporting for blocked/timeout/robots_denied stores."
+  ],
+  "positive_notes": [
+    "The move to deterministic JSON-LD and card extraction before LLM fallback is a strong latency and reliability improvement.",
+    "Bounded TTL/LRU in-process state plus a Postgres mirror addresses the previous unbounded in-process cache and restart loss.",
+    "Store health/cooldowns and store_status make partial failures visible to users instead of silently returning empty results.",
+    "The migrations are written to be idempotent and include an expiry index for cache sweeps.",
+    "The PR adds a substantial test plan and appears to include focused tests for extractors, cache, store health, and chatbot behavior.",
+    "Shared JWT and robots handling in services/common reduces duplication and drift between services."
+  ]
+}
+
+
+Review completed in 265.3s
+Decision: REQUEST_CHANGES (confidence: 0.72)
+Findings: 11
+## PR Review: chatbot: cached searches, LLM-free extraction, store health and stable result ids
+Model: local/qwen-27b
+Files changed: 32
+WARNING: Diff truncated from 306696 to 50000 chars
+
+### Raw LLM Response
+{
+  "summary": "This PR introduces a substantial chatbot performance and reliability layer: deterministic extraction, bounded query/result caches, store health/cooldowns, stable result addressing, shared JWT/robots handling, and supporting migrations/tests. The direction is strong, but the visible migration contains a likely invalid SQL statement and a backfill predicate that can corrupt live rows, so changes are required before merge.",
+  "decision": "REQUEST_CHANGES",
+  "confidence": 0.78,
+  "findings": [
+    {
+      "file": "infra/sql/migrations/0011_chatbot_query_cache.sql",
+      "line": 96,
+      "severity": "CRITICAL",
+      "category": "correctness",
+      "title": "Malformed backfill subquery in migration",
+      "description": "The UPDATE ... FROM (...) subquery contains two SELECT clauses separated by a comma: `SELECT id, session_id, md5(...) AS legacy_search_id, SELECT id, session_id, ... FROM chat_search_results`. This is not valid PostgreSQL and will fail when the migration is applied.",
+      "suggestion": "Collapse the subquery into one SELECT that computes all columns together, for example: `SELECT id, session_id, md5(...)::uuid AS legacy_search_id, (ROW_NUMBER() OVER (...) - 1)::INTEGER AS rank_minus_one, MAX(position) OVER (PARTITION BY session_id) AS session_max_position FROM chat_search_results`."
+    },
+    {
+      "file": "infra/sql/migrations/0011_chatbot_query_cache.sql",
+      "line": 106,
+      "severity": "CRITICAL",
+      "category": "correctness",
+      "title": "Backfill can overwrite live rows because position 0 is a valid ranked position",
+      "description": "The backfill uses `ranked.session_max_position = 0 AND target.position = 0` to identify legacy rows. However, the service intentionally writes position 0 for the first result of a search. A live session with one result, or multiple one-result searches, can therefore have `session_max_position = 0` and be re-ranked/re-stamped on a rerun. This can overwrite `search_id` and change `position`, breaking the intended per-search grouping.",
+      "suggestion": "Do not use `position = 0` alone as the legacy marker. Require `target.search_id IS NULL`, and ideally also restrict to rows created before the migration, e.g. `target.search_id IS NULL AND ranked.session_max_position = 0 AND target.created_at < <migration_timestamp>`. Alternatively, use a sentinel value or a dedicated backfill marker column."
+    },
+    {
+      "file": "infra/sql/schema/postgres.sql",
+      "line": 395,
+      "severity": "WARNING",
+      "category": "security",
+      "title": "Global cache key can leak or reuse session-scoped result identifiers if payloads are not stripped",
+      "description": "`chat_query_cache` is keyed by store/query/price window and not by user or session. If the JSONB `results` payload ever contains `result_id`, `position`, or other session-scoped fields, those values can be returned to another user or reused in a different session, causing stale result addressing or cross-session references.",
+      "suggestion": "Ensure cached payloads are normalized to store/query-level product data only and explicitly strip `result_id` and `position` before writing to the cache. Regenerate those fields for the current session after retrieval, and keep add-to-feed ownership checks scoped to the authenticated user/session."
+    },
+    {
+      "file": "requirements-test.txt",
+      "line": 44,
+      "severity": "WARNING",
+      "category": "architecture",
+      "title": "Robots parser dependency is visible only in test requirements",
+      "description": "The visible diff adds `robotexclusionrulesparser` to `requirements-test.txt`, but the chatbot runtime uses `services/common/robots.py`. If the runtime requirements do not also include this package, production containers may fail or silently fall back to a stub parser.",
+      "suggestion": "Confirm `services/chatbot/requirements.txt` includes `robotexclusionrulesparser>=1.7.1`, or make the import optional with an explicit, logged fallback and tests for both paths."
+    },
+    {
+      "file": "infra/sql/migrations/0011_chatbot_query_cache.sql",
+      "line": 90,
+      "severity": "WARNING",
+      "category": "performance",
+      "title": "Backfill scans and updates the entire chat_search_results table",
+      "description": "The backfill uses a window function over the whole `chat_search_results` table and then updates matching rows. On a large table this can be expensive and may hold locks for a long time, especially when combined with index creation in the same migration.",
+      "suggestion": "Batch the backfill by session or created_at range, run it before creating the new index if possible, and consider `CREATE INDEX CONCURRENTLY` if the migration is expected to run on a live database. Add a maintenance script or separate migration step if online upgrades are supported."
+    },
+    {
+      "file": "infra/sql/schema/postgres.sql",
+      "line": 392,
+      "severity": "INFO",
+      "category": "correctness",
+      "title": "search_id is nullable and not necessarily chronological",
+      "description": "`chat_search_results.search_id` is nullable and generated as a UUID. If application logic resolves the 'newest search group' by ordering on `search_id`, random UUIDs will not provide chronological ordering. Nullable `search_id` also allows ungrouped rows to accumulate if a writer forgets to set it.",
+      "suggestion": "After the backfill, consider making `search_id NOT NULL` for new rows, or resolve the newest group by `created_at`/a time-ordered identifier. Document the intended ordering mechanism clearly."
+    },
+    {
+      "file": "plans/chatbot-enhancements.md",
+      "line": 1,
+      "severity": "INFO",
+      "category": "documentation",
+      "title": "Plan references migration registration not visible in the diff",
+      "description": "The plan states that migration 0011 is registered in `scripts/db-bootstrap.sh` and guarded by a test, but the visible diff does not show that registration. If the migration is not registered, fresh bootstraps may miss it.",
+      "suggestion": "Ensure `scripts/db-bootstrap.sh` applies `0011_chatbot_query_cache.sql` and that the migration-file test is updated to cover it."
+    }
+  ],
+  "missed_tests": [
+    "Migration test: apply `0011_chatbot_query_cache.sql` to a legacy `chat_search_results` table and verify it executes successfully.",
+    "Migration test: rerun the migration after live rows have been inserted and verify rows with `search_id` set are not overwritten.",
+    "Migration test: a session with one live result at position 0 and a valid `search_id` is not re-ranked on rerun.",
+    "Migration test: a session with multiple one-result searches is not collapsed into one legacy search group.",
+    "Cache test: DB negative cache entries are promoted into memory using the negative TTL, not the positive TTL.",
+    "Cache test: mutating a returned cached result list does not mutate the cached entry.",
+    "Cache test: DB cache writes handle UUID, Decimal, datetime, or other non-JSON-serializable fields by normalizing them first.",
+    "Cache test: cached payloads do not contain `result_id` or `position` from another session.",
+    "Cache test: cache key normalization handles case, whitespace, numeric formats, and store/query delimiter collisions.",
+    "Arabic NLP tests: standalone `أf`, `10أf`, combining-mark normalization, and multiplier handling are parsed correctly.",
+    "Store health tests: cooldown after `STORE_FAILURE_THRESHOLD`, status reporting, and cached/blocked/timeout states.",
+    "Concurrency tests: `SEARCH_DEADLINE` cancels pending stores and does not hang the reply.",
+    "Security tests: add-to-feed rejects sessions owned by another user and does not leak foreign session existence.",
+    "Rate-limit tests: limiter keys on JWT `sub` when present and falls back to client address."
+  ],
+  "positive_notes": [
+    "The PR has a clear architectural plan and documents the performance, cache, health, and result-addressing goals well.",
+    "The cache design is thoughtfully bounded: TTL/LRU in memory, DB mirror, negative caching, profile versioning, and sweep behavior.",
+    "Store health and cooldowns make failures observable instead of silently dropping stores.",
+    "Robots handling is centralized in `services/common` and the visible compose default is strict.",
+    "Stable result addressing through `position` and `search_id` is a good foundation for multi-turn chat UX.",
+    "The migration attempts to be idempotent and keeps schema and migration definitions aligned."
+  ]
+}
+
+
+Review completed in 256.7s
+Decision: REQUEST_CHANGES (confidence: 0.78)
+Findings: 7
+## PR Review: chatbot: cached searches, LLM-free extraction, store health and stable result ids
+Model: local/qwen-27b
+Files changed: 32
+WARNING: Diff truncated from 318203 to 50000 chars
+
+### Raw LLM Response
+{
+  "summary": "This PR adds chatbot caching, store health, stable result addressing, shared JWT/robots groundwork, and supporting SQL migrations. The visible migration and schema work is unusually well documented and mostly idempotent, but the migration has operational locking/backfill risks and the newest-search-group design needs a clearer sortable identifier or query strategy.",
+  "decision": "REQUEST_CHANGES",
+  "confidence": 0.74,
+  "findings": [
+    {
+      "file": "infra/sql/migrations/0011_chatbot_query_cache.sql",
+      "line": 90,
+      "severity": "WARNING",
+      "category": "performance",
+      "title": "Index swap and schema change can block production traffic",
+      "description": "The migration drops an existing index and creates a replacement index without CONCURRENTLY, and also adds NOT NULL columns to chat_search_results. On a populated table this can hold ACCESS EXCLUSIVE or SHARE locks and block reads/writes for the duration of the migration.",
+      "suggestion": "If chat_search_results is large, perform the index swap with DROP INDEX CONCURRENTLY and CREATE INDEX CONCURRENTLY outside the migration transaction, or schedule a maintenance window. Consider adding nullable columns first, backfilling, then enforcing constraints in a separate low-impact migration."
+    },
+    {
+      "file": "infra/sql/migrations/0011_chatbot_query_cache.sql",
+      "line": 121,
+      "severity": "WARNING",
+      "category": "performance",
+      "title": "Legacy backfill UPDATE is unbounded",
+      "description": "The backfill updates every row where search_id IS NULL and uses a correlated NOT EXISTS check. On a large chat_search_results table this can become a long-running UPDATE that holds locks and delays the migration.",
+      "suggestion": "Batch the backfill by session or by id range, or precompute sessions that need backfilling. Add an index supporting the scan, for example on (search_id, session_id, created_at, id), and run the backfill with LIMIT batches if the table may be large."
+    },
+    {
+      "file": "infra/sql/schema/postgres.sql",
+      "line": 396,
+      "severity": "WARNING",
+      "category": "correctness",
+      "title": "search_id does not by itself identify the newest search group",
+      "description": "The schema comment says the newest group is what ordinal and reference-less add-to-feed resolve against, but search_id is a nullable UUID. If it is generated with gen_random_uuid or uuid4, ordering by search_id is not chronological, and the added index does not help find the newest group.",
+      "suggestion": "Use a sortable identifier such as UUID v7, or add a search_created_at/search_seq column and index (session_id, search_created_at DESC, position). Alternatively, document that the service resolves the newest group by max(created_at) and add an index on (session_id, created_at DESC)."
+    },
+    {
+      "file": "infra/sql/migrations/0011_chatbot_query_cache.sql",
+      "line": 52,
+      "severity": "INFO",
+      "category": "correctness",
+      "title": "Column type retype guard does not validate data",
+      "description": "The migration retypes expires_at_epoch from floating-point types to BIGINT based only on the column type. If an earlier revision accidentally stored fractional values, the ALTER can fail.",
+      "suggestion": "Either validate that no fractional values exist before altering, or use a rounding cast such as expires_at_epoch::BIGINT with an explicit rounding rule, and log affected rows if any are found."
+    },
+    {
+      "file": "infra/sql/schema/postgres.sql",
+      "line": 400,
+      "severity": "INFO",
+      "category": "correctness",
+      "title": "Add defensive CHECK constraints for cache payload and position",
+      "description": "chat_query_cache.results is JSONB but is not constrained to be an array, and chat_search_results.position has no non-negative check. These constraints would catch service bugs earlier.",
+      "suggestion": "Add CHECK (jsonb_typeof(results) = 'array') to chat_query_cache and CHECK (position >= 0) to chat_search_results, matching the service's expected shape."
+    },
+    {
+      "file": "infra/sql/migrations/0011_chatbot_query_cache.sql",
+      "line": 142,
+      "severity": "INFO",
+      "category": "correctness",
+      "title": "Backfill intentionally leaves legacy rows unreachable when a session already has live rows",
+      "description": "The backfill refuses to touch any session that already contains a non-null search_id. This avoids interleaving old and new results, but it leaves old NULL rows permanently unreachable for that session.",
+      "suggestion": "This may be acceptable, but document it clearly and consider adding a test that mixed legacy/live sessions behave as intended. If old rows should remain addressable, archive or re-stamp them under a separate legacy search id."
+    },
+    {
+      "file": "review_history.md",
+      "line": 14314,
+      "severity": "INFO",
+      "category": "documentation",
+      "title": "Generated review history is committed in the feature PR",
+      "description": "The PR adds a large generated review history block, including stale findings that do not match the current diff, such as a soft robots mode when the compose file now sets strict. This bloats the diff and can confuse future reviewers.",
+      "suggestion": "Keep generated review artifacts out of feature branches, or commit them in a separate chore branch. If they must be kept, mark them clearly as historical and avoid including stale findings in the main feature diff."
+    },
+    {
+      "file": "requirements-test.txt",
+      "line": 44,
+      "severity": "INFO",
+      "category": "architecture",
+      "title": "Verify runtime robots dependency is present",
+      "description": "The visible diff adds robotexclusionrulesparser to requirements-test.txt. The chatbot runtime uses the shared robots handler, so the production requirements must also include it or the runtime must have a documented fallback.",
+      "suggestion": "Confirm services/chatbot/requirements.txt and any scraper runtime requirements include robotexclusionrulesparser, or make the import optional with a clear fallback and test coverage."
+    },
+    {
+      "file": "docker-compose.yml",
+      "line": 96,
+      "severity": "INFO",
+      "category": "architecture",
+      "title": "Many new tunables are strings without startup validation",
+      "description": "The compose file introduces many cache, crawl, robots, and store-health environment variables. If any are invalid, the service may fail late or silently fall back to defaults.",
+      "suggestion": "Validate and normalize these settings at startup, log the effective configuration, and fail fast on invalid integers or unsupported robots modes."
+    }
+  ],
+  "missed_tests": [
+    "Migration 0011 applied to a populated chat_search_results table with legacy rows, mixed legacy/live sessions, and rerun idempotency.",
+    "Backfill ordering, deterministic legacy search_id generation, and behavior when a session already contains a live search_id.",
+    "Index swap behavior on a large table, including whether queries remain fast after dropping the old index.",
+    "Cache profile version invalidation and negative TTL preservation after a DB restart.",
+    "Add-to-feed result_id ownership checks: a foreign session or user cannot resolve another user's result_id.",
+    "Arabic ordinal resolution after restart and after multiple searches in the same session.",
+    "Store health cooldown after STORE_FAILURE_THRESHOLD consecutive failures and GET /chatbot/stores status reporting.",
+    "Robots strict mode: Crawl-Delay honored exactly, and delays above MAX_CRAWL_DELAY reported as robots_denied.",
+    "Rate limiting keyed by JWT sub with fallback to client address."
+  ],
+  "positive_notes": [
+    "The migration and schema are heavily commented and explain the operational and product-addressing intent.",
+    "The migration is mostly idempotent and guards type/constraint changes with catalog checks.",
+    "The cache table design includes an expiry index and separates positive and negative TTLs.",
+    "Stable result addressing with position and search_id is a strong fix for restart-sensitive ordinal commands.",
+    "The PR adds substantial test coverage and documents the intended architecture in a plan file."
+  ]
+}
+
+
+Review completed in 272.7s
+Decision: REQUEST_CHANGES (confidence: 0.74)
+Findings: 9
+## PR Review: chatbot: cached searches, LLM-free extraction, store health and stable result ids
+Model: local/qwen-27b
+Files changed: 32
+WARNING: Diff truncated from 319868 to 50000 chars
+
+### Raw LLM Response
+{
+  "summary": "This PR adds a substantial chatbot performance/reliability layer: deterministic extraction, bounded caches, store health, stable result addressing, shared JWT/robots handling, and supporting SQL migrations. The visible infra/schema changes are well documented and mostly idempotent, but the diff is truncated so core chatbot logic cannot be fully verified; several migration/index/cache/security verification points should be addressed before merge.",
+  "decision": "REQUEST_CHANGES",
+  "confidence": 0.72,
+  "findings": [
+    {
+      "file": "infra/sql/migrations/0011_chatbot_query_cache.sql",
+      "line": 100,
+      "severity": "WARNING",
+      "category": "performance",
+      "title": "New composite index may not support the documented newest-search lookup",
+      "description": "The migration comments say the newest search group is found by created_at, but the created index is (session_id, search_id, position). A query that needs the latest search_id for a session, e.g. WHERE session_id = ? AND search_id IS NOT NULL ORDER BY created_at DESC LIMIT 1, cannot use this index for the created_at ordering and may still scan all rows in the session.",
+      "suggestion": "Add an index that matches the actual lookup, such as (session_id, created_at DESC) or (session_id, search_id, created_at), or change the service query to use an indexed path. Add a regression test that asserts the query plan or at least the behavior for many searches in one session."
+    },
+    {
+      "file": "infra/sql/migrations/0011_chatbot_query_cache.sql",
+      "line": 105,
+      "severity": "WARNING",
+      "category": "correctness",
+      "title": "Nullable search_id can allow new ungrouped rows to break ordinal resolution",
+      "description": "search_id is nullable to support legacy rows, but if any new insert path forgets to set it, those rows become invisible to the grouped read or can mix with legacy fallback behavior. The migration does not enforce that post-migration rows are grouped.",
+      "suggestion": "Ensure every insert path sets search_id and add tests for that. If feasible, add a trigger or post-migration constraint that rejects NULL search_id for rows created after the migration, or make the service fail loudly when search_id is missing."
+    },
+    {
+      "file": "infra/sql/migrations/0011_chatbot_query_cache.sql",
+      "line": 31,
+      "severity": "WARNING",
+      "category": "architecture",
+      "title": "Index creation inside a single-transaction migration can lock chat_search_results",
+      "description": "CREATE INDEX IF NOT EXISTS is run inside the migration transaction. On a large chat_search_results table this can block writes for the duration of the index build. The migration notes the table is small, but production data volume may differ.",
+      "suggestion": "Either document the maintenance window, pre-create the index concurrently outside the bootstrap transaction, or split the migration so index creation can use CREATE INDEX CONCURRENTLY in a non-transactional step."
+    },
+    {
+      "file": "infra/sql/schema/postgres.sql",
+      "line": 405,
+      "severity": "WARNING",
+      "category": "security",
+      "title": "Global query cache must not persist session/user-specific fields",
+      "description": "chat_query_cache is keyed globally by store/query/price window. If cached results include result_id, position, session_id, user_id, or other session-specific fields, they can leak across sessions or cause stale result addressing. The plan says these fields are stripped, but the schema itself does not prevent it.",
+      "suggestion": "Strip session-specific fields before cache writes and add tests proving cached payloads are detached and free of result_id/position/session/user fields. Consider a DB CHECK or normalized cache payload shape if practical."
+    },
+    {
+      "file": "requirements-test.txt",
+      "line": 44,
+      "severity": "WARNING",
+      "category": "architecture",
+      "title": "Runtime dependency for robots parsing is not visible in production requirements",
+      "description": "The visible diff adds robotexclusionrulesparser only to requirements-test.txt. The chatbot runtime uses services/common/robots.py, so if services/chatbot/requirements.txt does not also include this package, production may fall back to a stub or fail.",
+      "suggestion": "Confirm and, if needed, add robotexclusionrulesparser to services/chatbot/requirements.txt. Add a container smoke test that imports the chatbot entrypoint and the robots helper."
+    },
+    {
+      "file": "infra/sql/migrations/0011_chatbot_query_cache.sql",
+      "line": 150,
+      "severity": "WARNING",
+      "category": "testing",
+      "title": "Backfill intentionally leaves legacy rows unreachable in mixed sessions",
+      "description": "The backfill excludes sessions that already contain grouped rows, so old NULL-search_id rows in mixed sessions remain NULL and are ignored by grouped reads. This may be intentional, but it changes user-visible history for sessions that were partially upgraded.",
+      "suggestion": "Add tests for mixed sessions: old rows plus new grouped rows. Confirm the UI/service behavior is acceptable, or backfill old rows into a synthetic legacy group if they should remain visible."
+    },
+    {
+      "file": "infra/sql/schema/postgres.sql",
+      "line": 415,
+      "severity": "INFO",
+      "category": "performance",
+      "title": "chat_query_cache has no index on store_id",
+      "description": "The cache table has a unique cache_key and an expiry index, but store_id is only a plain column. If store health or cache diagnostics query by store_id, these queries may scan the table.",
+      "suggestion": "Add an index on store_id if any operational query filters by store. Otherwise document that store_id is only for human inspection."
+    },
+    {
+      "file": "infra/sql/schema/postgres.sql",
+      "line": 400,
+      "severity": "INFO",
+      "category": "performance",
+      "title": "Cache payload size is not enforced at the database level",
+      "description": "CACHE_MAX_PRODUCTS is configured in docker-compose, but chat_query_cache.results is unconstrained JSONB. A service bug could insert oversized result sets and grow the cache table despite the intended cap.",
+      "suggestion": "Consider a CHECK constraint such as jsonb_array_length(results) <= 40, or enforce the cap in a helper and add tests for oversized payloads."
+    },
+    {
+      "file": "infra/sql/migrations/0011_chatbot_query_cache.sql",
+      "line": 120,
+      "severity": "INFO",
+      "category": "correctness",
+      "title": "Backfill uses md5-derived UUIDs",
+      "description": "md5(session_id::text || '#chatbot-pre-0011-legacy')::uuid is deterministic and likely valid, but md5 is non-cryptographic and collisions are theoretically possible across different sessions.",
+      "suggestion": "Use a deterministic UUID generator such as uuid_generate_v5(session_id) if available, or document the collision risk. At minimum, add a test that the cast works on the target PostgreSQL version."
+    },
+    {
+      "file": "plans/chatbot-enhancements.md",
+      "line": 1,
+      "severity": "INFO",
+      "category": "documentation",
+      "title": "Plan file describes future PRs that are not implemented in this diff",
+      "description": "The plan includes PR 2, PR 3, and PR 4 work (intents, Flutter UX, analytics streams) that are not visible in this PR. This is useful context but can confuse reviewers about the actual scope.",
+      "suggestion": "Add a short note at the top saying this PR implements only PR 1, or split the plan into per-PR sections with explicit scope."
+    }
+  ],
+  "missed_tests": [
+    "Migration idempotency on a fresh database and on a database where an earlier revision of 0011 already ran, including the expires_at_epoch retype and named constraint guard.",
+    "Backfill behavior for legacy sessions with no grouped rows, sessions with mixed legacy/grouped rows, and sessions with no rows.",
+    "Arabic ordinal resolution after a restart against backfilled legacy rows and against the newest of two searches in the same session.",
+    "Cache writes strip session-specific fields such as result_id, position, session_id, and user_id before storing global cache entries.",
+    "Negative DB cache entries preserve CACHE_NEGATIVE_TTL_SECONDS instead of being promoted into memory with the positive TTL.",
+    "CACHE_PROFILE_VERSION invalidates all cache entries when changed.",
+    "Docker image import smoke test for services/common/auth.py and services/common/robots.py from the chatbot container.",
+    "Runtime dependency test that robotexclusionrulesparser is available in the chatbot image, not only in test requirements.",
+    "Strict robots behavior: disallowed paths are refused, declared Crawl-Delay is honored exactly, and delays above MAX_CRAWL_DELAY report robots_denied.",
+    "Add-to-feed ownership check: a guessed session_id owned by another user cannot expose or add another user's search results.",
+    "product_url deprecated alias is scoped to the current session/user and cannot add arbitrary products.",
+    "Store health/cooldown behavior after container restart, especially whether blocked-store cooldowns are persisted or only in-process."
+  ],
+  "positive_notes": [
+    "The migration is idempotent and carefully guards column type changes and named constraints.",
+    "The cache table design is thoughtful: hashed cache keys, expiry index, negative TTL, sweep strategy, and profile-version invalidation are documented.",
+    "The backfill is deterministic, scoped to legacy rows, and avoids re-ranking sessions that already have grouped rows.",
+    "docker-compose now requires SECRET_KEY and defaults robots handling to strict, which is a security improvement.",
+    "The plan is unusually thorough and ties each change to a concrete audit finding.",
+    "The PR adds test-only sqlglot validation for schema/migration files, which should catch malformed SQL before bootstrap."
+  ]
+}
+
+
+Review completed in 266.0s
+Decision: REQUEST_CHANGES (confidence: 0.72)
+Findings: 10
+## PR Review: Tracker deletion, reliable tracker list behind HTTPS proxies, chatbot price ranges
+Model: local/qwen-27b
+Files changed: 43
+WARNING: Diff truncated from 393448 to 50000 chars
+
+### Raw LLM Response
+{
+  "summary": "This PR adds Flutter tracker deletion with confirmation, fixes tracker loading behind HTTPS proxies by requesting the exact trailing-slash route, improves live-mode error handling with a retry action, and introduces chatbot query caching plus SQL migration support for cached searches and ordered result groups. The visible changes are generally thoughtful and well documented, but there are several correctness, performance, testing, and security follow-ups that should be addressed before merge.",
+  "decision": "REQUEST_CHANGES",
+  "confidence": 0.78,
+  "findings": [
+    {
+      "file": "flutter-app/lib/src/ui/dashboard/dashboard_page.dart",
+      "line": 208,
+      "severity": "WARNING",
+      "category": "correctness",
+      "title": "Async delete flow should guard against disposed widget/ref",
+      "description": "After awaiting the confirmation dialog, the code uses ref.read and ScaffoldMessenger. If the user navigates away while the dialog is open or immediately after confirming, the widget and Riverpod ref may be disposed before the async continuation completes. The code guards ScaffoldMessenger with context.mounted, but it does not guard the repository read or the overall continuation.",
+      "suggestion": "Capture the repository before awaiting the dialog, and check both context.mounted and ref.mounted before using them after the await. For example: final repository = ref.read(trackedItemsRepositoryProvider); if (!context.mounted || !ref.mounted) return false; before deletion and before showing snackbars."
+    },
+    {
+      "file": "flutter-app/lib/src/ui/dashboard/dashboard_page.dart",
+      "line": 131,
+      "severity": "INFO",
+      "category": "correctness",
+      "title": "Swipe direction may not be 'left' in Arabic RTL layouts",
+      "description": "Dismissible uses DismissDirection.endToStart, which is direction-aware. In an Arabic RTL layout, endToStart may correspond to a right swipe rather than the described 'swipe left' interaction.",
+      "suggestion": "Verify the intended behavior in RTL. If the requirement is always swipe left regardless of locale, use an explicit direction such as DismissDirection.rightToLeft, or add a widget test for Arabic RTL."
+    },
+    {
+      "file": "flutter-app/lib/src/data/repositories/tracked_items_repository.dart",
+      "line": 100,
+      "severity": "INFO",
+      "category": "testing",
+      "title": "DELETE route proxy/redirect behavior is not covered",
+      "description": "The GET route was changed to '/tracked-items/' to avoid a proxy redirect issue. deleteTrackedItem uses '/tracked-items/$itemId' without a trailing slash. This is probably correct, but the PR description emphasizes proxy redirect behavior, so the DELETE route should be explicitly verified and tested.",
+      "suggestion": "Add a repository test that asserts the DELETE request path and response handling, and verify against the API route definition and proxy behavior."
+    },
+    {
+      "file": "docker-compose.yml",
+      "line": 110,
+      "severity": "WARNING",
+      "category": "performance",
+      "title": "Cache sweep tied to writes can leave expired rows in long-running read-heavy workloads",
+      "description": "The cache is swept on the first cache read of a process and then every CACHE_SWEEP_EVERY_WRITES writes. If a long-running process mostly hits the cache and performs few writes, expired rows may remain in chat_query_cache for a long time.",
+      "suggestion": "Add a periodic sweep on reads after a time interval, or sweep when the number of expired rows exceeds a threshold. Alternatively, document that this is acceptable because the table is bounded by distinct queries and process restarts."
+    },
+    {
+      "file": "docker-compose.yml",
+      "line": 110,
+      "severity": "WARNING",
+      "category": "performance",
+      "title": "CACHE_MAX_PRODUCTS bounds product count but not payload size",
+      "description": "The cache caps each entry at CACHE_MAX_PRODUCTS products, but a single product can still contain large titles, URLs, image URLs, or other JSON fields. JSONB rows can therefore grow beyond the intended memory/storage budget.",
+      "suggestion": "Cap the serialized JSON size per cache entry, strip unnecessary fields before caching, or enforce a maximum byte size in addition to the product count."
+    },
+    {
+      "file": "services/chatbot/main.py",
+      "line": 1,
+      "severity": "WARNING",
+      "category": "security",
+      "title": "Rate limiting is ineffective behind a shared proxy source address",
+      "description": "The PR description notes that behind Tailscale Funnel all clients share one source address, so the chatbot's 10/minute IP-based rate limit is shared between users. This can cause legitimate users to be throttled by unrelated traffic and weakens abuse protection.",
+      "suggestion": "Key the limiter by authenticated user id when available, fall back to IP only for unauthenticated requests, and ensure proxy headers are trusted only when the deployment is behind a known proxy."
+    },
+    {
+      "file": "infra/sql/migrations/0011_chatbot_query_cache.sql",
+      "line": 120,
+      "severity": "WARNING",
+      "category": "performance",
+      "title": "Legacy backfill uses a correlated NOT EXISTS subquery",
+      "description": "The backfill excludes sessions that already have grouped rows using a correlated NOT EXISTS for each unstamped row. This is acceptable for small chat_search_results tables, but it can become expensive if the table grows.",
+      "suggestion": "Precompute sessions that already have search_id values and use an anti-join or CTE, or add a guard/limit if the migration is expected to run against large historical data."
+    },
+    {
+      "file": "infra/sql/migrations/0011_chatbot_query_cache.sql",
+      "line": 105,
+      "severity": "INFO",
+      "category": "performance",
+      "title": "Index creation is not concurrent",
+      "description": "The migration creates idx_chat_search_results_session_search inside the migration transaction. This can lock chat_search_results during upgrade. The comment justifies this because the table is small, but it is still an operational consideration.",
+      "suggestion": "Keep as-is if deployments are small, or provide an operational note that large deployments should create the index concurrently outside the migration transaction."
+    },
+    {
+      "file": "plans/chatbot-enhancements.md",
+      "line": 1,
+      "severity": "INFO",
+      "category": "documentation",
+      "title": "Plan file referenced in PR description differs from added plan",
+      "description": "The PR description references plans/tracker-delete-and-price-ranges.md, but the visible diff adds plans/chatbot-enhancements.md. This may be intentional, but it makes the documented plan harder to follow.",
+      "suggestion": "Ensure the referenced plan file exists, update the PR description, or link the added plan explicitly."
+    },
+    {
+      "file": "services/chatbot/arabic_nlp.py",
+      "line": 1,
+      "severity": "WARNING",
+      "category": "testing",
+      "title": "Known Arabic price-parsing failures remain",
+      "description": "The PR description reports 2 failing Arabic price-parsing tests that also fail on the base branch. Since this PR explicitly adds Arabic range parsing and manual Arabic examples, leaving known failing tests unaddressed reduces confidence in the feature.",
+      "suggestion": "Fix the Arabic parser, or mark the tests as expected failures with a clear issue reference and reason. Do not leave failing tests in the suite without an explicit marker."
+    },
+    {
+      "file": "services/chatbot/search_service.py",
+      "line": 1,
+      "severity": "WARNING",
+      "category": "correctness",
+      "title": "Price-range parser should define behavior for reversed or invalid ranges",
+      "description": "The new intent supports min_price and max_price, but the visible diff does not show how reversed ranges such as '70k to 40k' or impossible ranges where min > max are handled. This can produce empty or confusing results.",
+      "suggestion": "Swap reversed ranges, reject invalid ranges with a user-facing message, or clamp min/max consistently. Add tests for reversed ranges, min only, max only, and min == max."
+    },
+    {
+      "file": "services/chatbot/search_service.py",
+      "line": 1,
+      "severity": "WARNING",
+      "category": "testing",
+      "title": "Truncated JSON recovery needs strict malformed-output tests",
+      "description": "The PR recovers complete products from a cut-off LLM answer. If recovery is too permissive, it may include partial products or malformed entries. The visible diff does not show tests proving that incomplete JSON objects are excluded.",
+      "suggestion": "Add tests for truncated JSON with complete products, partial final product, malformed JSON, and empty recovery. Ensure only fully valid product objects are returned."
+    },
+    {
+      "file": "services/chatbot/main.py",
+      "line": 1,
+      "severity": "WARNING",
+      "category": "security",
+      "title": "Ownership checks for tracker deletion and chatbot add-to-feed should be tested",
+      "description": "Tracker deletion cascades to price history, and chatbot add-to-feed resolves results by session. If these endpoints do not enforce user/session ownership, a guessed id could expose or modify another user's data. The visible diff does not show tests for this.",
+      "suggestion": "Add tests that user A cannot delete user B's tracker, and user A cannot resolve or add results from user B's chat session."
+    }
+  ],
+  "missed_tests": [
+    "Flutter repository test for deleteTrackedItem success, HTTP 404, network failure, and unexpected response.",
+    "Flutter widget test for swipe-to-delete: confirmation shown, cancel slides card back, successful delete removes card, failed delete shows error and slides card back.",
+    "Flutter widget test for live-mode tracker load error showing the retry button and invalidating the provider.",
+    "Flutter widget test for demo-mode fallback when the tracker request fails.",
+    "Flutter localization test or snapshot test for new English and Arabic tracker deletion strings.",
+    "SQL migration test that legacy chat_search_results rows are backfilled with deterministic search_id and 0-based positions.",
+    "SQL migration idempotency test: rerunning 0011 does not re-rank already stamped rows or duplicate cache table constraints.",
+    "SQL migration test that sessions with already grouped rows are not backfilled.",
+    "Chatbot parser tests for English and Arabic price ranges, over/under, 'k' amounts, reversed ranges, min only, max only, and invalid ranges.",
+    "Chatbot tests for dropping irrelevant products and preserving relevant products when the LLM marks relevance.",
+    "Chatbot tests for truncated JSON recovery, ensuring partial products are not included.",
+    "Cache tests for CACHE_PROFILE_VERSION invalidation, negative cache TTL, detached copies, and cache key normalization.",
+    "Security tests for tracker deletion authorization and chatbot session ownership."
+  ],
+  "positive_notes": [
+    "The trailing-slash fix directly addresses the proxy redirect/cleartext failure in release builds and is well explained in comments.",
+    "Live-mode load failures now surface an error with an explicit retry action instead of silently showing an empty list.",
+    "Demo mode remains separate from live mode, preserving sample data fallback where appropriate.",
+    "New English and Arabic strings are added consistently through the localization pipeline.",
+    "The cache design includes TTLs, negative-result TTLs, profile versioning, bounded product counts, and expiry indexing.",
+    "The SQL migration is idempotent, handles fresh versus migrated databases, and carefully backfills legacy result positions.",
+    "The PR description documents known limitations and manual verification steps clearly."
+  ]
+}
+
+
+Review completed in 447.7s
+Decision: REQUEST_CHANGES (confidence: 0.78)
+Findings: 13

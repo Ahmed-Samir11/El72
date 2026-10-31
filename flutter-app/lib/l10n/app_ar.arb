@@ -213,6 +213,18 @@
 
   "priceRefreshFailed": "تعذّر تحديث السعر الآن - حاول مرة أخرى بعد قليل.",
 
+  "deleteTrackerTitle": "حذف المتابعة؟",
+  "deleteTrackerBody": "إيقاف متابعة \"{title}\"؟ سيتم حذف سجل أسعاره.",
+  "@deleteTrackerBody": {
+    "placeholders": {
+      "title": { "type": "String" }
+    }
+  },
+  "deleteTrackerConfirm": "حذف",
+  "trackerDeleted": "تم حذف المتابعة",
+  "retry": "إعادة المحاولة",
+  "trackerDeleteFailed": "تعذّر حذف المتابعة - حاول مرة أخرى.",
+
   "genericLoadError": "فشل في التحميل.\n{error}",
   "@genericLoadError": {
     "placeholders": {

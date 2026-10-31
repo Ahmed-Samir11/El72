@@ -58,9 +58,9 @@ $$;
 DROP INDEX IF EXISTS idx_affiliate_clicks_clicked_at;
 
 -- Affiliate CTR per user and per surface (§11 KPI family). The canonical
-single-column created_at index is (re)created too: an old tree only had
-idx_affiliate_clicks_clicked_at, which the rename left as a legacy-named
-duplicate we then drop.
+-- single-column created_at index is (re)created too: an old tree only had
+-- idx_affiliate_clicks_clicked_at, which the rename left as a legacy-named
+-- duplicate we then drop.
 CREATE INDEX IF NOT EXISTS idx_affiliate_clicks_created_at
     ON affiliate_clicks(created_at);
 CREATE INDEX IF NOT EXISTS idx_affiliate_clicks_user_time

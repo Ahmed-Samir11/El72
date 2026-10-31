@@ -31,8 +31,12 @@ class TrackedItemsRepository {
     bool includeInactive = false,
   }) async {
     try {
+      // Trailing slash matches the route exactly. Without it the API answers
+      // with a 307 redirect whose Location is http:// when it runs behind a
+      // TLS-terminating proxy (e.g. Tailscale Funnel), and a release build
+      // refuses cleartext, so the list failed to load.
       final response = await _apiClient.dio.get(
-        '/tracked-items',
+        '/tracked-items/',
         queryParameters: {'include_inactive': includeInactive},
       );
       if (response.statusCode == 200 && response.data is List) {
@@ -43,10 +47,14 @@ class TrackedItemsRepository {
         return list;
       }
     } on DioException catch (_) {
-      // Fall through to demo fallback below.
+      // Demo mode falls back to sample data; live mode must surface the
+      // failure instead of showing an empty list as if there were no
+      // trackers.
+      if (AppConfig.demoMode) return DemoData.trackedItems;
+      rethrow;
     }
     if (AppConfig.demoMode) return DemoData.trackedItems;
-    return const [];
+    throw Exception('Unexpected response while loading trackers');
   }
 
   /// Create a tracker from a single product URL (any supported store).
@@ -88,5 +96,11 @@ class TrackedItemsRepository {
   /// HTTP errors, including the 429 throttle (refresh tried < 1 min ago).
   Future<void> refreshPrice(int itemId) async {
     await _apiClient.dio.post('/tracked-items/$itemId/refresh');
+  }
+
+  /// Delete a tracker (the backend cascades to its stores and prices).
+  /// Throws [DioException] on HTTP errors (e.g. 404 if already deleted).
+  Future<void> deleteTrackedItem(int itemId) async {
+    await _apiClient.dio.delete('/tracked-items/$itemId');
   }
 }

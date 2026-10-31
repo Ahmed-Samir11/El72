@@ -106,6 +106,8 @@ def db_session():
                 "currency TEXT NOT NULL DEFAULT 'EGP', "
                 "url TEXT NOT NULL, "
                 "image_url TEXT, "
+                "position INTEGER NOT NULL DEFAULT 0, "
+                "search_id TEXT, "
                 "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
             )
         )
@@ -498,6 +500,521 @@ def test_add_to_feed_no_results(
     data = response.json()
     assert "no search results" in data["message"].lower()
     assert data["tracker_created"] is False
+
+
+# ---------------------------------------------------------------------------
+# Speed PR: result ids, store status, rate-limit keys
+# ---------------------------------------------------------------------------
+
+
+def _capture_add_posts(monkeypatch):
+    """Record the URL the chatbot asks the API service to track."""
+    import httpx
+
+    posted = []
+    original_post = httpx.AsyncClient.post
+
+    class MockResponse:
+        status_code = 200
+
+        def json(self):
+            return {"message": "Tracker created successfully"}
+
+        def raise_for_status(self):
+            pass
+
+    async def mock_post(self, url, **kwargs):
+        if "/tracked-items/from-url" in url:
+            posted.append(kwargs.get("json", {}).get("url"))
+            return MockResponse()
+        return original_post(self, url, **kwargs)
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
+    return posted
+
+
+def test_add_to_feed_by_result_id(
+    client, override_db, override_auth, db_session, auth_headers, monkeypatch
+):
+    """A result_id adds exactly that product, not merely the newest row."""
+    import uuid as _uuid
+
+    posted = _capture_add_posts(monkeypatch)
+
+    session_id = str(_uuid.uuid4())
+    first_id = _uuid.uuid4()
+    second_id = _uuid.uuid4()
+    db_session.execute(
+        text("INSERT INTO chat_sessions (id, user_id) VALUES (:id, :user_id)"),
+        {"id": session_id, "user_id": 1},
+    )
+    for row_id, position, url in (
+        (first_id, 0, "https://example.com/first"),
+        (second_id, 1, "https://example.com/second"),
+    ):
+        db_session.execute(
+            text(
+                "INSERT INTO chat_search_results "
+                "(id, session_id, store_id, product_title, price_local, "
+                "currency, url, position) "
+                "VALUES (:id, :sid, :store_id, :title, :price, :currency, :url, "
+                ":position)"
+            ),
+            {
+                "id": str(row_id),
+                "sid": session_id,
+                "store_id": "amazon_eg",
+                "title": f"Product {position}",
+                "price": 100.0 + position,
+                "currency": "EGP",
+                "url": url,
+                "position": position,
+            },
+        )
+    db_session.commit()
+
+    response = client.post(
+        "/chatbot/add-to-feed",
+        json={"session_id": session_id, "result_id": str(second_id)},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    # The confirmation names the product the result_id pointed at.
+    assert "Product 1" in response.json()["message"]
+    assert posted == ["https://example.com/second"]
+
+
+def test_a_result_id_must_belong_to_the_session_that_asks(
+    client, override_db, override_auth, db_session, auth_headers, monkeypatch
+):
+    """Another session's row id addresses nothing here.
+
+    Searches are saved per session, so the lookup is scoped by session_id: a
+    foreign id (or a forged one) must not track someone else's product, and
+    cached payloads must not smuggle one in either.
+    """
+    import uuid as _uuid
+
+    posted = _capture_add_posts(monkeypatch)
+
+    owner, intruder = str(_uuid.uuid4()), str(_uuid.uuid4())
+    for sid in (owner, intruder):
+        db_session.execute(
+            text("INSERT INTO chat_sessions (id, user_id) VALUES (:id, :user_id)"),
+            {"id": sid, "user_id": 1},
+        )
+    owned_row = _uuid.uuid4()
+    db_session.execute(
+        text(
+            "INSERT INTO chat_search_results "
+            "(id, session_id, store_id, product_title, price_local, "
+            "currency, url, position) "
+            "VALUES (:id, :sid, :store_id, :title, :price, :currency, :url, "
+            ":position)"
+        ),
+        {
+            "id": str(owned_row),
+            "sid": owner,
+            "store_id": "amazon_eg",
+            "title": "Someone else's monitor",
+            "price": 100.0,
+            "currency": "EGP",
+            "url": "https://example.com/private",
+            "position": 0,
+        },
+    )
+    db_session.commit()
+
+    response = client.post(
+        "/chatbot/add-to-feed",
+        json={"session_id": intruder, "result_id": str(owned_row)},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert posted == []
+    assert "private" not in response.json()["message"]
+
+
+def test_add_to_feed_rejects_a_session_owned_by_another_user(
+    client, override_db, override_auth, db_session, auth_headers, monkeypatch
+):
+    """A session id is not a capability.
+
+    Result rows are already scoped by session_id, but the session itself is
+    named by the client, so ownership has to be checked: guessing another
+    user's session uuid must not track their products, must not reveal the
+    session exists, and must not write into it.
+    """
+    import uuid as _uuid
+
+    posted = _capture_add_posts(monkeypatch)
+
+    victim_session = str(_uuid.uuid4())
+    row_id = _uuid.uuid4()
+    db_session.execute(
+        text("INSERT INTO chat_sessions (id, user_id) VALUES (:id, :user_id)"),
+        {"id": victim_session, "user_id": 1},
+    )
+    db_session.execute(
+        text(
+            "INSERT INTO chat_search_results "
+            "(id, session_id, store_id, product_title, price_local, "
+            "currency, url, position) "
+            "VALUES (:id, :sid, :store_id, :title, :price, :currency, :url, "
+            ":position)"
+        ),
+        {
+            "id": str(row_id),
+            "sid": victim_session,
+            "store_id": "amazon_eg",
+            "title": "Private monitor",
+            "price": 100.0,
+            "currency": "EGP",
+            "url": "https://example.com/private",
+            "position": 0,
+        },
+    )
+    db_session.commit()
+
+    # A different user asks, with the same (valid) token headers.
+    app.dependency_overrides[get_authenticated_user_id] = lambda: 2
+
+    response = client.post(
+        "/chatbot/add-to-feed",
+        json={"session_id": victim_session, "result_id": str(row_id)},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    # No tracker was created, the product is not named, and the victim's
+    # session stayed untouched.
+    assert posted == []
+    body = response.json()["message"]
+    assert "Private" not in body and "private" not in body
+    messages = db_session.execute(
+        text("SELECT COUNT(*) FROM chat_messages WHERE session_id = :sid"),
+        {"sid": victim_session},
+    ).scalar()
+    assert messages == 0
+
+
+def test_add_command_resolves_position_against_saved_results(
+    client, override_db, override_auth, db_session, auth_headers, monkeypatch
+):
+    """An Arabic "add number 2" command adds the second saved result.
+
+    The reference is resolved from the chat_search_results rows, so it survives
+    a container restart that clears the in-process cache.
+    """
+    from services.chatbot import main as main_module
+
+    posted = _capture_add_posts(monkeypatch)
+
+    class FakeSearchService:
+        async def search_with_intent(self, message):
+            return {
+                "query": "laptop",
+                "search_query": "laptop",
+                "display_query": "laptop",
+                "min_price": None,
+                "max_price": None,
+                "language": "en",
+                "store_status": [],
+                "results": [
+                    {
+                        "store_id": "amazon_eg",
+                        "store_name": "Amazon.eg",
+                        "title": "Lenovo LOQ Laptop",
+                        "url": "https://example.com/first",
+                        "price": 64999.0,
+                        "currency": "EGP",
+                    },
+                    {
+                        "store_id": "noon_eg",
+                        "store_name": "Noon.eg",
+                        "title": "Acer Nitro V Laptop",
+                        "url": "https://example.com/second",
+                        "price": 55799.0,
+                        "currency": "EGP",
+                    },
+                ],
+            }
+
+    monkeypatch.setattr(main_module, "search_service", FakeSearchService())
+
+    search_response = client.post(
+        "/chatbot/message",
+        json={"message": "laptop"},
+        headers=auth_headers,
+    )
+    assert search_response.status_code == 200
+    assert len(search_response.json()["search_results"]) == 2
+    # The server owns session identity; the follow-up uses the id it returned.
+    session_id = search_response.json()["session_id"]
+
+    # "أضف رقم 2" = "add it, number 2" in Egyptian Arabic.
+    add_response = client.post(
+        "/chatbot/message",
+        json={"message": "أضف رقم 2", "session_id": session_id},
+        headers=auth_headers,
+    )
+
+    assert add_response.status_code == 200
+
+    assert posted == ["https://example.com/second"]
+    # The session is Arabic, so the confirmation comes back in Arabic.
+    assert add_response.json()["message"].startswith("تمام!")
+
+
+def test_a_backfilled_session_resolves_the_nth_ordinal_from_the_db(
+    client, override_db, override_auth, db_session, auth_headers, monkeypatch
+):
+    """Positions are stored 0-based; the Arabic ordinal counts from 1.
+
+    Migration 0011 re-ranks rows written before the column existed as 0..n-1
+    inside their session, so "add, number 3" must land on the row whose position
+    is 2 — and it must resolve from the database, because this process never
+    saw the search that produced them.
+    """
+    import uuid as _uuid
+
+    from services.chatbot import main as main_module
+
+    posted = _capture_add_posts(monkeypatch)
+
+    session_id = _uuid.uuid4()
+    db_session.execute(
+        text("INSERT INTO chat_sessions (id, user_id) VALUES (:id, :user_id)"),
+        {"id": str(session_id), "user_id": 1},
+    )
+    for position, url in enumerate(
+        (
+            "https://example.com/first",
+            "https://example.com/second",
+            "https://example.com/third",
+        )
+    ):
+        db_session.execute(
+            text(
+                "INSERT INTO chat_search_results "
+                "(id, session_id, store_id, product_title, price_local, "
+                "currency, url, position) "
+                "VALUES (:id, :sid, :store_id, :title, :price, :currency, :url, "
+                ":position)"
+            ),
+            {
+                "id": str(_uuid.uuid4()),
+                "sid": str(session_id),
+                "store_id": "amazon_eg",
+                "title": f"Product {position}",
+                "price": 100.0 + position,
+                "currency": "EGP",
+                "url": url,
+                "position": position,
+            },
+        )
+    db_session.commit()
+
+    # The in-process view of this session must be cold: the answer comes from
+    # the ranked rows, exactly as it does after a container restart.
+    main_module._active_results_cache.clear()
+
+    response = client.post(
+        "/chatbot/message",
+        # "\u0623\u0636\u0641 \u0631\u0642\u0645 3" — "add, number 3" in
+        # Egyptian Arabic, written with escapes so the glyphs cannot mojibake.
+        json={
+            "message": "\u0623\u0636\u0641 \u0631\u0642\u0645 3",
+            "session_id": str(session_id),
+        },
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert posted == ["https://example.com/third"]
+
+
+def test_a_second_search_does_not_mix_into_the_first_one(
+    client, override_db, override_auth, db_session, auth_headers, monkeypatch
+):
+    """An ordinal counts the newest search of the session, not every row it holds.
+
+    Each search restarts at position 0, so a session holding two searches has
+    two rows per position. The search id groups them; with the in-process view
+    cleared the grouped read picks the newest group, and "num ber 2" lands on
+    the second product of the *latest* search.
+    """
+    from services.chatbot import main as main_module
+
+    posted = _capture_add_posts(monkeypatch)
+
+    searches = [
+        [
+            {
+                "store_id": "amazon_eg",
+                "store_name": "Amazon.eg",
+                "title": "First search, first result",
+                "url": "https://example.com/a1",
+                "price": 10.0,
+                "currency": "EGP",
+            },
+            {
+                "store_id": "amazon_eg",
+                "store_name": "Amazon.eg",
+                "title": "First search, second result",
+                "url": "https://example.com/a2",
+                "price": 20.0,
+                "currency": "EGP",
+            },
+        ],
+        [
+            {
+                "store_id": "noon_eg",
+                "store_name": "Noon.eg",
+                "title": "Second search, first result",
+                "url": "https://example.com/b1",
+                "price": 30.0,
+                "currency": "EGP",
+            },
+            {
+                "store_id": "noon_eg",
+                "store_name": "Noon.eg",
+                "title": "Second search, second result",
+                "url": "https://example.com/b2",
+                "price": 40.0,
+                "currency": "EGP",
+            },
+        ],
+    ]
+
+    class TwoSearchService:
+        def __init__(self):
+            self.calls = 0
+
+        async def search_with_intent(self, message):
+            result = {
+                "query": message,
+                "search_query": message,
+                "display_query": message,
+                "min_price": None,
+                "max_price": None,
+                "language": "en",
+                "store_status": [],
+                "results": searches[min(self.calls, len(searches) - 1)],
+            }
+            self.calls += 1
+            return result
+
+    monkeypatch.setattr(main_module, "search_service", TwoSearchService())
+
+    first = client.post(
+        "/chatbot/message", json={"message": "laptop"}, headers=auth_headers
+    )
+    second = client.post(
+        "/chatbot/message", json={"message": "phone"}, headers=auth_headers
+    )
+    assert len(first.json()["search_results"]) == 2
+    session_id = second.json()["session_id"]
+
+    # Drop the in-process view so the ordinal has to be answered from the
+    # database, the way it is after a container restart.
+    main_module._active_results_cache.clear()
+
+    response = client.post(
+        "/chatbot/message",
+        json={
+            # "\u0623\u0636\u0641 \u0631\u0642\u0645 2" — "add, number 2".
+            "message": "\u0623\u0636\u0641 \u0631\u0642\u0645 2",
+            "session_id": session_id,
+        },
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert posted == ["https://example.com/b2"]
+
+
+def test_store_status_endpoint(client, override_db, override_auth):
+    """The client can ask which stores answered and which did not."""
+    response = client.get("/chatbot/stores")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["stores"] == []
+
+    # Warm the health tracker, then the endpoint reports it.
+    from services.chatbot import main as main_module
+
+    main_module.search_service.store_health.record(
+        "amazon_eg", "blocked", detail="HTTP 403"
+    )
+
+    response = client.get("/chatbot/stores")
+    entry = response.json()["stores"][0]
+
+    assert entry["store_id"] == "amazon_eg"
+    assert entry["state"] == "blocked"
+    assert entry["detail"] == "HTTP 403"
+    main_module.search_service.store_health.reset()
+
+
+def test_message_over_the_length_bound_is_rejected(
+    client, override_db, override_auth, auth_headers
+):
+    """The 500-char bound is enforced by the model, before any work happens."""
+    response = client.post(
+        "/chatbot/message",
+        json={"message": "x" * 501},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 422
+
+
+def test_session_timestamps_are_reported(
+    client, override_db, override_auth, db_session
+):
+    """A session reports real created/updated times, not nulls."""
+    from services.chatbot.main import _ensure_session
+
+    session_id = str(_ensure_session(db_session, None, 1))
+
+    response = client.get(f"/chatbot/sessions/{session_id}")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["created_at"] is not None
+    assert data["updated_at"] is not None
+
+
+def test_rate_limit_key_prefers_the_authenticated_user(monkeypatch):
+    """Rate limits are per user, so one user's searches cannot throttle another."""
+    from unittest.mock import MagicMock
+
+    from services.chatbot.main import rate_limit_key
+
+    monkeypatch.setenv("SECRET_KEY", TEST_SECRET_KEY)
+    request = MagicMock(
+        headers={"Authorization": f"Bearer {_make_token('+201234567890')}"}
+    )
+
+    assert rate_limit_key(request) == "user:+201234567890"
+
+
+def test_rate_limit_key_falls_back_to_the_client_ip(monkeypatch):
+    """A missing or forged token must not disable the limit."""
+    from unittest.mock import MagicMock
+
+    from services.chatbot.main import rate_limit_key
+
+    monkeypatch.setenv("SECRET_KEY", TEST_SECRET_KEY)
+    request = MagicMock(headers={"Authorization": "Bearer not-a-jwt"})
+    request.client.host = "10.0.0.1"
+    request.client.port = 1234
+
+    assert rate_limit_key(request) == "10.0.0.1"
 
 
 # ---------------------------------------------------------------------------

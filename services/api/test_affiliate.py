@@ -264,6 +264,24 @@ def test_unauthenticated_caller_is_still_logged(client, monkeypatch):
     assert row.affiliate_url == row.target_url
 
 
+@pytest.mark.parametrize("token", ["not-a-jwt", "a.b.c"])
+def test_invalid_token_is_logged_as_anonymous(client, monkeypatch, token):
+    # A stale or malformed token must not turn the public redirect into an
+    # error: the click is kept, just without a user.
+    monkeypatch.delenv("AMAZON_AFFILIATE_TAG", raising=False)
+
+    resp = client.get(
+        "/affiliate/redirect",
+        params={"target_url": AMAZON_URL, "source": "app"},
+        headers={"Authorization": f"Bearer {token}"},
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 307
+    (row,) = _rows(client)
+    assert row.user_id is None
+
+
 def test_plain_http_merchant_link_is_refused(client):
     # The tagged URL carries the store's monetization credential; a
     # plaintext http hop could strip or intercept it, so attribution is

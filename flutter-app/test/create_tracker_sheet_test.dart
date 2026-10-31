@@ -26,6 +26,9 @@ class _OutOfCreditsRepository implements TrackedItemsRepository {
 
   @override
   Future<void> refreshPrice(int itemId) async {}
+
+  @override
+  Future<void> deleteTrackedItem(int itemId) async {}
 }
 
 /// Repository stub whose `createFromUrl` always fails with a generic error.
@@ -42,6 +45,9 @@ class _FailingRepository implements TrackedItemsRepository {
 
   @override
   Future<void> refreshPrice(int itemId) async {}
+
+  @override
+  Future<void> deleteTrackedItem(int itemId) async {}
 }
 
 /// Repository stub whose `createFromUrl` always succeeds.
@@ -56,6 +62,9 @@ class _SuccessRepository implements TrackedItemsRepository {
 
   @override
   Future<void> refreshPrice(int itemId) async {}
+
+  @override
+  Future<void> deleteTrackedItem(int itemId) async {}
 }
 
 Widget _wrap(Widget child, {TrackedItemsRepository? repository}) {

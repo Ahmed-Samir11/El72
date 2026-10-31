@@ -102,6 +102,39 @@ services:
       SECRET_KEY: "${SECRET_KEY:?Set SECRET_KEY in .env}"
       LLM_BASE_URL: "http://host.docker.internal:8080/v1"
       LLM_MODEL: "E:\\LocalModels\\NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB.gguf"
+      # Search performance tunables (see services/chatbot/search_service.py).
+      # Every configured store is crawled for a search, but at most
+      # MAX_CONCURRENT_STORES at a time, each bounded by CRAWL_TIMEOUT and the
+      # whole search bounded by SEARCH_DEADLINE; results are cached for
+      # CACHE_TTL_SECONDS and a repeatedly failing store cools down for
+      # STORE_COOLDOWN_SECONDS.
+      MAX_CONCURRENT_STORES: "8"
+      CRAWL_TIMEOUT: "25"
+      SEARCH_DEADLINE: "100"
+      CACHE_TTL_SECONDS: "900"
+      # Empty results are negative entries with a shorter life, and an entry
+      # holds at most CACHE_MAX_PRODUCTS products: the cache table then grows
+      # with demand (distinct queries) rather than with store page size.
+      CACHE_NEGATIVE_TTL_SECONDS: "120"
+      CACHE_MAX_PRODUCTS: "40"
+      # Expired rows are swept on the first read of a process and then every N
+      # writes, so the cache table cannot grow with write volume. CACHE_PROFILE
+      # VERSION is a tag inside the cache key: bump it whenever crawling or
+      # extraction changes what a store page yields, which invalidates every
+      # entry at once instead of waiting out the TTL.
+      CACHE_SWEEP_EVERY_WRITES: "20"
+      CACHE_PROFILE_VERSION: "v1"
+      STORE_FAILURE_THRESHOLD: "3"
+      STORE_COOLDOWN_SECONDS: "600"
+      # Longest Crawl-Delay the chatbot will wait out. A store declaring more is
+      # reported as robots_denied, never crawled faster than it asked; raise
+      # this deliberately if a store's declared delay is worth the wait.
+      MAX_CRAWL_DELAY: "10"
+      # Honor robots.txt like the scraper does (services/scraper/.env.example
+      # ships STRICT too): "strict" refuses disallowed paths and honors a
+      # declared Crawl-Delay exactly. "soft" logs but still crawls, which is only
+      # for local debugging against a store whose robots.txt is misconfigured.
+      ROBOTS_TXT_MODE: "strict"
     ports:
       - "0.0.0.0:8003:8003"
     healthcheck:

@@ -361,22 +361,39 @@ Six findings, none CRITICAL. The two hook items are the same ones answered in
 rounds 7-9; the one WARNING open for six rounds straight (`addTrackerFailedText`)
 cannot be closed here, because the Arabic wording belongs to the maintainer.
 
-### Follow-up owed on the stacked PR #44
+### The stacked PR #44 after this merge
 
-This branch's history was rewritten (revert pairs collapsed), so #44's branch
-no longer has it as an ancestor: `git merge-base` falls back to `3bc37d0`, and
-GitHub now shows 17 commits and +6 903 for #44 — work that belongs to #43.
+Collapsing this branch's history moved it off the line #44 was built on: `git
+merge-base` fell back to `3bc37d0`, so #44 was diffing against a base from before
+this work. Fixed by taking the merged base into #44's branch — a merge, not a
+rebase, because that branch already contains a merged PR (#45) and rewriting it
+would force-push history that had already been reviewed.
 
-`git rebase feat/chatbot-results-and-tracker-fixes feat/tracker-delete-and-price-ranges`
-fixes it. Measured on a scratch branch (nothing pushed): the first conflict is
-`services/chatbot/search_service.py` while reapplying `55515d0` *"chatbot: price
-ranges, drop off-topic products, find in-budget items"*, against the rounds 4-6
-rewrite of that same file. Nine files overlap in total
-(`search_service.py`, `main.py`, `models.py`, `arabic_nlp.py`, `i18n.py`,
-`test_main.py`, `test_migration_files.py`, `dashboard_page.dart`,
-`scripts/db-bootstrap.sh`). Resolve them against this branch's current
-tool-calling schema and search shape rather than the old one, then force-push
-#44's branch.
+One correction to what was claimed here earlier: the +6 903 shown for #44 was
+**mostly its own work** — PR #45's cache, extractors and store health ride on
+that branch — not duplicated work from here. The real defect was the stale
+merge-base. After the fix, `git diff main...feat/tracker-delete-and-price-ranges`
+touches 42 files and **none** of this PR's new files: `url_guard.dart`,
+`toast_title.dart`, `url_policy.py` and `test_hook_config.py` are absent.
+
+Resolution record (9 hunks in 4 files; everything else auto-merged):
+
+| File | Resolution |
+| --- | --- |
+| `services/chatbot/arabic_nlp.py` | Took #44's version: it already folds the hamza alef onto the bare alef (`strip_arabic_marks`), keeps scale words out of the spelled-number table and handles a standalone "thousand". The auto-merged `test_arabic_nlp.py` carries both sides' assertions and passes against it (7 passed) |
+| `services/chatbot/models.py` | Union: #44's `store_status` field plus this PR's `tracker_created` flag |
+| `services/chatbot/main.py` | Kept #44's `TTLLRUCache` imports — the cache module lives on that branch, this PR never had it |
+| `services/chatbot/search_service.py` | Kept #44's crawl4ai config imports and the `min_price`/`max_price` tool-calling schema and examples; this PR's side is the older three-key schema. The prompt lines inherited that way ran past the line-length gate (8 ruff errors before, 0 after) and were rewrapped at ASCII boundaries, leaving the Arabic example text byte-identical |
+
+The cache expiry test was measured against a 50 ms TTL with a 10 ms sleep, which
+starved once in a full-suite run; the margin was widened, same contract. Gates on
+the merged tree: `pytest services -q` → 892 passed, 1 skipped; `ruff check
+services` clean; `flutter analyze --no-pub` clean; `flutter test` 263 passed.
+#44 was then retargeted to `main`, which it merges cleanly (`mergeable_state: clean`).
+
+Environment note: `sqlglot>=25.4.1`, declared in `requirements-test.txt`, was not
+installed here, so `test_sql_files_parse_as_postgres` errored instead of running
+until it was. That gate is only as strong as an installed test environment.
 
 ## Test strategy
 - API: link parsing (parametrized), title persisted and exposed (incl.
