@@ -474,3 +474,31 @@ and are fixed:
   in `services/chatbot/i18n.py` for both locales; the Arabic is generated
   (owner-approved, #51) and has not been natively reviewed.
 
+### PR B pre-merge pass (owner decisions H6/H7 given, 2026-10-31)
+
+- **Merged the updated #50 branch**, which carries `origin/main`. One conflict,
+  `tracked_items_repository.dart`: #44's `deleteTrackedItem` and this branch's
+  number helpers both kept. #52's test stubs implemented `TrackedItemsRepository`
+  without #44's `deleteTrackedItem`, which would not have compiled after the merge;
+  they now implement it.
+- **WS4 unblocked.** #51 authorizes generated Arabic, and the owner confirmed H6 (free
+  tracking, cap = 100) and asked for H7 now. The seven keys (`fairUseTitle`,
+  `fairUseChip`, `fairUseUncapped`, `fairUseCapBody`, `creationWaitTitle`,
+  `creationWaitBody`, `creationWaitBodyNoCount`) are in both ARB files in one commit.
+  The Arabic follows `creditsRemaining`'s full plural set and the existing
+  "متتبع" vocabulary; it is generated and not natively reviewed.
+- **One copy change against the table above:** the cap body says "Delete one to make
+  room", not "Close one". Delete is the action the app actually offers
+  (swipe-to-delete, #44), and the dialog's way-out button is `navTrackers`, which
+  returns to that list. `close` is used by the wait dialog instead.
+- **The interim behavior is replaced by the MS2 dialogs.** Cap (409): title
+  `reachedLimitTitle`, body `fairUseCapBody(cap)` only when the cap is a number,
+  actions `navTrackers` / `notNow`. Rate (429): `creationWaitTitle`, body
+  `creationWaitBody(ceil(retryAfterSeconds))` or `creationWaitBodyNoCount` when the
+  wait is 0, action `close`. Profile (free build): `fairUseTitle` with
+  `fairUseChip` or `fairUseUncapped` from `/usage/limits`; while loading or after
+  an error the heading stands alone. Deleting a tracker now also refreshes
+  `usageLimitsProvider`.
+- **H7 done:** `.agents/instructions.md`'s revenue-model line describes free tracking
+  bounded by fair use, with the paid rails flagged off; `business_research.md`
+  records H6/H7 as resolved.

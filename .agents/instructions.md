@@ -5,7 +5,7 @@
 El72 is a **price tracking platform for the Egyptian market**. Users track products across Amazon Egypt, Noon, and Jumia. The system scrapes prices every 30 seconds, detects anomalies with ML, and sends WhatsApp alerts when deals hit.
 
 **Target market**: Egyptian consumers buying electronics, phones, GPUs, and high-ticket items.  
-**Revenue model**: Freemium — credit-based tracking, priority notifications, and affiliate commissions (see `business_research.md` for all models under consideration).
+**Revenue model**: Free tracking bounded by fair use (a per-user cap of 100 active trackers and a short gap between creations), monetized through affiliate commissions. The credit and Paymob rails stay in the code, flagged off for the release (`CREDITS_ENFORCEMENT=fair_use`, `PAYMENTS_ENABLED=false`, Flutter `ENABLE_PAYMENTS=false`), so a paid tier is a re-enable rather than a rebuild. See `business_research.md` and `plans/p3-free-tracker-model-alignment.md`.
 
 ---
 
