@@ -249,6 +249,6 @@ CREATE INDEX IF NOT EXISTS idx_app_events_session_ts ON app_events (session_id, 
 
 -- Retention: events older than the window are dropped chunk by chunk by the
 -- TimescaleDB job scheduler, so a funnel trail cannot outlive its purpose.
--- 180 days is the plan's default pending the owner's decision (plans/p4 H9).
+-- 180 days: the owner's decision on plans/p4 H9 (2026-10-31).
 -- Third argument: if_not_exists, so re-running this file is a no-op.
 SELECT add_retention_policy('app_events', INTERVAL '180 days', true);

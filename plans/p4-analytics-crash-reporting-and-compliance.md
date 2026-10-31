@@ -2,7 +2,8 @@
 
 **Branch:** `feat/app-analytics-and-crash-reporting` (off `main`)
 **Date:** 2026-10-29
-**Status:** Approved 2026-10-31 (owner: "start implementing"); MS1 in progress
+**Status:** Approved 2026-10-31 (owner: "start implementing"); MS1 merged (#53, #54);
+H2 and H9 decided 2026-10-31; MS2 waits on the owner's Sentry setup
 **Series:** 4 of 5 release-priority plans (P1 affiliate clicks, P2 notifications, P3
 free-tracker model, **P4**, P5 activation/trust). P4 consumes P1/P2/P3 call sites, so
 MS3+ of this plan lands after those PRs merge; MS1-MS2 are independent.
@@ -259,7 +260,7 @@ new), `flutter analyze`, `dart format --set-exit-if-changed lib test`.
 
 | Risk / Question | Mitigation / Needed decision |
 |---|---|
-| **H2** — Sentry account/DSN, or Firebase project for Crashlytics | must be created by the owner; CI fails a `v*` release without it (explicit guard, like `RELEASE_VERSION_CODE`) |
+| **H2** — decided: Sentry. The account, DSN and `sentry_flutter` dependency come from the owner | must be created by the owner; CI fails a `v*` release without it (explicit guard, like `RELEASE_VERSION_CODE`) |
 | Instrumenting user behavior is a **privacy commitment**, not just code | first-party only, no ad SDKs, retention window, no raw query text, deletion path in-app; report sources cite the Egyptian PDPC — the policy must be written before the event table ships, not after |
 | Low-volume cohort makes rates noisy | rollups return cohort-level counts with denominators; every dashboard number labelled ESTIMATE per report §1 |
 | Telemetry latency/expense on 2G/3G sessions (report §6: data costs matter in Egypt) | batched, ≤1 request per 30 s, never on the tap path, dropped rather than re-queued unboundedly |
@@ -271,9 +272,9 @@ new), `flutter analyze`, `dart format --set-exit-if-changed lib test`.
 ### ⚠️ Human input required
 | # | Item | Why |
 |---|---|---|
-| H2 | Crash-reporting provider (Sentry DSN or Firebase project + `google-services.json`) | cannot be generated in-repo; also gates P2 MS3 |
+| H2 | ~~Crash-reporting provider~~ **Decided 2026-10-31: Sentry.** Still needed from the owner: the Sentry project's DSN as the `SENTRY_DSN` Actions secret, and `sentry_flutter` added to `flutter-app/pubspec.yaml` | cannot be generated in-repo; also gates P2 MS3 |
 | H8 | Support contact + hosted privacy-policy URL, and the Arabic policy/UI strings | legal review + native reviewer; `PI_MODEL=qwen3.8-flash-next-coder-iq1_m` forbids authoring Arabic here (`.agents/AGENTS.md`, Skill 10) — land `app_en.arb` + `app_ar.arb` together on owner-supplied text |
-| H9 | Retention window and the erasure policy wording | business/legal decision that the report explicitly asks the team not to overstate |
+| H9 | ~~Retention window~~ **Decided 2026-10-31: 180 days for raw events; MS3's daily rollups (no user id) may be kept longer.** The erasure wording in the privacy policy stays open with H8 (MS5) | business/legal decision that the report explicitly asks the team not to overstate |
 
 ---
 
@@ -340,10 +341,10 @@ What changed since this plan was drafted, and how it changes the approach:
   every 30 s).
 - **Event store unavailable:** when `TIMESCALE_URL` is unset the endpoint answers 503 and
   stores nothing; the client drops the batch (fire-and-forget).
-- **Retention (pending H9):** `add_retention_policy('app_events', INTERVAL '180 days')`
+- **Retention (H9, decided 180 days):** `add_retention_policy('app_events', INTERVAL '180 days')`
   in the TimescaleDB migration (the compose image `timescale/timescaledb:2.14.2-pg15`
-  ships the policy scheduler), so no separate cleanup job is needed. The window is the
-  plan's default until the owner decides H9.
+  ships the policy scheduler), so no separate cleanup job is needed. The owner confirmed
+  the window on 2026-10-31.
 - **Erasure:** `DELETE /auth/me` now also sets `affiliate_clicks.user_id = NULL` in the same
   PostgreSQL transaction and `app_events.user_id = NULL` in TimescaleDB, the TimescaleDB
   update first: if it fails the request fails before the account is anonymized, so the
@@ -365,7 +366,7 @@ What changed since this plan was drafted, and how it changes the approach:
 Not in MS1, by the milestone table: the client (MS2), `/metrics/funnel` (MS3), the remaining
 call sites (MS4), and the policy, data-safety and in-app deletion work (MS5). The plan's
 "ingest lag" alert is dropped: ingest is synchronous, so there is no server-side queue to lag.
-H9 (retention window) is still open; 180 days is the default until the owner decides.
+H9 was later decided as 180 days (see "Owner decisions" below).
 
 ### Review round 1 (HGM on local Qwen 3.8 Flash Next, PR #53) — verdicts
 
@@ -404,3 +405,27 @@ Bootstrap applies the `app_events` block twice (schema file, then migration), so
 success also shows the block can be re-run. Locally the tests skip unless
 `EL72_LIVE_TIMESCALE_URL` is set; CI sets `EL72_LIVE_DB_REQUIRED=1` so the job cannot
 pass by skipping.
+
+### Owner decisions (2026-10-31)
+
+- **H9, retention: 180 days for raw `app_events`.** The longest MS3 measure (D90
+  retention) needs at most 90 days of history, so 180 days leaves room without keeping each
+  person's trail longer than the funnel needs. MS3's daily rollups carry no `user_id` and
+  may be kept longer, so seasonal comparisons (Ramadan, White Friday) survive a 180-day
+  raw window. Account deletion still unlinks events immediately, whatever the window. The
+  migration already applies 180 days, so no SQL change is needed; the live CI test pins
+  the job to the migration's interval.
+- **H2, crash reporting: Sentry (`sentry_flutter`).** The app has no Firebase today
+  (`pubspec.yaml`; P2 push does not use it), so Crashlytics would add a Firebase project
+  and `google-services.json` for crash reports alone. Sentry needs one DSN passed as a
+  dart-define, and its `beforeSend` hook strips phone numbers, the token and URL queries
+  on the device (§4 step 4). The owner chose Sentry's org `el72`; picking the EU data
+  region is recommended for the privacy policy.
+- **Before MS2 can start, the owner:**
+  1. Adds `sentry_flutter` to `flutter-app/pubspec.yaml` and runs `flutter pub get`
+     (package installs are the owner's, per `.github/copilot-instructions.md`).
+  2. Saves the Flutter project's DSN as the GitHub Actions secret `SENTRY_DSN`. A `v*`
+     release build fails without it (§4 step 5).
+
+  The DSN is not a secret in the strict sense (it ships inside the app), but it stays out
+  of the repo so a fork or a debug build does not report into the production project.
