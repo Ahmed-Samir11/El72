@@ -486,17 +486,17 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String alertPreviousPrice(String price) {
-    return 'السعر السابق $price';
+    return 'السعر السابق: $price';
   }
 
   @override
   String alertCurrentPrice(String price) {
-    return 'السعر الحالي $price';
+    return 'السعر الحالي: $price';
   }
 
   @override
   String alertDiscountLine(String percent) {
-    return 'الخصم $percent%';
+    return 'الخصم: $percent%';
   }
 
   @override

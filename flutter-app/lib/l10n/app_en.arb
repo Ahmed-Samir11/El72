@@ -66,7 +66,7 @@
   "createPriceTracker": "Create Price Tracker",
   "productUrlHint": "Product URL (any supported store)",
   "targetPriceHint": "Target Price (Optional)",
-  "trackerCreated": "👄 Tracker created! Price alerts for this product appear in the Alerts tab.",
+  "trackerCreated": "✅ Tracker created! Price alerts for this product appear in the Alerts tab.",
   "startTracking": "Start Tracking",
   "errorPrefix": "Error: {error}",
   "@errorPrefix": {

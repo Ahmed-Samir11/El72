@@ -353,7 +353,7 @@ abstract class AppLocalizations {
   /// No description provided for @trackerCreated.
   ///
   /// In en, this message translates to:
-  /// **'👄 Tracker created! Price alerts for this product appear in the Alerts tab.'**
+  /// **'✅ Tracker created! Price alerts for this product appear in the Alerts tab.'**
   String get trackerCreated;
 
   /// No description provided for @startTracking.

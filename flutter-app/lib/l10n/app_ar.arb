@@ -304,9 +304,9 @@
   "alertsEmpty": "لا السعر تنبيهات.",
   "alertsLoadFailed": "فشل في تحميل تنبيهات.\n{error}",
   "alertsUnopenedBadge": "{count} تنبيهات نشطة",
-  "alertPreviousPrice": "السعر السابق {price}",
-  "alertCurrentPrice": "السعر الحالي {price}",
-  "alertDiscountLine": "الخصم {percent}%",
+  "alertPreviousPrice": "السعر السابق: {price}",
+  "alertCurrentPrice": "السعر الحالي: {price}",
+  "alertDiscountLine": "الخصم: {percent}%",
   "alertWhenToday": "اليوم",
   "alertWhenDaysAgo": "{days} يوم",
   "@alertsLoadFailed": {

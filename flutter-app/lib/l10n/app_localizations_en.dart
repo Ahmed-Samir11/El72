@@ -143,7 +143,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get trackerCreated =>
-      '👄 Tracker created! Price alerts for this product appear in the Alerts tab.';
+      '✅ Tracker created! Price alerts for this product appear in the Alerts tab.';
 
   @override
   String get startTracking => 'Start Tracking';
