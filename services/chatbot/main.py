@@ -781,6 +781,56 @@ def _session_language(db: Session, session_id: UUID) -> str:
     return detect_language(row.content)
 
 
+def _positive_int(value: Any) -> Optional[int]:
+    """[value] as a positive int, else None (bools and prose are not counts)."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)) and value > 0:
+        return int(value)
+    if isinstance(value, str) and value.strip().isdigit() and int(value) > 0:
+        return int(value)
+    return None
+
+
+def _creation_refusal_message(
+    response: httpx.Response, language: str, title: str
+) -> Optional[str]:
+    """The user-facing reply for a tracker the API refused to create, or None.
+
+    The API reports fair-use refusals as structured ``detail`` objects (see
+    services/api/usage_limits.py) so that no client parses prose: ``409`` with
+    ``code: fair_use_cap`` when the account is at its cap, and ``429`` with
+    ``code: creation_rate_limit`` plus ``Retry-After`` when trackers are created
+    too fast. A ``409`` without that code is the duplicate-tracker refusal.
+    """
+    if response.status_code not in (409, 429):
+        return None
+    try:
+        body = response.json()
+    except ValueError:
+        body = {}
+    detail = body.get("detail") if isinstance(body, dict) else None
+    code = detail.get("code") if isinstance(detail, dict) else None
+
+    if response.status_code == 429:
+        seconds = None
+        if isinstance(detail, dict):
+            seconds = _positive_int(detail.get("retry_after_seconds"))
+        if seconds is None:
+            seconds = _positive_int(response.headers.get("Retry-After"))
+        if seconds is None:
+            return format_message("creation_rate_limited_plain", language)
+        return format_message("creation_rate_limited", language, seconds=seconds)
+
+    if code == "fair_use_cap":
+        active = _positive_int(detail.get("active_trackers"))
+        cap = _positive_int(detail.get("cap"))
+        if active is None or cap is None:
+            return format_message("fair_use_cap_plain", language)
+        return format_message("fair_use_cap", language, active=active, cap=cap)
+    return format_message("already_tracking", language, title=title)
+
+
 async def _handle_add_to_feed(
     request: AddToFeedRequest,
     db: Session,
@@ -879,6 +929,16 @@ async def _handle_add_to_feed(
                 json=payload,
                 headers={"Authorization": auth_header} if auth_header else None,
             )
+
+            refusal = _creation_refusal_message(response, language, title)
+            if refusal is not None:
+                _save_message(db, request.session_id, "bot", refusal)
+                return ChatResponse(
+                    message=refusal,
+                    session_id=request.session_id,
+                    search_results=[],
+                    language=language,
+                )
 
             if response.status_code == 402:
                 detail = response.json().get("detail", "Insufficient credits")

@@ -17,6 +17,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
 from services.chatbot.main import (
+    _creation_refusal_message,
     app,
     get_authenticated_user_id,
     get_db,
@@ -473,6 +474,119 @@ def test_add_to_feed_insufficient_credits(
     data = response.json()
     msg = data["message"].lower()
     assert "credit" in msg or "insufficient" in msg
+
+
+def _api_refusal(status_code, detail, headers=None):
+    import httpx
+
+    return httpx.Response(status_code, json={"detail": detail}, headers=headers)
+
+
+@pytest.mark.parametrize("language", ["en", "ar"])
+def test_fair_use_cap_refusal_names_the_cap(language):
+    response = _api_refusal(
+        409, {"code": "fair_use_cap", "active_trackers": 100, "cap": 100}
+    )
+    message = _creation_refusal_message(response, language, "Laptop")
+    assert "100" in message
+
+
+def test_fair_use_cap_refusal_without_usable_numbers_stays_neutral():
+    response = _api_refusal(
+        409, {"code": "fair_use_cap", "active_trackers": "many", "cap": True}
+    )
+    message = _creation_refusal_message(response, "en", "Laptop")
+    assert "most products" in message
+    assert "many" not in message and "True" not in message
+
+
+def test_duplicate_tracker_refusal_is_not_reported_as_a_cap():
+    response = _api_refusal(409, "This product is already being tracked")
+    message = _creation_refusal_message(response, "en", "Laptop")
+    assert message == "You're already tracking 'Laptop'."
+
+
+def test_rate_limit_refusal_reads_the_structured_countdown():
+    response = _api_refusal(
+        429,
+        {"code": "creation_rate_limit", "retry_after_seconds": 42},
+        headers={"Retry-After": "99"},
+    )
+    assert "42 seconds" in _creation_refusal_message(response, "en", "Laptop")
+
+
+def test_rate_limit_refusal_falls_back_to_the_header_then_to_no_number():
+    header_only = _api_refusal(429, "Rate limit exceeded", {"Retry-After": "7"})
+    assert "7 seconds" in _creation_refusal_message(header_only, "en", "Laptop")
+
+    http_date = _api_refusal(
+        429, "Rate limit exceeded", {"Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT"}
+    )
+    assert _creation_refusal_message(http_date, "en", "Laptop") == (
+        "You're adding products a little fast. Try again in a moment."
+    )
+
+
+def test_other_statuses_are_not_creation_refusals():
+    import httpx
+
+    assert _creation_refusal_message(httpx.Response(402), "en", "Laptop") is None
+    assert _creation_refusal_message(httpx.Response(500), "en", "Laptop") is None
+
+
+def test_add_to_feed_reports_the_fair_use_cap(
+    client, override_db, override_auth, db_session, auth_headers
+):
+    """A fair-use backend refuses at the cap with 409; the user is told why."""
+    import uuid as _uuid
+
+    import httpx
+
+    session_id = str(_uuid.uuid4())
+    db_session.execute(
+        text("INSERT INTO chat_sessions (id, user_id) VALUES (:id, :user_id)"),
+        {"id": session_id, "user_id": 1},
+    )
+    db_session.execute(
+        text(
+            "INSERT INTO chat_search_results "
+            "(session_id, store_id, product_title, price_local, currency, url) "
+            "VALUES (:sid, :store_id, :title, :price, :currency, :url)",
+        ),
+        {
+            "sid": session_id,
+            "store_id": "amazon_eg",
+            "title": "Test Product",
+            "price": 100.0,
+            "currency": "EGP",
+            "url": "https://example.com/product",
+        },
+    )
+    db_session.commit()
+
+    original_post = httpx.AsyncClient.post
+
+    async def mock_post(self, url, **kwargs):
+        if "/tracked-items/from-url" in url:
+            return _api_refusal(
+                409, {"code": "fair_use_cap", "active_trackers": 100, "cap": 100}
+            )
+        return await original_post(self, url, **kwargs)
+
+    httpx.AsyncClient.post = mock_post
+    try:
+        response = client.post(
+            "/chatbot/add-to-feed",
+            json={"session_id": session_id},
+            headers=auth_headers,
+        )
+    finally:
+        httpx.AsyncClient.post = original_post
+
+    assert response.status_code == 200
+    data = response.json()
+    assert "100 of 100" in data["message"]
+    assert not data.get("tracker_created")
 
 
 def test_add_to_feed_no_results(
