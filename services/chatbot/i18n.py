@@ -35,6 +35,9 @@ MESSAGES = {
         "creation_rate_limited_plain": (
             "You're adding products a little fast. Try again in a moment."
         ),
+        "creation_rate_limited_one": (
+            "You're adding products a little fast. Try again in 1 second."
+        ),
         "already_tracking": "You're already tracking '{title}'.",
         "empty_query": "Please enter a product to search for.",
         "price_filter": " under {max_price:g} EGP",
@@ -59,6 +62,7 @@ MESSAGES = {
             "بتضيف منتجات بسرعة شوية. جرب تاني بعد {seconds} ثانية."
         ),
         "creation_rate_limited_plain": "بتضيف منتجات بسرعة شوية. جرب تاني كمان شوية.",
+        "creation_rate_limited_one": "بتضيف منتجات بسرعة شوية. جرب تاني بعد ثانية.",
         "already_tracking": 'انت بتتابع "{title}" بالفعل.',
         "empty_query": "اكتب اسم المنتج اللي عايز تدور عليه.",
         "price_filter": " بأقل من {max_price:g} جنيه",

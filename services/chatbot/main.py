@@ -26,6 +26,7 @@ or a cross-service REST call for every authentication check.
 """
 
 import logging
+import math
 import os
 import uuid
 from typing import Any, List, Optional
@@ -792,6 +793,24 @@ def _positive_int(value: Any) -> Optional[int]:
     return None
 
 
+def _wait_seconds(value: Any) -> Optional[int]:
+    """A wait in whole seconds, rounded UP, or None when it is not a number.
+
+    Rounding down would tell the user to retry before the API's window has
+    passed (2.5 s read as "2 seconds"), and a sub-second wait would vanish.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, str):
+        try:
+            value = float(value.strip())
+        except ValueError:
+            return None
+    if isinstance(value, (int, float)) and value > 0:
+        return math.ceil(value)
+    return None
+
+
 def _creation_refusal_message(
     response: httpx.Response, language: str, title: str
 ) -> Optional[str]:
@@ -801,7 +820,8 @@ def _creation_refusal_message(
     services/api/usage_limits.py) so that no client parses prose: ``409`` with
     ``code: fair_use_cap`` when the account is at its cap, and ``429`` with
     ``code: creation_rate_limit`` plus ``Retry-After`` when trackers are created
-    too fast. A ``409`` without that code is the duplicate-tracker refusal.
+    too fast. A ``409`` whose detail is plain text is the duplicate-tracker
+    refusal.
     """
     if response.status_code not in (409, 429):
         return None
@@ -815,11 +835,13 @@ def _creation_refusal_message(
     if response.status_code == 429:
         seconds = None
         if isinstance(detail, dict):
-            seconds = _positive_int(detail.get("retry_after_seconds"))
+            seconds = _wait_seconds(detail.get("retry_after_seconds"))
         if seconds is None:
-            seconds = _positive_int(response.headers.get("Retry-After"))
+            seconds = _wait_seconds(response.headers.get("Retry-After"))
         if seconds is None:
             return format_message("creation_rate_limited_plain", language)
+        if seconds == 1:
+            return format_message("creation_rate_limited_one", language)
         return format_message("creation_rate_limited", language, seconds=seconds)
 
     if code == "fair_use_cap":
@@ -828,7 +850,12 @@ def _creation_refusal_message(
         if active is None or cap is None:
             return format_message("fair_use_cap_plain", language)
         return format_message("fair_use_cap", language, active=active, cap=cap)
-    return format_message("already_tracking", language, title=title)
+    # The duplicate-tracker refusal is the one 409 whose detail is plain text.
+    # A structured 409 with an unknown code is not claimed to be a duplicate;
+    # it falls through to the generic failure reply.
+    if isinstance(detail, str):
+        return format_message("already_tracking", language, title=title)
+    return None
 
 
 async def _handle_add_to_feed(
