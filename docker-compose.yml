@@ -81,6 +81,15 @@ services:
       # pipeline is visible in the stack description; its counters ride api's
       # /metrics (el72_alert_events_*).
       ALERT_EVENTS_CONSUMER: "true"
+      # Tracker limits (plans/p3): free tracking bounded by fair use, never
+      # by a purchase. Spelled out here rather than left to the code default
+      # so the release posture is visible in the stack description — the same
+      # values the app renders (GET /usage/limits) and the API logs at startup.
+      CREDITS_ENFORCEMENT: "${CREDITS_ENFORCEMENT:-fair_use}"
+      FAIR_USE_MAX_TRACKERS: "${FAIR_USE_MAX_TRACKERS:-100}"
+      # No Paymob route in the default stack; set PAYMENTS_ENABLED=true in .env
+      # only for a build that actually sells credits.
+      PAYMENTS_ENABLED: "${PAYMENTS_ENABLED:-false}"
     ports:
       - "8000:8000"
 

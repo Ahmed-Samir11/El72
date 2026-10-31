@@ -14,6 +14,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from services.api import usage_limits
 from services.api.affiliate import missing_affiliate_tags
 from services.api.alert_events_consumer import consume_loop
 from services.api.card_payment_models import CardPayment  # noqa: F401
@@ -203,35 +204,99 @@ app.add_middleware(
 )
 
 # Include routers
-app.include_router(auth.router, prefix="/auth", tags=["Auth"])
 
-# Public demo endpoints (no auth) consumed by the landing page and Flutter app:
-# /stats, /deals/live, /price-history/{sku}, /pricing.
-app.include_router(public_api.router)
 
-# Credit balance endpoints (auth required): /credits/balance, /credits/transactions.
-app.include_router(credits_router.router)
+def mount_routers(target: FastAPI, *, payment_surface: bool) -> None:
+    """Mount the API surface on ``target``.
 
-# Affiliate click tracking and safe merchant redirects.
-app.include_router(affiliate_router.router)
+    Kept as a function rather than module-level calls so both postures are
+    testable without re-importing this module (which would rebuild its
+    engine) mid-session — and so the payment gate is one auditable decision
+    instead of six lines a later edit can silently un-gate.
 
-# Alert surface: GET /alerts/recent + POST /alerts/{id}/open (plans/p2 MS1).
-# Kept in its own router so the two meanings of "alert" stay separate: this one
-# reads alert EVENTS, while main.py's POST /alerts creates a tracker.
-app.include_router(alerts_router.router)
+    ``payment_surface`` is decided by the caller: a release backend (the
+    shipped default — CREDITS_ENFORCEMENT=fair_use with PAYMENTS_ENABLED unset)
+    registers no Paymob route at all, which is how the store listing can honestly
+    make no payment claim, keeps the financial-transaction surface unattackable,
+    and asks no payment decision of a user who does not yet trust the product.
+    PAYMENTS_ENABLED=true — or the legacy CREDITS_ENFORCEMENT=on — mounts it
+    again: the rails are flagged out of the release, not deleted (plans/p3).
+    """
+    target.include_router(auth.router, prefix="/auth", tags=["Auth"])
 
-# Tracked-item lifecycle, including one-credit deduction per new tracker.
-app.include_router(tracked_items_router)
+    # Public demo endpoints (no auth) consumed by the landing page and Flutter app:
+    # /stats, /deals/live, /price-history/{sku}, /pricing.
+    target.include_router(public_api.router)
 
-# Manual payment flow (bridge to Paymob).
-app.include_router(payment_router.router)
+    # Credit balance endpoints (auth required): /credits/balance, /credits/transactions.
+    # Ledger reads only — a tracker is never gated by this number in the shipped
+    # model, but the surface stays for the legacy mode and a future premium tier.
+    target.include_router(credits_router.router)
 
-# Recurring subscriptions (Paymob subscriptions, Feature 7).
-app.include_router(subscription_router.router)
+    # Fair-use state for the free tracker: GET /usage/limits returns
+    # {active_trackers, cap, created_last, retry_after_seconds, enforcement}. It
+    # replaces "credits remaining" in the client's Profile tab and carries the
+    # per-user tracker count P4's engagement rollups need (plans/p3 WS1/WS4).
+    target.include_router(usage_limits.router)
+
+    # Affiliate click tracking and safe merchant redirects.
+    target.include_router(affiliate_router.router)
+
+    # Alert surface: GET /alerts/recent + POST /alerts/{id}/open (plans/p2 MS1).
+    # Kept in its own router so the two meanings of "alert" stay separate: this
+    # one reads alert EVENTS, while main.py's POST /alerts creates a tracker.
+    target.include_router(alerts_router.router)
+
+    # Tracked-item lifecycle. Creation is bounded by the fair-use cap and the
+    # creation rate window (see services/api/usage_limits.py).
+    target.include_router(tracked_items_router)
+
+    if payment_surface:
+        # Manual payment flow (bridge to Paymob) — this router also carries the
+        # admin payment surface (/admin/login, /admin/audit-log), so a release
+        # build with payment_surface=False has no /admin route either: there is
+        # no payment-administration endpoint to reach.
+        target.include_router(payment_router.router)
+
+        # Recurring subscriptions (Paymob subscriptions, Feature 7).
+        target.include_router(subscription_router.router)
+
+
+# Evaluated once at import, so the mount, the startup log and any later check
+# report one decision rather than re-reading an environment that may have moved
+# under the process.
+ENFORCEMENT_AT_IMPORT = usage_limits.enforcement_mode()
+MAX_TRACKERS_AT_IMPORT = usage_limits.max_trackers()
+PAYMENT_SURFACE_ENABLED = usage_limits.payments_surface_enabled()
+mount_routers(app, payment_surface=PAYMENT_SURFACE_ENABLED)
 
 # Demo mode: seed realistic demo data on startup (idempotent).
 # Toggle with DEMO_MODE=True (default) for the investor demo.
 DEMO_MODE = os.getenv("DEMO_MODE", "False").lower() in ("1", "true", "yes", "on")
+
+
+@app.on_event("startup")
+def _report_fair_use_posture() -> None:
+    """Log the enforcement mode and whether any payment surface is mounted.
+
+    The release posture must be auditable from the running process, not only
+    from the compose file: "this backend sells no trackers, and bounds tracking
+    by fair use" is a claim an operator can check against the store listing.
+    The values logged are the ones that decided the mount, so the log cannot
+    disagree with the routes that exist.
+    """
+    fair_use = ENFORCEMENT_AT_IMPORT == usage_limits.FAIR_USE
+    logger.info(
+        "Tracker creation enforcement posture",
+        extra={
+            "credits_enforcement": ENFORCEMENT_AT_IMPORT,
+            "fair_use_max_trackers": (MAX_TRACKERS_AT_IMPORT if fair_use else None),
+            "creation_min_interval_seconds": (
+                usage_limits.MIN_CREATION_INTERVAL_SECONDS if fair_use else None
+            ),
+            "payment_routes_mounted": PAYMENT_SURFACE_ENABLED,
+        },
+    )
 
 
 @app.on_event("startup")

@@ -14,7 +14,6 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from services.api.credits import deduct
 from services.api.dependencies import SessionLocal, get_current_user, get_db
 from services.api.models import User
 from services.api.price_fetcher import (
@@ -33,6 +32,7 @@ from services.api.tracked_items_models import (
     TrackedItem,
     TrackedItemStore,
 )
+from services.api.usage_limits import enforce_tracker_creation
 from services.common.url_policy import fetch_block_reason
 
 logger = logging.getLogger(__name__)
@@ -229,6 +229,11 @@ async def create_tracked_item(
     }
     ```
     """
+    # Enforced before anything is written, so a refusal — 409 at the fair-use
+    # cap, 429 when creations come too fast, 402 under the legacy credit
+    # ledger (CREDITS_ENFORCEMENT=on) — leaves no partial row behind.
+    enforce_tracker_creation(db, current_user)
+
     # Create tracked item
     db_item = TrackedItem(
         user_id=current_user.id,
@@ -239,8 +244,6 @@ async def create_tracked_item(
     )
     db.add(db_item)
     db.flush()
-
-    deduct(db, current_user, amount=1, reason="tracker_created")
 
     # Add store mappings
     for store in item.stores:
@@ -941,6 +944,14 @@ async def create_tracked_item_from_url(
     store_id, sku = _store_and_sku_from_url(payload.url)
     canonical_id = f"{store_id}:{sku}"
 
+    # Fair-use cap and creation rate window (plans/p3), or the legacy 402
+    # under CREDITS_ENFORCEMENT=on. Ahead of the duplicate check on purpose:
+    # a repeated attempt against an already-tracked URL is still a creation
+    # attempt, so it charges the window instead of being a free way to hammer
+    # the endpoint. The SSRF guard stays first — it is the security boundary,
+    # and its 422 must never be masked by a limit answer.
+    enforce_tracker_creation(db, current_user)
+
     # Avoid duplicate trackers for the same URL.
     existing = (
         db.query(TrackedItemStore)
@@ -962,8 +973,6 @@ async def create_tracked_item_from_url(
     )
     db.add(db_item)
     db.flush()
-
-    deduct(db, current_user, amount=1, reason="tracker_created")
 
     db_store = TrackedItemStore(
         tracked_item_id=db_item.id,

@@ -64,3 +64,22 @@ def test_paid_tiers_do_not_receive_implicit_package_credits():
         user = SimpleNamespace(id="user-1", tier=tier)
         db = _database()
         assert get_balance(db, user) == 0
+
+
+def test_deduct_is_mode_blind_so_the_legacy_path_stays_intact(monkeypatch):
+    """The ledger itself never consults CREDITS_ENFORCEMENT.
+
+    plans/p3 moves the *decision* to services/api/usage_limits.py: under the
+    shipped fair-use mode nothing calls ``deduct`` for a tracker, but if a
+    future premium tier does call it, it must still charge and still answer
+    402. Pinning this here keeps the flag from quietly defanging the ledger.
+    """
+    monkeypatch.setenv("CREDITS_ENFORCEMENT", "fair_use")
+    user = SimpleNamespace(id="user-1", tier="free")
+    db = _database(SimpleNamespace(balance=0))
+
+    with pytest.raises(HTTPException) as error:
+        deduct(db, user)
+
+    assert error.value.status_code == 402
+    assert "Upgrade" in error.value.detail

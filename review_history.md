@@ -15554,6 +15554,129 @@ WARNING: Diff truncated from 393448 to 50000 chars
 Review completed in 447.7s
 Decision: REQUEST_CHANGES (confidence: 0.78)
 Findings: 13
+## PR Review: feat(api): free tracker with fair-use limits; gate the Paymob surface out of the release backend (P3 MS1)
+Model: local/qwen-27b
+Files changed: 17
+
+### Raw LLM Response
+{
+  "summary": "This PR implements the backend contract for free tracker creation bounded by fair-use limits, gates Paymob/subscription/admin payment routes out of the default release backend, adds GET /usage/limits, and updates tests/docs/chatbot behavior. Overall it is well structured and well tested, but there are a few correctness issues around retained legacy credit mode, chatbot countdown rounding, and concurrency/test robustness that should be addressed before merge.",
+  "decision": "REQUEST_CHANGES",
+  "confidence": 0.82,
+  "findings": [
+    {
+      "file": "services/api/tracked_items_api.py",
+      "line": 950,
+      "severity": "CRITICAL",
+      "category": "correctness",
+      "title": "Legacy credit mode now enforces before duplicate validation",
+      "description": "In create_tracked_item_from_url, enforce_tracker_creation is called before the duplicate URL check. Under CREDITS_ENFORCEMENT=on, enforce_tracker_creation calls credits.deduct immediately. This changes the retained legacy contract: a duplicate URL attempt for an out-of-credit user now returns 402 instead of the duplicate 409, and if deduct has any committed side effects or non-transactional effects, a refused duplicate could burn a credit. The same ordering can also deduct before route-specific validation/DB constraint failures in the JSON creation route.",
+      "suggestion": "Make enforcement mode-aware: fair-use rate/cap checks may run early, but legacy credit deduction should run after duplicate/route-specific validation, or split enforce_tracker_creation into fair_use_enforce and legacy_credit_deduct. Add a test for duplicate creation under CREDITS_ENFORCEMENT=on asserting 409, no credit transaction, and no 402."
+    },
+    {
+      "file": "services/chatbot/main.py",
+      "line": 785,
+      "severity": "WARNING",
+      "category": "correctness",
+      "title": "Chatbot truncates fractional retry seconds to zero or too low",
+      "description": "_positive_int converts float values with int(value). If retry_after_seconds is 0.5, it returns 0; if 2.5, it returns 2. The API can report fractional retry_after_seconds, and the chatbot may then tell the user to retry too soon or in 0 seconds.",
+      "suggestion": "Use math.ceil for retry seconds and clamp to at least 1 second, e.g. seconds = max(1, math.ceil(float(value))). Add tests for retry_after_seconds values such as 0.5, 2.5, and 0.01."
+    },
+    {
+      "file": "services/api/usage_limits.py",
+      "line": 105,
+      "severity": "WARNING",
+      "category": "correctness",
+      "title": "Process-local creation throttle is not thread-safe",
+      "description": "_last_creation_at is mutated with compound read-check-write logic in _record_attempt and _prune_stale. Under concurrent requests, especially if FastAPI runs sync endpoints in a thread pool, this can race: two requests may both pass the rate check, eviction can pop a key concurrently, or min/prune can observe a changing dict. The cap overshoot is documented, but the dict itself can still behave unpredictably.",
+      "suggestion": "Protect _last_creation_at with a threading.Lock, or move the throttle to Redis as already named in the plan. At minimum, make _record_attempt and _prune_stale atomic under a lock."
+    },
+    {
+      "file": "tests/test_mobile_e2e.py",
+      "line": 435,
+      "severity": "WARNING",
+      "category": "testing",
+      "title": "Live E2E rate-limit test can be flaky if creation latency exceeds the window",
+      "description": "test_14 creates a tracker and immediately issues another creation expecting 429. The throttle starts at enforce time, but if the first creation response takes longer than MIN_CREATION_INTERVAL_SECONDS due to network or price-fetch latency, the second request may be allowed and the test fails.",
+      "suggestion": "Make the test robust by measuring elapsed time from the first creation and skipping if it exceeded the configured window, or by using a dedicated short-window test configuration if possible. Document the latency assumption explicitly in the test."
+    },
+    {
+      "file": "services/api/usage_limits.py",
+      "line": 55,
+      "severity": "WARNING",
+      "category": "correctness",
+      "title": "Default cap of 100 may reduce capability for existing paid-tier accounts",
+      "description": "DEFAULT_MAX_TRACKERS=100 is justified by the free tier starting credits, but users in paid tiers may already have more than 100 credits and therefore more than 100 active trackers. Switching to fair_use with a fixed cap of 100 could block new tracker creation for those accounts until they delete trackers.",
+      "suggestion": "Either derive the cap from the user's tier/current allowance, use max(100, existing_active_trackers) for migration, or explicitly document and test that paid-tier users above 100 active trackers are handled intentionally."
+    },
+    {
+      "file": "services/api/usage_limits.py",
+      "line": 150,
+      "severity": "WARNING",
+      "category": "security",
+      "title": "PAYMENTS_ENABLED can mount payment rails under fair_use",
+      "description": "payments_surface_enabled returns true whenever PAYMENTS_ENABLED is truthy, even if CREDITS_ENFORCEMENT=fair_use. This can expose Paymob/subscription/admin routes on a backend whose tracker creation economics are free, expanding the financial attack surface and creating a confusing product posture.",
+      "suggestion": "Consider requiring CREDITS_ENFORCEMENT=on or a separate premium-tier flag for payment mounting, or at least log a startup warning when PAYMENTS_ENABLED=true while enforcement is fair_use/off."
+    },
+    {
+      "file": "services/api/usage_limits.py",
+      "line": 130,
+      "severity": "INFO",
+      "category": "performance",
+      "title": "Misconfigured environment values can log on every request",
+      "description": "enforcement_mode and max_trackers log warnings every time they are called. If CREDITS_ENFORCEMENT or FAIR_USE_MAX_TRACKERS is invalid, every tracker creation and /usage/limits call can emit a warning, potentially flooding logs.",
+      "suggestion": "Cache the resolved mode/cap per process or log invalid configuration once at startup, while still allowing tests to override behavior."
+    },
+    {
+      "file": "services/chatbot/main.py",
+      "line": 830,
+      "severity": "INFO",
+      "category": "correctness",
+      "title": "Any non-fair-use 409 is treated as duplicate tracking",
+      "description": "_creation_refusal_message returns the already_tracking message for any 409 whose detail code is not fair_use_cap. If a future 409 uses a structured detail without that code, the chatbot will incorrectly say the user is already tracking the product.",
+      "suggestion": "Only return already_tracking when the 409 detail is the known duplicate string or when the response clearly represents a duplicate; otherwise return None so the generic failure path handles it."
+    },
+    {
+      "file": "services/api/usage_limits.py",
+      "line": 340,
+      "severity": "INFO",
+      "category": "correctness",
+      "title": "_iso_utc assumes naive UTC timestamps",
+      "description": "_iso_utc strips tzinfo and appends Z. If the database or SQLAlchemy returns timezone-aware non-UTC datetimes, this will produce an incorrect UTC timestamp.",
+      "suggestion": "If created.tzinfo is not None, convert to UTC first: created.astimezone(timezone.utc).replace(tzinfo=None).isoformat() + 'Z'."
+    },
+    {
+      "file": "services/api/main.py",
+      "line": 210,
+      "severity": "INFO",
+      "category": "architecture",
+      "title": "Deprecated on_event startup handler",
+      "description": "The new startup posture log uses @app.on_event('startup'), which is deprecated in FastAPI. The PR notes this is consistent with the existing module, but it is still a maintainability issue.",
+      "suggestion": "Consider moving to lifespan if the codebase is ready, or add a TODO noting the existing pattern and future migration."
+    }
+  ],
+  "missed_tests": [
+    "Duplicate /tracked-items/from-url creation under CREDITS_ENFORCEMENT=on should return 409 duplicate, not 402, and should not persist a credit transaction.",
+    "Chatbot rate-limit message with fractional retry_after_seconds should round up to at least one second.",
+    "Concurrent tracker creations for the same user under fair_use should not corrupt the throttle map and should keep cap overshoot bounded as documented.",
+    "Existing paid-tier user with more than 100 active trackers under default FAIR_USE_MAX_TRACKERS should have defined behavior and a test.",
+    "GET /usage/limits under fair_use with no prior creation attempt should report retry_after_seconds 0.0.",
+    "PAYMENTS_ENABLED=true with CREDITS_ENFORCEMENT=fair_use should either be rejected/warned or have an explicit test documenting the posture."
+  ],
+  "positive_notes": [
+    "The fair-use contract is centralized in usage_limits.py and uses structured refusal payloads rather than prose.",
+    "The mode matrix is explicitly tested for fair_use, on, and off, including ledger behavior and refusal shapes.",
+    "Payment/subscription/admin routes are gated behind a single mount_routers decision and tested in both postures.",
+    "No schema or ledger tables are deleted, preserving the reversible premium-tier path.",
+    "The chatbot now maps fair-use cap and rate-limit refusals into user-facing localized messages.",
+    "The live E2E suite reads enforcement mode from the server instead of assuming the old credit model."
+  ]
+}
+
+
+Review completed in 1298.7s
+Decision: REQUEST_CHANGES (confidence: 0.82)
+Findings: 10
 ## PR Review: feat(api): alert events + alert surface backend (P2 MS1)
 Model: local/qwen-27b
 Files changed: 38
