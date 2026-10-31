@@ -4,8 +4,9 @@
 **Date:** 2026-10-29
 **Status:** In implementation — MS1 backend shipped on `feat/push-notifications-and-alert-surface` (PR #49,
 HGM rounds 1-4 findings addressed); MS2 copy surface enumerated for translation (§7) — `alert_events` + stream consumer + `GET /alerts/recent` + `POST /alerts/{id}/open`
-+ store-facing copy truth; MS2 (Alerts tab, app copy in both locales) blocked on owner-supplied Arabic, MS3 blocked
-on H2 + H3 (see §7 and the Implementation Record at §9).
++ store-facing copy truth; MS2 copy now LANDS in both locales (§7), MS2 widgets (repository, Alerts
+tab, nav slot) still open, MS3 blocked on H2 + H3 (see §7 and the Implementation Record at §9).
+**Arabic review status (FACT):** token-composed from Arabic this repo already ships, NOT native-reviewed.
 **Series:** 2 of 5 release-priority plans (P1 affiliate clicks → **P2** → P3 free-tracker model, P4 analytics, P5 activation/trust).
 
 ---
@@ -323,7 +324,7 @@ with MS3 and only exists once H3 answers that OS push ships in v1.0.
 | WARNING every `IntegrityError` was classified as a duplicate, hiding an FK race or a future constraint | `_is_same_day_unique()` matches only `uq_alert_events_item_type_day`; anything else re-raises into the transient-failure path (left pending, counted, bounded) | `store_event`, test `test_only_the_same_day_index_may_be_called_a_duplicate` |
 | WARNING pending-review notes were HTML comments inside copy that gets submitted | notes moved out of the copy: the §2 line is a `[PENDING COPY]` placeholder, §3's header (never submitted) carries the flag, and the DRAFT banner gained the release gate `grep -rn "PENDING COPY" flutter-app/docs` → empty at submission | `store-listing.md` |
 | WARNING the consumer started by default in every process, including tests | the API test suite pins `ALERT_EVENTS_CONSUMER=false` in `conftest.py`; multi-worker behaviour (N processes = N consumers on one group, each with its own pending list, duplicates prevented by the UNIQUE index, overlap visible in REDRAWS/DISCARDED) documented in `.env.example` | `services/api/conftest.py`, `.env.example` |
-| WARNING the in-app promise (`app_en.arb` `trackerCreated`) is still false in this branch | unchanged BY CONSTRAINT — rewriting it needs the owner's Arabic and `l10n_coverage_test` forbids landing English alone; promoted from "nice-to-have" to an explicit RELEASE GATE: no build ships to users with this string live | §7 risks (below) |
+| WARNING the in-app promise (`app_en.arb` `trackerCreated`) is still false in this branch | unchanged BY CONSTRAINT — rewriting it needs the owner's Arabic and `l10n_coverage_test` forbids landing English alone; promoted from "nice-to-have" to an explicit RELEASE GATE: no build ships to users with this string live. **Superseded:** the rewrite shipped in both locales once the operator lifted the no-generated-Arabic rule (see the MS2 subsection of §9) | §7 risks (below), §9 MS2 subsection |
 | INFO a malformed `ALERTS_CONSUMER_*` value raised at import and took the API down | `_env_int()` falls back to the default and logs the typo | consumer module, test `test_env_int_falls_back_on_a_typo` |
 | INFO `unopened_total` ignored `since` without saying so | documented in the endpoint docstring and pinned by a test: the window filters the list, the badge counts the account (that split is the Gate-2 ratio) | `routers/alerts.py`, `test_unopened_total_counts_the_account_not_the_window` |
 | INFO a fractional payload `user_id` ("1.9") could agree with id 1 | integer-valued check before comparison | `store_event`, test `test_payload_user_id_must_be_an_integer_to_agree` |
@@ -371,3 +372,13 @@ still needs the owner's Arabic to be rewritten, which is why it lands with MS2 r
 false promise until MS2, so no build derived from this branch may be published to
 users before MS2 lands. The store-facing side is already truthful; the app-facing
 side is the one remaining copy debt, and it is owner-blocked, not engineer-blocked.
+
+### MS2 copy surface (shipped)
+
+| Planned | Shipped | Why |
+|---|---|---|
+| MS2 Arabic supplied by the owner before any client work | the 11 alert-surface keys land in `app_en.arb` **and** `app_ar.arb` in one commit, `app_localizations*.dart` regenerated with `flutter gen-l10n` | the operator removed the rule that forbade this model from generating Arabic (own rules PR: `chore/agent-rules-owner-approved-arabic`, PR #51); key parity and the "never call it reviewed" requirement were kept, and `l10n_coverage_test` still fails on an English-only landing |
+| Arabic wording written from scratch | **token-composed**: every Arabic word is lifted from Arabic this repo already ships — `app_ar.arb` vocabulary and the Arabic branch of `services/whatsapp/sender.py` (`Saler Previous:` / `Saler Current:` / `discount:`) — located by placeholder anchor and asserted present before use | the failure mode the removed rule guarded against is real: invented Arabic is confidently wrong. Composing from shipped strings keeps terminology fixed, and the result is still labelled **unreviewed** here and in the commit message |
+| `trackerCreated` left as a false promise | rewritten in BOTH locales: the tab, not WhatsApp, is where the alert appears | the old English ("You'll get a WhatsApp notification when we find a deal") and Arabic ("will send you a WhatsApp message when we find a deal") both describe a channel this build does not deliver (H1 unresolved) |
+| copy keys added only where the plan listed them | `alertPreviousPrice` / `alertCurrentPrice` / `alertDiscountLine` instead of four event-type labels | the Arabic for previous/current/discount already exists in the WhatsApp template; four invented Arabic nouns would have been unreviewed coinage, while the price-line phrasing reuses vetted product Arabic |
+| MS2 widgets in the same commit | **not shipped** | recorded rather than silent: the data layer here exposes `flutter-app/lib/src/data/services/api_client.dart`, not the `http_service.dart` shape §4 assumes — resolve that first, do not assume either shape |
